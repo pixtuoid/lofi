@@ -343,8 +343,9 @@ fn master(buf: &[f32], drive: f32, peak: f32) -> Vec<f32> {
     out
 }
 
-/// One soft electric-piano note — the sparkle/keys voice.
-fn ep_pluck(midi: u8, dur_s: f32, vel: f32) -> Vec<f32> {
+/// One soft electric-piano note — the shared voice core; `h2` is the
+/// 2nd-harmonic weight (the one axis the day/night voices differ on).
+fn ep_pluck_h2(midi: u8, dur_s: f32, vel: f32, h2: f32) -> Vec<f32> {
     let n = n_samples(dur_s);
     let f = midi_freq(midi as f32);
     let tau = std::f32::consts::TAU;
@@ -352,11 +353,17 @@ fn ep_pluck(midi: u8, dur_s: f32, vel: f32) -> Vec<f32> {
         .map(|i| {
             let t = i as f32 / SR;
             let sig = (tau * f * t).sin() * (-t * 5.5).exp()
-                + 0.35 * (tau * 2.0 * f * t).sin() * (-t * 9.0).exp()
+                + h2 * (tau * 2.0 * f * t).sin() * (-t * 9.0).exp()
                 + 0.12 * (tau * 3.01 * f * t).sin() * (-t * 14.0).exp();
             sig * vel
         })
         .collect()
+}
+
+/// The day EP voice — the ratified FIXED 2nd harmonic (identity guarded
+/// by the day fingerprint pins).
+fn ep_pluck(midi: u8, dur_s: f32, vel: f32) -> Vec<f32> {
+    ep_pluck_h2(midi, dur_s, vel, 0.35)
 }
 
 fn kick(rng: &mut NoiseStream) -> Vec<f32> {
@@ -478,6 +485,168 @@ pub(crate) fn stem_drums(rng: &mut NoiseStream) -> Vec<f32> {
     let mut buf = lowpass(&buf, 7500.0); // lofi: shave the top
     normalize(&mut buf, 0.85);
     master(&buf, 2.2, 0.85)
+}
+
+// ------------------------------------------------- night track (#644)
+// The v4 realization, owner LISTEN-passed 2026-07-17 — Lofi Girl-anchored
+// (sub-bass floor, differential swing baked into score.rs timestamps).
+// Day fns above are UNTOUCHED: the day take's identity is guarded by its
+// fingerprint pins, which this addition must not move.
+
+/// The night EP voice: velocity-keyed 2nd harmonic (the Rhodes
+/// "bell vs bark" — LOFI-BIBLE.md delta 4). Day keeps the ratified
+/// fixed-harmonic [`ep_pluck`]; only night events ride this.
+fn ep_pluck_vel(midi: u8, dur_s: f32, vel: f32) -> Vec<f32> {
+    ep_pluck_h2(midi, dur_s, vel, 0.18 + 0.45 * vel * vel)
+}
+
+fn night_bar_s() -> f32 {
+    score::night_beat_s() * score::BEATS_PER_BAR
+}
+
+/// Night pad: soft slow chords + the SUB-BASS floor in one buffer (the
+/// harmonic floor moves as one — no new LoopStem, no scene change).
+pub(crate) fn night_pad() -> Vec<f32> {
+    let tau = std::f32::consts::TAU;
+    let mut buf = vec![0.0f32; n_samples(score::night_loop_secs())];
+    for bar in 0..score::NIGHT_LOOP_BARS {
+        let (chord, root) = score::night_chord_at_bar(bar);
+        let dur = night_bar_s() + 1.2;
+        let nd = n_samples(dur);
+        let mut sig = vec![0.0f32; nd];
+        for (i, &m) in chord.iter().enumerate() {
+            let f = midi_freq(m as f32);
+            let env = env_ar(nd, 0.5 + 0.1 * i as f32, 1.8);
+            for (j, slot) in sig.iter_mut().enumerate() {
+                let t = j as f32 / SR;
+                let tone = (tau * f * t).sin()
+                    + 0.22 * (tau * 2.0 * f * t).sin()
+                    + 0.05 * (tau * 3.0 * f * t).sin();
+                *slot += tone * env(j) * 0.8;
+            }
+        }
+        // the sub floor: half-note pulses, the second softer (a breath)
+        let fb = midi_freq(root as f32);
+        for half in 0..2 {
+            let hdur = night_bar_s() / 2.0 + 0.4;
+            let hn = n_samples(hdur);
+            let env = env_ar(hn, 0.06, 0.9);
+            let g = if half == 0 { 1.0 } else { 0.7 };
+            let bass: Vec<f32> = (0..hn)
+                .map(|i| {
+                    let t = i as f32 / SR;
+                    ((tau * fb * t).sin() + 0.15 * (tau * 2.0 * fb * t).sin()) * env(i) * g * 3.2
+                })
+                .collect();
+            place(&mut sig, &bass, half as f32 * night_bar_s() / 2.0, 1.0);
+        }
+        place(&mut buf, &sig, bar as f32 * night_bar_s(), 1.0);
+    }
+    let mut buf = lowpass(&buf, 2200.0);
+    for (i, v) in buf.iter_mut().enumerate() {
+        *v *= 1.0 + 0.04 * (tau * 0.15 * i as f32 / SR).sin();
+    }
+    normalize(&mut buf, 0.75);
+    master(&buf, 1.6, 0.75)
+}
+
+fn night_events_stem(events: &[(f32, u8, f32)], dur_s: f32, cutoff_hz: f32, peak: f32) -> Vec<f32> {
+    let mut buf = vec![0.0f32; n_samples(score::night_loop_secs())];
+    for &(at, note, vel) in events {
+        place(&mut buf, &ep_pluck_vel(note, dur_s, vel), at, 1.0);
+    }
+    let mut buf = lowpass(&buf, cutoff_hz);
+    normalize(&mut buf, peak);
+    master(&buf, 1.6, peak)
+}
+
+pub(crate) fn night_keys() -> Vec<f32> {
+    night_events_stem(&score::NIGHT_KEYS, 1.1, 2000.0, 0.7)
+}
+
+pub(crate) fn night_sparkle() -> Vec<f32> {
+    night_events_stem(&score::NIGHT_SPARKLE, 2.2, 2800.0, 0.5)
+}
+
+/// Kick + soft closed hats only — timing and gains frozen in the score
+/// (humanization baked); each hit's NOISE content is fresh per call.
+pub(crate) fn night_drums(rng: &mut NoiseStream) -> Vec<f32> {
+    let mut buf = vec![0.0f32; n_samples(score::night_loop_secs())];
+    for &(at, kind, gain) in &score::NIGHT_DRUMS {
+        let hit = match kind {
+            score::DrumKind::Kick => kick(rng),
+            score::DrumKind::Hat => hat(rng, false),
+        };
+        place(&mut buf, &hit, at, gain);
+    }
+    let mut buf = lowpass(&buf, 6000.0);
+    normalize(&mut buf, 0.8);
+    master(&buf, 2.0, 0.8)
+}
+
+/// Length of the loop-seam splice on the night texture: its buffer is the
+/// night loop length (NOT a power of two), so the FFT-shaped hiss is not
+/// circularly seamless — a short equal-power crossfade closes the seam.
+const NIGHT_TEXTURE_SPLICE_S: f32 = 0.03;
+
+/// The night texture: the day room-tone recipe at the NIGHT loop length
+/// with the kick-duck BAKED IN (LOFI-BIBLE delta 5) — pre-multiplying the
+/// frozen NIGHT_KICK_TIMES envelope keeps it phase-locked with the drums
+/// by construction, no runtime sidechain machinery. (The audition tiled a
+/// longer free-running bed instead; the per-loop repetition difference is
+/// inaudible-class quiet noise — re-verified at the LISTEN gate.)
+pub(crate) fn night_texture(rng: &mut NoiseStream) -> Vec<f32> {
+    let n = n_samples(score::night_loop_secs());
+    let f = n_samples(NIGHT_TEXTURE_SPLICE_S);
+    // synthesize f EXTRA samples past the loop end: the splice blends a
+    // genuine CONTINUATION of the tail into the head, so the wrap
+    // buf[n-1] -> buf[0] is adjacent samples of one stream (a head-only
+    // crossfade of unrelated content leaves the discontinuity — the
+    // review refuted the first attempt empirically)
+    let total = n + f;
+    let raw: Vec<f32> = (0..total).map(|_| rng.norm()).collect();
+    let hiss = lowpass(&raw, 3800.0);
+    let tau = std::f32::consts::TAU;
+    let mut buf: Vec<f32> = (0..total)
+        .map(|i| {
+            let t = i as f32 / SR;
+            let room = (tau * 90.0 * t).sin() * (1.0 + 0.2 * (tau * 0.4 * t).sin()) * 0.006;
+            hiss[i] * 0.010 + room
+        })
+        .collect();
+    let n_pops = (n as f32 / SR * 4.0) as usize;
+    for _ in 0..n_pops {
+        let at = rng.unit() * (n as f32 / SR - 0.01);
+        let pn = n_samples(0.003 + 0.004 * rng.unit());
+        let pop: Vec<f32> = (0..pn)
+            .map(|i| rng.norm() * (-(i as f32 / SR) * 800.0).exp())
+            .collect();
+        place(&mut buf[..n], &pop, at, 0.03 + 0.06 * rng.unit());
+    }
+    // linear blend of CORRELATED content (the pre-roll continues the same
+    // lowpassed stream + the same sines), so no equal-power law is needed
+    for j in 0..f {
+        let a = j as f32 / f as f32;
+        buf[j] = buf[n + j] * (1.0 - a) + buf[j] * a;
+    }
+    buf.truncate(n);
+    // normalize BEFORE the duck (the python reference ducks the tiled,
+    // already-normalized bed — duck-then-normalize re-inflated the level
+    // by up to the duck depth, a review catch)
+    normalize(&mut buf, 0.45);
+    let depth = 10f32.powf(-4.0 / 20.0);
+    let rel = n_samples(0.15);
+    for &kt in &score::NIGHT_KICK_TIMES {
+        let i0 = n_samples(kt);
+        for j in 0..rel {
+            let Some(slot) = buf.get_mut(i0 + j) else {
+                break;
+            };
+            let g = depth + (1.0 - depth) * (j as f32 / rel as f32);
+            *slot *= g;
+        }
+    }
+    buf
 }
 
 #[cfg(test)]
@@ -624,6 +793,116 @@ mod tests {
     }
 
     #[test]
+    fn night_stems_match_the_ratified_v4_fingerprints() {
+        // reference = the owner-LISTEN-passed v4 float chain (2026-07-17);
+        // same tolerances as the day pins: centroid ±20%, shares ±0.10
+        // (drums ±0.15 — fresh noise per build)
+        type Case = (&'static str, Vec<f32>, f32, f32, &'static [(f32, f32, f32)]);
+        let cases: [Case; 4] = [
+            (
+                "night_pad",
+                night_pad(),
+                103.6,
+                0.10,
+                &[
+                    (31.0, 62.0, 0.538),
+                    (62.0, 125.0, 0.191),
+                    (125.0, 250.0, 0.172),
+                ],
+            ),
+            (
+                "night_sparkle",
+                night_sparkle(),
+                541.3,
+                0.10,
+                &[(250.0, 500.0, 0.527), (500.0, 1000.0, 0.449)],
+            ),
+            (
+                "night_keys",
+                night_keys(),
+                209.2,
+                0.10,
+                &[(125.0, 250.0, 0.729), (250.0, 500.0, 0.253)],
+            ),
+            (
+                "night_drums",
+                night_drums(&mut NoiseStream::new(4)),
+                118.8,
+                0.15,
+                &[(62.0, 125.0, 0.561), (125.0, 250.0, 0.412)],
+            ),
+        ];
+        for (name, buf, ref_centroid, tol, bands) in cases {
+            let c = centroid_hz(&buf);
+            assert!(
+                (c - ref_centroid).abs() <= ref_centroid * 0.20,
+                "{name}: centroid {c:.1} vs ratified {ref_centroid}"
+            );
+            for &(lo, hi, ref_share) in bands {
+                let s = band_energy_share(&buf, lo, hi);
+                assert!(
+                    (s - ref_share).abs() <= tol,
+                    "{name} band {lo}-{hi}: {s:.3} vs ratified {ref_share}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn night_stems_share_one_loop_length_including_texture() {
+        // night phase-lock covers TEXTURE too: its kick-duck is baked at
+        // frozen kick times, so it must tile in lockstep with the drums
+        let n = night_pad().len();
+        assert_eq!(n, n_samples(score::night_loop_secs()));
+        assert_eq!(night_sparkle().len(), n);
+        assert_eq!(night_keys().len(), n);
+        assert_eq!(night_drums(&mut NoiseStream::new(4)).len(), n);
+        assert_eq!(night_texture(&mut NoiseStream::new(4)).len(), n);
+        // and the night loop is deliberately NOT the day loop
+        assert_ne!(n, n_samples(score::loop_secs()));
+    }
+
+    #[test]
+    fn night_texture_seam_is_spliced_and_duck_dips_after_kicks() {
+        let tex = night_texture(&mut NoiseStream::new(4));
+        let n = tex.len();
+        // the wrap must be a CONTINUATION, not merely "no huge jump" (the
+        // first splice attempt passed the loose body-max check while the
+        // discontinuity survived — review-refuted empirically). Two pins:
+        // adjacent-sample continuity at the wrap, and no level step across
+        // it (the 0.4Hz AM's phase mismatch was a ~19% RMS step broken).
+        let body_median = {
+            let mut d: Vec<f32> = tex.windows(2).map(|w| (w[1] - w[0]).abs()).collect();
+            d.sort_by(f32::total_cmp);
+            d[d.len() / 2]
+        };
+        let seam = (tex[0] - tex[n - 1]).abs();
+        assert!(
+            seam <= body_median * 8.0,
+            "wrap must read as adjacent samples: seam {seam} vs median {body_median}"
+        );
+        let rms = |s: &[f32]| (s.iter().map(|v| v * v).sum::<f32>() / s.len() as f32).sqrt();
+        let w = n_samples(0.01);
+        let head = rms(&tex[..w]);
+        let tail = rms(&tex[n - w..]);
+        assert!(
+            (head - tail).abs() <= 0.10 * head.max(tail),
+            "no level step across the wrap: head {head:.5} vs tail {tail:.5}"
+        );
+        // duck: RMS right after a kick is lower than just before it
+        let kt = score::NIGHT_KICK_TIMES[2];
+        let i = n_samples(kt);
+        let w = n_samples(0.05);
+        let rms = |s: &[f32]| (s.iter().map(|v| v * v).sum::<f32>() / s.len() as f32).sqrt();
+        let before = rms(&tex[i - w..i]);
+        let after = rms(&tex[i..i + w]);
+        assert!(
+            after < before * 0.85,
+            "texture must duck after the kick: {before:.5} -> {after:.5}"
+        );
+    }
+
+    #[test]
     fn rain_bed_matches_the_gentle_reference_envelope() {
         let mut rng = NoiseStream::new(3);
         let bed = rain_bed(&mut rng);
@@ -650,6 +929,11 @@ mod tests {
             ("sparkle", stem_sparkle()),
             ("keys", stem_keys()),
             ("drums", stem_drums(&mut rng)),
+            ("night_pad", night_pad()),
+            ("night_sparkle", night_sparkle()),
+            ("night_keys", night_keys()),
+            ("night_drums", night_drums(&mut rng)),
+            ("night_texture", night_texture(&mut rng)),
         ] {
             assert!(!buf.is_empty(), "{name} empty");
             assert!(

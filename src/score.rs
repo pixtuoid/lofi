@@ -135,3 +135,160 @@ mod tests {
         }
     }
 }
+
+// ---------------------------------------------------------------- night
+// The NIGHT/RAINY mood track (#644) — Lofi Girl-anchored (measured refs:
+// 55-65% power <62Hz, BPM 68-90, onsets 1.2-2/s; LOFI-BIBLE.md), owner
+// LISTEN-passed as the v4 realization 2026-07-17 ("这版可以"). Events are
+// frozen AT-SECONDS with the humanization (differential swing hats 58% /
+// kick 53%, 18ms kick drag, jitter, velocity breathing) baked into the
+// timestamps — regenerate via export_night_score.py in the spec dir; a
+// regen or BPM change is a NEW take and needs a fresh LISTEN gate.
+
+pub(super) const NIGHT_BPM: f32 = 68.0;
+pub(super) const NIGHT_LOOP_BARS: usize = 8;
+
+pub(super) fn night_beat_s() -> f32 {
+    60.0 / NIGHT_BPM
+}
+
+pub(super) fn night_loop_secs() -> f32 {
+    night_beat_s() * BEATS_PER_BAR * NIGHT_LOOP_BARS as f32
+}
+
+/// Am7 – Fmaj7 – Cmaj7 – Em7, one bar each, cycled over the 8 bars.
+pub(super) const NIGHT_CHORDS: [[u8; 4]; 4] = [
+    [57, 60, 64, 67],
+    [53, 57, 60, 65],
+    [48, 52, 55, 59],
+    [52, 55, 59, 62],
+];
+/// The sub-bass floor per bar (A1 F1 C2 E1) — the measured Lofi Girl
+/// signature the day track deliberately lacks.
+pub(super) const NIGHT_BASS_ROOTS: [u8; 4] = [33, 29, 36, 28];
+
+pub(super) fn night_chord_at_bar(bar: usize) -> ([u8; 4], u8) {
+    (
+        NIGHT_CHORDS[bar % NIGHT_CHORDS.len()],
+        NIGHT_BASS_ROOTS[bar % NIGHT_BASS_ROOTS.len()],
+    )
+}
+
+/// Night drum event kinds — the night groove is kick + closed hat only
+/// (no snare backbeat, no open hat: the sleepy register).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum DrumKind {
+    Kick,
+    Hat,
+}
+
+pub(super) const NIGHT_KEYS: [(f32, u8, f32); 6] = [
+    (3.9989, 53, 0.501036),
+    (5.3155, 53, 0.502335),
+    (5.7621, 60, 0.391231),
+    (15.0282, 60, 0.354303),
+    (20.3087, 57, 0.370914),
+    (20.7644, 53, 0.443472),
+];
+pub(super) const NIGHT_SPARKLE: [(f32, u8, f32); 5] = [
+    (2.6471, 79, 0.301661),
+    (9.7059, 60, 0.357816),
+    (18.5294, 77, 0.376569),
+    (23.3824, 71, 0.252749),
+    (25.5882, 67, 0.284761),
+];
+pub(super) const NIGHT_DRUMS: [(f32, DrumKind, f32); 39] = [
+    (0.0236, DrumKind::Kick, 0.663799),
+    (2.2367, DrumKind::Kick, 0.411038),
+    (0.4778, DrumKind::Hat, 0.214931),
+    (1.3646, DrumKind::Hat, 0.251454),
+    (2.2362, DrumKind::Hat, 0.271023),
+    (3.1224, DrumKind::Hat, 0.281255),
+    (3.5526, DrumKind::Kick, 0.553927),
+    (5.7660, DrumKind::Kick, 0.379583),
+    (4.0063, DrumKind::Hat, 0.266364),
+    (4.8826, DrumKind::Hat, 0.251054),
+    (5.7660, DrumKind::Hat, 0.209403),
+    (6.6556, DrumKind::Hat, 0.245932),
+    (7.0743, DrumKind::Kick, 0.620215),
+    (9.2961, DrumKind::Kick, 0.386612),
+    (7.5372, DrumKind::Hat, 0.257124),
+    (8.4174, DrumKind::Hat, 0.217017),
+    (9.3030, DrumKind::Hat, 0.292058),
+    (10.1875, DrumKind::Hat, 0.316476),
+    (10.6070, DrumKind::Kick, 0.630006),
+    (12.8277, DrumKind::Kick, 0.436625),
+    (11.9463, DrumKind::Hat, 0.215210),
+    (14.1332, DrumKind::Kick, 0.683702),
+    (16.3608, DrumKind::Kick, 0.441433),
+    (15.4724, DrumKind::Hat, 0.260578),
+    (16.3579, DrumKind::Hat, 0.278973),
+    (17.6657, DrumKind::Kick, 0.562252),
+    (19.8895, DrumKind::Kick, 0.347772),
+    (18.1218, DrumKind::Hat, 0.224934),
+    (19.0096, DrumKind::Hat, 0.236696),
+    (19.8932, DrumKind::Hat, 0.222340),
+    (20.7733, DrumKind::Hat, 0.261781),
+    (21.1983, DrumKind::Kick, 0.614736),
+    (23.4135, DrumKind::Kick, 0.406885),
+    (21.6534, DrumKind::Hat, 0.253510),
+    (23.4163, DrumKind::Hat, 0.219788),
+    (24.2988, DrumKind::Hat, 0.267106),
+    (24.7274, DrumKind::Kick, 0.659486),
+    (26.9428, DrumKind::Kick, 0.447755),
+    (25.1849, DrumKind::Hat, 0.320593),
+];
+pub(super) const NIGHT_KICK_TIMES: [f32; 16] = [
+    0.0236, 2.2367, 3.5526, 5.7660, 7.0743, 9.2961, 10.6070, 12.8277, 14.1332, 16.3608, 17.6657,
+    19.8895, 21.1983, 23.4135, 24.7274, 26.9428,
+];
+
+#[cfg(test)]
+mod night_tests {
+    use super::*;
+
+    #[test]
+    fn night_tables_match_the_frozen_v4_realization() {
+        // the day tables' drift guard, extended to night (plan item 3 —
+        // the review caught it undelivered): sums bind EVERY entry, spot
+        // pins bind the identity, and NIGHT_KICK_TIMES is pinned to the
+        // Kick entries of NIGHT_DRUMS (two frozen copies of one truth —
+        // the texture's baked duck desyncs from the drums if they drift).
+        let sum3 = |t: &[(f32, u8, f32)]| {
+            t.iter()
+                .fold((0.0f64, 0u32, 0.0f64), |(a, n, v), &(aa, nn, vv)| {
+                    (a + aa as f64, n + nn as u32, v + vv as f64)
+                })
+        };
+        let (ka, kn, kv) = sum3(&NIGHT_KEYS);
+        assert!((ka - 71.1778).abs() < 1e-3 && kn == 336 && (kv - 2.563_291).abs() < 1e-4);
+        let (sa, sn, sv) = sum3(&NIGHT_SPARKLE);
+        assert!((sa - 79.853).abs() < 1e-3 && sn == 354 && (sv - 1.573_556).abs() < 1e-4);
+        let (da, dg) = NIGHT_DRUMS
+            .iter()
+            .fold((0.0f64, 0.0f64), |(a, g), &(aa, _, gg)| {
+                (a + aa as f64, g + gg as f64)
+            });
+        assert!((da - 495.7997).abs() < 1e-3 && (dg - 14.081_426).abs() < 1e-4);
+        assert_eq!(NIGHT_KEYS[0], (3.9989, 53, 0.501_036));
+        // the pairing pin: kick times ARE the drums' Kick timestamps
+        let mut kicks: Vec<f32> = NIGHT_DRUMS
+            .iter()
+            .filter(|(_, k, _)| *k == DrumKind::Kick)
+            .map(|&(a, _, _)| a)
+            .collect();
+        kicks.sort_by(f32::total_cmp);
+        let mut kt = NIGHT_KICK_TIMES.to_vec();
+        kt.sort_by(f32::total_cmp);
+        assert_eq!(kicks, kt, "NIGHT_KICK_TIMES desynced from NIGHT_DRUMS");
+        // harmonic invariant: every night keys note is a chord tone
+        for &(at, note, _) in NIGHT_KEYS.iter() {
+            let bar = (at / (night_beat_s() * BEATS_PER_BAR)) as usize;
+            let (chord, _) = night_chord_at_bar(bar);
+            assert!(
+                chord.iter().any(|&c| note == c || note == c + 12),
+                "night note {note} at {at}s is not a tone of its bar's chord"
+            );
+        }
+    }
+}
