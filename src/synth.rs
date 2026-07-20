@@ -269,6 +269,15 @@ pub fn rain_drop(rng: &mut NoiseStream) -> Vec<f32> {
     buf
 }
 
+/// Vinyl-crackle pop density for BOTH room-tone beds (day free-running +
+/// night duck-baked — one knob, the textures must age identically).
+/// History: 9/s read "haunted" (v1) -> 4/s ratified with Phase 2 -> 1.5/s
+/// after the generator batch ("背景的黑胶的次啦声有点过于频繁了") ->
+/// 0.18/s to the owner's stated target ("我预计是5s - 10s 有一次
+/// crackle", 2026-07-19): one pop every ~5.5-7s on both beds (the day
+/// bed's ~12s loop carries 2, the ~28s night loop carries 5).
+const CRACKLE_POPS_PER_SEC: f32 = 0.18;
+
 /// The vinyl/room texture bed: tape hiss + a faint warm room hum + sparse
 /// soft crackle. Mixed 25-35dB below the music (the noise-floor rule); the
 /// per-stem hiss stacking bug lives in the spec's cautionary tales. Its
@@ -288,8 +297,8 @@ pub fn texture_bed(rng: &mut NoiseStream) -> Vec<f32> {
             hiss[i] * 0.010 + room
         })
         .collect();
-    // sparse soft crackle: ~4 pops/s
-    let n_pops = (n as f32 / SR * 4.0) as usize;
+    // sparse soft crackle
+    let n_pops = (n as f32 / SR * CRACKLE_POPS_PER_SEC) as usize;
     for _ in 0..n_pops {
         let at = rng.unit() * (n as f32 / SR - 0.01);
         let pn = n_samples(0.003 + 0.004 * rng.unit());
@@ -303,6 +312,9 @@ pub fn texture_bed(rng: &mut NoiseStream) -> Vec<f32> {
 }
 
 // ------------------------------------------------- musical stems (Phase 2)
+// #[cfg(test)] TEST ANCHORS since the all-generative decision: the frozen
+// realizations' pins prove the SHARED cores below still render the
+// owner-ratified sound. The cores + voices stay live (gen_beds).
 // The ratified 8-bar lofi composition (#633) — the frozen `score` tables
 // realized 1:1 from the Phase 0 python (`p3_*` renders, owner LISTEN-passed
 // 2026-07-16). All-procedural by owner decision: no open model emits 4
@@ -311,10 +323,12 @@ pub fn texture_bed(rng: &mut NoiseStream) -> Vec<f32> {
 
 use super::score;
 
+#[cfg(test)]
 fn beat_s() -> f32 {
     score::beat_s()
 }
 
+#[cfg(test)]
 fn bar_s() -> f32 {
     score::beat_s() * score::BEATS_PER_BAR
 }
@@ -362,6 +376,7 @@ fn ep_pluck_h2(midi: u8, dur_s: f32, vel: f32, h2: f32) -> Vec<f32> {
 
 /// The day EP voice — the ratified FIXED 2nd harmonic (identity guarded
 /// by the day fingerprint pins).
+#[cfg(test)]
 fn ep_pluck(midi: u8, dur_s: f32, vel: f32) -> Vec<f32> {
     ep_pluck_h2(midi, dur_s, vel, 0.35)
 }
@@ -410,6 +425,7 @@ fn hat(rng: &mut NoiseStream, open: bool) -> Vec<f32> {
 }
 
 /// Warm EP-chord bed at pitch — the "someone left the radio on" floor.
+#[cfg(test)]
 pub fn stem_pad() -> Vec<f32> {
     let tau = std::f32::consts::TAU;
     let mut buf = vec![0.0f32; n_samples(score::loop_secs())];
@@ -442,6 +458,7 @@ pub fn stem_pad() -> Vec<f32> {
 }
 
 /// Sparse high EP notes over the pad — the empty-office humanity layer.
+#[cfg(test)]
 pub fn stem_sparkle() -> Vec<f32> {
     let mut buf = vec![0.0f32; n_samples(score::loop_secs())];
     for &(beats, note, vel) in &score::SPARKLE_SCORE {
@@ -453,6 +470,7 @@ pub fn stem_sparkle() -> Vec<f32> {
 }
 
 /// The swung mid-register EP comping that joins at moderate busy-ness.
+#[cfg(test)]
 pub fn stem_keys() -> Vec<f32> {
     let mut buf = vec![0.0f32; n_samples(score::loop_secs())];
     for &(beats, note, vel) in &score::KEYS_SCORE {
@@ -466,6 +484,7 @@ pub fn stem_keys() -> Vec<f32> {
 /// Kick/snare/swung-hat groove — the busy-office layer. Hat velocities are
 /// the frozen score's; each hit's NOISE content is fresh per call (rng),
 /// matching the python render's per-bar draws.
+#[cfg(test)]
 pub fn stem_drums(rng: &mut NoiseStream) -> Vec<f32> {
     let swing = 0.10 * beat_s();
     let mut buf = vec![0.0f32; n_samples(score::loop_secs())];
@@ -501,18 +520,83 @@ fn ep_pluck_vel(midi: u8, dur_s: f32, vel: f32) -> Vec<f32> {
     ep_pluck_h2(midi, dur_s, vel, 0.18 + 0.45 * vel * vel)
 }
 
+/// The plucked-string lead voice ("nylon" family) — the SECOND entry in
+/// the lead-instrument registry (`compose::LeadVoice`), added end-to-end
+/// to prove the add-an-instrument seam: sharper 4ms pick attack, a
+/// longer-ringing fundamental, brighter velocity-keyed early harmonics,
+/// and a slightly inharmonic pick zing that dies fast.
+fn pluck_note(midi: u8, dur_s: f32, vel: f32) -> Vec<f32> {
+    let n = n_samples(dur_s);
+    let f = midi_freq(midi as f32);
+    let tau = std::f32::consts::TAU;
+    let h2 = 0.30 + 0.30 * vel;
+    // humanization (measurement finding: every note decayed within a
+    // 25ms band — "stamped from one mold"): decay follows pitch (higher
+    // strings die faster) and breathes per note; the velocity bits are
+    // the deterministic jitter source, so identical inputs still render
+    // identical buffers (the purity contract).
+    let pitch_k = 1.0 + (midi as f32 - 72.0) * 0.02;
+    let breath = 0.85 + 0.30 * (vel * 137.5).fract();
+    let d = 3.4 * pitch_k * breath;
+    let mut buf: Vec<f32> = (0..n)
+        .map(|i| {
+            let t = i as f32 / SR;
+            let attack = (t / 0.004).min(1.0);
+            let sig = (tau * f * t).sin() * (-t * d).exp()
+                + h2 * (tau * 2.0 * f * t).sin() * (-t * d * 1.76).exp()
+                + 0.18 * (tau * 3.004 * f * t).sin() * (-t * d * 2.94).exp()
+                + 0.07 * (tau * 4.21 * f * t).sin() * (-t * 22.0).exp();
+            sig * attack * vel
+        })
+        .collect();
+    // the pick itself: ~6ms of 2-5kHz finger/nail noise on the onset —
+    // what separates "nylon pluck" from "brighter Rhodes"
+    let pn = n_samples(0.006);
+    let mut prng = NoiseStream::new(((midi as u64) << 32) ^ vel.to_bits() as u64);
+    let raw: Vec<f32> = (0..pn).map(|_| prng.norm()).collect();
+    let pick_noise = bandpass(&raw, 2000.0, 5000.0);
+    for (i, &v) in pick_noise.iter().enumerate() {
+        if let Some(slot) = buf.get_mut(i) {
+            *slot += v * (-(i as f32 / SR) * 700.0).exp() * 0.10 * vel;
+        }
+    }
+    buf
+}
+
+#[cfg(test)]
 fn night_bar_s() -> f32 {
     score::night_beat_s() * score::BEATS_PER_BAR
 }
 
 /// Night pad: soft slow chords + the SUB-BASS floor in one buffer (the
 /// harmonic floor moves as one — no new LoopStem, no scene change).
+#[cfg(test)]
 pub fn night_pad() -> Vec<f32> {
+    night_pad_core(
+        &score::NIGHT_CHORDS,
+        &score::NIGHT_BASS_ROOTS,
+        night_bar_s(),
+        score::NIGHT_LOOP_BARS,
+    )
+}
+
+/// The night pad recipe over arbitrary changes — the frozen [`night_pad`]
+/// and the composer's generated night takes share this one body (the
+/// frozen fingerprint pins prove the delegation is byte-faithful).
+fn night_pad_core(
+    chords: &[[u8; 4]],
+    bass_roots: &[u8; 4],
+    bar_s: f32,
+    loop_bars: usize,
+) -> Vec<f32> {
     let tau = std::f32::consts::TAU;
-    let mut buf = vec![0.0f32; n_samples(score::night_loop_secs())];
-    for bar in 0..score::NIGHT_LOOP_BARS {
-        let (chord, root) = score::night_chord_at_bar(bar);
-        let dur = night_bar_s() + 1.2;
+    let mut buf = vec![0.0f32; n_samples(bar_s * loop_bars as f32)];
+    for bar in 0..loop_bars {
+        let (chord, root) = (
+            chords[bar % chords.len()],
+            bass_roots[bar % bass_roots.len()],
+        );
+        let dur = bar_s + 1.2;
         let nd = n_samples(dur);
         let mut sig = vec![0.0f32; nd];
         for (i, &m) in chord.iter().enumerate() {
@@ -529,7 +613,7 @@ pub fn night_pad() -> Vec<f32> {
         // the sub floor: half-note pulses, the second softer (a breath)
         let fb = midi_freq(root as f32);
         for half in 0..2 {
-            let hdur = night_bar_s() / 2.0 + 0.4;
+            let hdur = bar_s / 2.0 + 0.4;
             let hn = n_samples(hdur);
             let env = env_ar(hn, 0.06, 0.9);
             let g = if half == 0 { 1.0 } else { 0.7 };
@@ -539,9 +623,9 @@ pub fn night_pad() -> Vec<f32> {
                     ((tau * fb * t).sin() + 0.15 * (tau * 2.0 * fb * t).sin()) * env(i) * g * 3.2
                 })
                 .collect();
-            place(&mut sig, &bass, half as f32 * night_bar_s() / 2.0, 1.0);
+            place(&mut sig, &bass, half as f32 * bar_s / 2.0, 1.0);
         }
-        place(&mut buf, &sig, bar as f32 * night_bar_s(), 1.0);
+        place(&mut buf, &sig, bar as f32 * bar_s, 1.0);
     }
     let mut buf = lowpass(&buf, 2200.0);
     for (i, v) in buf.iter_mut().enumerate() {
@@ -551,20 +635,49 @@ pub fn night_pad() -> Vec<f32> {
     master(&buf, 1.6, 0.75)
 }
 
+#[cfg(test)]
 fn night_events_stem(events: &[(f32, u8, f32)], dur_s: f32, cutoff_hz: f32, peak: f32) -> Vec<f32> {
-    let mut buf = vec![0.0f32; n_samples(score::night_loop_secs())];
+    events_stem_core(score::night_loop_secs(), events, dur_s, cutoff_hz, peak)
+}
+
+/// An at-seconds EP event table rendered at an arbitrary loop length —
+/// the shared core under the frozen night stems, the frozen day takes,
+/// and the composer's generated takes (all velocity-keyed EP voice).
+fn events_stem_core(
+    loop_secs: f32,
+    events: &[(f32, u8, f32)],
+    dur_s: f32,
+    cutoff_hz: f32,
+    peak: f32,
+) -> Vec<f32> {
+    events_stem_voiced(loop_secs, events, dur_s, cutoff_hz, peak, ep_pluck_vel)
+}
+
+/// The instrument-parameterized event renderer — THE dispatch point a new
+/// lead voice plugs into (`note_fn` renders one note: midi, dur, vel).
+fn events_stem_voiced(
+    loop_secs: f32,
+    events: &[(f32, u8, f32)],
+    dur_s: f32,
+    cutoff_hz: f32,
+    peak: f32,
+    note_fn: fn(u8, f32, f32) -> Vec<f32>,
+) -> Vec<f32> {
+    let mut buf = vec![0.0f32; n_samples(loop_secs)];
     for &(at, note, vel) in events {
-        place(&mut buf, &ep_pluck_vel(note, dur_s, vel), at, 1.0);
+        place(&mut buf, &note_fn(note, dur_s, vel), at, 1.0);
     }
     let mut buf = lowpass(&buf, cutoff_hz);
     normalize(&mut buf, peak);
     master(&buf, 1.6, peak)
 }
 
+#[cfg(test)]
 pub fn night_keys() -> Vec<f32> {
     night_events_stem(&score::NIGHT_KEYS, 1.1, 2000.0, 0.7)
 }
 
+#[cfg(test)]
 pub fn night_sparkle() -> Vec<f32> {
     night_events_stem(&score::NIGHT_SPARKLE, 2.2, 2800.0, 0.5)
 }
@@ -583,15 +696,36 @@ fn drum_hit(rng: &mut NoiseStream, kind: score::DrumKind) -> Vec<f32> {
 
 /// Kick + soft closed hats only — timing and gains frozen in the score
 /// (humanization baked); each hit's NOISE content is fresh per call.
+#[cfg(test)]
 pub fn night_drums(rng: &mut NoiseStream) -> Vec<f32> {
-    let mut buf = vec![0.0f32; n_samples(score::night_loop_secs())];
-    for &(at, kind, gain) in &score::NIGHT_DRUMS {
+    drums_core(
+        score::night_loop_secs(),
+        &score::NIGHT_DRUMS,
+        6000.0,
+        2.0,
+        0.8,
+        rng,
+    )
+}
+
+/// A frozen/generated drum event table rendered at an arbitrary loop
+/// length — the shared core under night, the day takes, and the composer.
+fn drums_core(
+    loop_secs: f32,
+    table: &[(f32, score::DrumKind, f32)],
+    cutoff_hz: f32,
+    drive: f32,
+    peak: f32,
+    rng: &mut NoiseStream,
+) -> Vec<f32> {
+    let mut buf = vec![0.0f32; n_samples(loop_secs)];
+    for &(at, kind, gain) in table {
         let hit = drum_hit(rng, kind);
         place(&mut buf, &hit, at, gain);
     }
-    let mut buf = lowpass(&buf, 6000.0);
-    normalize(&mut buf, 0.8);
-    master(&buf, 2.0, 0.8)
+    let mut buf = lowpass(&buf, cutoff_hz);
+    normalize(&mut buf, peak);
+    master(&buf, drive, peak)
 }
 
 /// Length of the loop-seam splice on the night texture: its buffer is the
@@ -605,8 +739,15 @@ const NIGHT_TEXTURE_SPLICE_S: f32 = 0.03;
 /// by construction, no runtime sidechain machinery. (The audition tiled a
 /// longer free-running bed instead; the per-loop repetition difference is
 /// inaudible-class quiet noise — re-verified at the LISTEN gate.)
+#[cfg(test)]
 pub fn night_texture(rng: &mut NoiseStream) -> Vec<f32> {
-    let n = n_samples(score::night_loop_secs());
+    night_texture_core(score::night_loop_secs(), &score::NIGHT_KICK_TIMES, rng)
+}
+
+/// The duck-baked night room tone at an arbitrary loop length — shared by
+/// the frozen night take and the composer's generated night takes.
+fn night_texture_core(loop_secs: f32, kick_times: &[f32], rng: &mut NoiseStream) -> Vec<f32> {
+    let n = n_samples(loop_secs);
     let f = n_samples(NIGHT_TEXTURE_SPLICE_S);
     // synthesize f EXTRA samples past the loop end: the splice blends a
     // genuine CONTINUATION of the tail into the head, so the wrap
@@ -624,7 +765,7 @@ pub fn night_texture(rng: &mut NoiseStream) -> Vec<f32> {
             hiss[i] * 0.010 + room
         })
         .collect();
-    let n_pops = (n as f32 / SR * 4.0) as usize;
+    let n_pops = (n as f32 / SR * CRACKLE_POPS_PER_SEC) as usize;
     for _ in 0..n_pops {
         let at = rng.unit() * (n as f32 / SR - 0.01);
         let pn = n_samples(0.003 + 0.004 * rng.unit());
@@ -646,7 +787,7 @@ pub fn night_texture(rng: &mut NoiseStream) -> Vec<f32> {
     normalize(&mut buf, 0.45);
     let depth = 10f32.powf(-4.0 / 20.0);
     let rel = n_samples(0.15);
-    for &kt in &score::NIGHT_KICK_TIMES {
+    for &kt in kick_times {
         let i0 = n_samples(kt);
         for j in 0..rel {
             let Some(slot) = buf.get_mut(i0 + j) else {
@@ -670,12 +811,19 @@ pub fn night_texture(rng: &mut NoiseStream) -> Vec<f32> {
 
 /// The original day pad recipe (harmonic stack, staggered onsets, slow AM)
 /// over a take's changes.
+#[cfg(test)]
 pub(super) fn day_take_pad(take: &score::DayTake) -> Vec<f32> {
+    day_pad_core(take.chords, take.bar_s(), score::DAY_TAKE_LOOP_BARS)
+}
+
+/// The day pad recipe over arbitrary changes — the frozen day takes and
+/// the composer's generated day takes share this one body.
+fn day_pad_core(chords: &[[u8; 4]], bar_s: f32, loop_bars: usize) -> Vec<f32> {
     let tau = std::f32::consts::TAU;
-    let mut buf = vec![0.0f32; n_samples(take.loop_secs())];
-    for bar in 0..score::DAY_TAKE_LOOP_BARS {
-        let chord = take.chord_at_bar(bar);
-        let dur = take.bar_s() + 0.9;
+    let mut buf = vec![0.0f32; n_samples(bar_s * loop_bars as f32)];
+    for bar in 0..loop_bars {
+        let chord = chords[bar % chords.len()];
+        let dur = bar_s + 0.9;
         let nd = n_samples(dur);
         let mut chord_sig = vec![0.0f32; nd];
         for (i, &m) in chord.iter().enumerate() {
@@ -689,7 +837,7 @@ pub(super) fn day_take_pad(take: &score::DayTake) -> Vec<f32> {
                 *slot += tone * env(j);
             }
         }
-        place(&mut buf, &chord_sig, bar as f32 * take.bar_s(), 1.0);
+        place(&mut buf, &chord_sig, bar as f32 * bar_s, 1.0);
     }
     let mut buf = lowpass(&buf, 2600.0);
     for (i, v) in buf.iter_mut().enumerate() {
@@ -701,6 +849,7 @@ pub(super) fn day_take_pad(take: &score::DayTake) -> Vec<f32> {
 
 /// An at-seconds EP event table rendered at a take's loop length (the
 /// day-take twin of `night_events_stem`).
+#[cfg(test)]
 fn day_take_events_stem(
     take: &score::DayTake,
     events: &[(f32, u8, f32)],
@@ -708,36 +857,117 @@ fn day_take_events_stem(
     cutoff_hz: f32,
     peak: f32,
 ) -> Vec<f32> {
-    let mut buf = vec![0.0f32; n_samples(take.loop_secs())];
-    for &(at, note, vel) in events {
-        place(&mut buf, &ep_pluck_vel(note, dur_s, vel), at, 1.0);
-    }
-    let mut buf = lowpass(&buf, cutoff_hz);
-    normalize(&mut buf, peak);
-    master(&buf, 1.6, peak)
+    events_stem_core(take.loop_secs(), events, dur_s, cutoff_hz, peak)
 }
 
 /// The hand-written lead melody — a day take's singable identity.
+#[cfg(test)]
 pub(super) fn day_take_sparkle(take: &score::DayTake) -> Vec<f32> {
     day_take_events_stem(take, take.sparkle, 2.0, 3200.0, 0.6)
 }
 
 /// RNG-comped mid-register EP, frozen with the v4 swing feel baked in.
+#[cfg(test)]
 pub(super) fn day_take_keys(take: &score::DayTake) -> Vec<f32> {
     day_take_events_stem(take, take.keys, 0.9, 2400.0, 0.8)
 }
 
 /// The full day kit (kick/snare/hats incl. the bar-4/8 open hat) from the
 /// frozen event table; each hit's NOISE content is fresh per call.
+#[cfg(test)]
 pub(super) fn day_take_drums(take: &score::DayTake, rng: &mut NoiseStream) -> Vec<f32> {
-    let mut buf = vec![0.0f32; n_samples(take.loop_secs())];
-    for &(at, kind, gain) in take.drums {
-        let hit = drum_hit(rng, kind);
-        place(&mut buf, &hit, at, gain);
+    drums_core(take.loop_secs(), take.drums, 7500.0, 2.2, 0.85, rng)
+}
+
+// ------------------------------------------------- generated takes
+// The composer bridge: one GeneratedScore -> the five TRACK_STEMS beds,
+// through the SAME cores the frozen takes render with (day pad / night
+// pad+sub / velocity-keyed EP events / event-table drums / textures). The
+// generator's spectral identity is therefore the ratified production
+// chain by construction; only the notes are new.
+
+use super::compose::{GeneratedScore, LeadVoice, Mood};
+
+/// The owner-adopted "bright" master for GENERATED takes (the mix
+/// critic's top finding: the effective corner sat at ~1kHz, 2-3× steeper
+/// than the genre LTAS): a one-pole tilt shelf (+0.8× highs above
+/// ~1.2kHz ≈ +5dB above 2kHz) then re-normalize to the bed's pre-tilt
+/// peak. FROZEN takes keep their ratified darker chain untouched (their
+/// fingerprint pins stay valid; brightening them is a separate re-bless).
+fn brighten(buf: &mut [f32]) {
+    let pre_peak = buf.iter().fold(0.0f32, |a, &v| a.max(v.abs()));
+    let a = (-std::f32::consts::TAU * 1200.0 / SR).exp();
+    let mut lp = 0.0f32;
+    for s in buf.iter_mut() {
+        lp = a * lp + (1.0 - a) * *s;
+        *s += 0.8 * (*s - lp);
     }
-    let mut buf = lowpass(&buf, 7500.0);
-    normalize(&mut buf, 0.85);
-    master(&buf, 2.2, 0.85)
+    normalize(buf, pre_peak.max(1e-6));
+}
+
+/// The lead-voice registry's render map — one arm per instrument.
+fn lead_voice_fn(score: &GeneratedScore) -> fn(u8, f32, f32) -> Vec<f32> {
+    match score.lead_voice {
+        LeadVoice::EpVel => ep_pluck_vel,
+        LeadVoice::Pluck => pluck_note,
+    }
+}
+
+/// One lane of a generated take (`bank::TRACK_STEMS` order: pad,
+/// sparkle, keys, drums, texture) — the CHUNKED build unit the wasm
+/// driver spreads across ticks (a full five-bed build in one rAF tick
+/// hitched the page at every song change once the cadence went to
+/// 10 minutes). Applies the brighten master stage; an out-of-range lane
+/// returns silence (never panics). [`gen_beds`] delegates here lane by
+/// lane, so the chunked and one-shot paths cannot drift.
+pub fn gen_bed(score: &GeneratedScore, lane: usize, rng: &mut NoiseStream) -> Vec<f32> {
+    let loop_s = score.loop_secs();
+    let mut bed = match (score.mood, lane) {
+        (Mood::Day, 0) => day_pad_core(
+            &score.bar_chords,
+            score.bar_s(),
+            super::compose::GEN_LOOP_BARS,
+        ),
+        (Mood::Day, 1) => events_stem_voiced(
+            loop_s,
+            &score.sparkle,
+            2.0,
+            3200.0,
+            0.6,
+            lead_voice_fn(score),
+        ),
+        (Mood::Day, 2) => events_stem_core(loop_s, &score.keys, 0.9, 2400.0, 0.8),
+        (Mood::Day, 3) => drums_core(loop_s, &score.drums, 7500.0, 2.2, 0.85, rng),
+        (Mood::Day, 4) => texture_bed(rng),
+        (Mood::Night, 0) => night_pad_core(
+            &score.bar_chords,
+            &score.bass_roots,
+            score.bar_s(),
+            super::compose::GEN_LOOP_BARS,
+        ),
+        (Mood::Night, 1) => events_stem_voiced(
+            loop_s,
+            &score.sparkle,
+            2.2,
+            2800.0,
+            0.5,
+            lead_voice_fn(score),
+        ),
+        (Mood::Night, 2) => events_stem_core(loop_s, &score.keys, 1.1, 2000.0, 0.7),
+        (Mood::Night, 3) => drums_core(loop_s, &score.drums, 6000.0, 2.0, 0.8, rng),
+        (Mood::Night, 4) => night_texture_core(loop_s, &score.kick_times, rng),
+        _ => Vec::new(),
+    };
+    brighten(&mut bed);
+    bed
+}
+
+/// Synthesize a generated take's five beds in `bank::TRACK_STEMS` order
+/// (pad, sparkle, keys, drums, texture). Noise content draws from `rng`
+/// like every non-boot track build (identity = the generated score +
+/// the shared cores, not stream byte equality).
+pub fn gen_beds(score: &GeneratedScore, rng: &mut NoiseStream) -> [Vec<f32>; 5] {
+    std::array::from_fn(|lane| gen_bed(score, lane, rng))
 }
 
 #[cfg(test)]
@@ -1028,6 +1258,71 @@ mod tests {
                 hats > 0.0015,
                 "day-take hats/snare must be audible in 3.5-6.5k: {hats:.5}"
             );
+        }
+    }
+
+    #[test]
+    fn brighten_lifts_the_top_and_preserves_the_peak() {
+        // the one stage unique to the SHIPPING chain (generated beds
+        // only) — pin its two signatures so the tilt can't silently
+        // drift or vanish: the high band gains ~+5dB on broadband
+        // material, and the pre-tilt peak is restored exactly
+        let mut rng = NoiseStream::new(17);
+        let noise: Vec<f32> = (0..n_samples(2.0)).map(|_| rng.norm() * 0.3).collect();
+        let mut posted = noise.clone();
+        brighten(&mut posted);
+        // measure as a hi/lo RATIO — a share-of-total is insensitive
+        // when the tilt lifts most of the spectrum (the denominator
+        // grows too); the +0.8 amplitude shelf is ×~3.2 in power
+        let ratio =
+            |b: &[f32]| band_energy_share(b, 4000.0, 8000.0) / band_energy_share(b, 100.0, 500.0);
+        let (r_in, r_out) = (ratio(&noise), ratio(&posted));
+        assert!(
+            r_out > r_in * 2.0,
+            "tilt must lift hi/lo by the shelf: {r_in:.3} -> {r_out:.3}"
+        );
+        let peak = |b: &[f32]| b.iter().fold(0.0f32, |a, &v| a.max(v.abs()));
+        assert!(
+            (peak(&posted) - peak(&noise)).abs() < 1e-3,
+            "brighten must re-normalize to the pre-tilt peak"
+        );
+    }
+
+    #[test]
+    fn generated_beds_are_finite_phase_locked_and_in_the_sound_world() {
+        // the composer bridge renders through the ratified cores, so a
+        // couple of seeds per mood suffice as the synthesis smoke — the
+        // musical invariants are the compose seed-sweep's job
+        for mood in [Mood::Day, Mood::Night] {
+            for seed in [0u64, 7] {
+                let score = super::super::compose::compose(mood, seed);
+                let mut rng = NoiseStream::new(9);
+                let beds = gen_beds(&score, &mut rng);
+                let n = n_samples(score.loop_secs());
+                for (i, bed) in beds.iter().enumerate() {
+                    assert!(
+                        bed.iter().all(|v| v.is_finite() && v.abs() <= 1.0),
+                        "{mood:?} seed {seed} bed {i}: NaN/over-peak"
+                    );
+                }
+                // the four musical beds phase-lock on the take's length
+                for (i, bed) in beds.iter().enumerate().take(4) {
+                    assert_eq!(bed.len(), n, "{mood:?} seed {seed} bed {i} length");
+                }
+                // texture: day free-runs (pow2 room tone), night bakes the
+                // duck at the take length — the two ratified conventions
+                match mood {
+                    Mood::Day => assert_eq!(beds[4].len(), BED_LOOP_SAMPLES),
+                    Mood::Night => assert_eq!(beds[4].len(), n),
+                }
+                // the sound-world signature: drums stay kick-dominant
+                let low = band_energy_share(&beds[3], 62.5, 125.0);
+                let mid = band_energy_share(&beds[3], 125.0, 250.0);
+                assert!(
+                    low > 0.2 && low > mid * 0.8,
+                    "{mood:?} seed {seed}: drums lost the kick floor ({low:.3}/{mid:.3})"
+                );
+            }
         }
     }
 
