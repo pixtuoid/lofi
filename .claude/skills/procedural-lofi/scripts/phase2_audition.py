@@ -22,7 +22,7 @@ SR = s0.SR
 LOOP_S = s0.LOOP_S
 BEAT = s0.BEAT
 BAR = s0.BAR
-RAMP_PER_S = 0.5  # pinned copy of mixer.rs RAMP_PER_S
+RAMP_PER_S = 0.5  # copy of pixtuoid's mixer.rs RAMP_PER_S; nothing pins it
 
 
 def chords8():
@@ -74,14 +74,14 @@ def stem_keys8():
             s0.place(buf, s0.ep_pluck(note, vel=0.5 + 0.4 * r.random()), at)
     return s0.normalize(s0.lowpass(buf, 2400), 0.8)
 
-# scene/src/audio.rs tier tables [empty, moderate, busy]
+# copies of pixtuoid's tier tables (see the header) [empty, moderate, busy]
 PAD_GAIN = [0.75, 0.70, 0.65]
 SPARKLE_GAIN = [0.70, 0.0, 0.0]
 KEYS_GAIN = [0.0, 0.60, 0.70]
 DRUMS_GAIN = [0.0, 0.35, 0.60]
 TEXTURE_GAIN = [0.28, 0.30, 0.28]
 TYPING_GAIN = [0.0, 0.50, 0.80]
-TYPING_BURSTS_PER_MIN_AT_FULL = 28  # pinned copy of mixer.rs BURSTS_PER_MIN_AT_FULL
+TYPING_BURSTS_PER_MIN_AT_FULL = 28  # copy of pixtuoid's mixer.rs BURSTS_PER_MIN_AT_FULL; nothing pins it
 
 
 def render_stems():
@@ -115,7 +115,7 @@ def soak(stems, tier, minutes=2.0):
 
 def transition(stems, schedule, total_s):
     """schedule: [(at_s, tier)] — per-stem gains slew toward the active tier's
-    target at RAMP_PER_S, exactly like mixer.rs."""
+    target at RAMP_PER_S, like pixtuoid's mixer."""
     n = s0.n_samples(total_s)
     dt = 1.0 / SR
     out_parts = {}

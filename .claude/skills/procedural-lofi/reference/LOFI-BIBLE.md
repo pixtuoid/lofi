@@ -1,4 +1,4 @@
-# pixtuoid Lofi Production Bible (synthesis of 5 research reports)
+# Lofi Production Bible (synthesis of 5 research reports)
 
 Report tags: [H]=harmony, [R]=rhythm, [SD]=sound-design, [M]=mixing, [G]=generative. Ratified rule applied throughout: **where literature and our measured Lofi Girl fingerprints disagree, the measurement wins.**
 
@@ -6,7 +6,7 @@ Report tags: [H]=harmony, [R]=rhythm, [SD]=sound-design, [M]=mixing, [G]=generat
 
 ## 1. RULES — note-table generator (harmony / melody / form)
 
-Each rule → the pixtuoid parameter it maps to.
+Each rule → the parameter it maps to here.
 
 - **R1. Never emit a plain triad; every chord carries a 7th** (the genre marker). → chord-interval table rows always include interval 10 or 11. [H, orphiq.com/resources/lofi-chord-progressions]
 - **R2. Quality palette**: major degrees → maj7/maj9 {0,4,7,11,(14)}; minor → m7/m9/m11 {0,3,7,10,(14),(17)}; V → 7/9/7#5/7b9#5; color → dim7 {0,3,6,9}, m7b5 {0,3,6,10}. → interval-set table. [H]
@@ -18,7 +18,7 @@ Each rule → the pixtuoid parameter it maps to.
 - **R8. Nearest-voicing voice-leading**: minimize total semitone motion between adjacent chords; invert so bass moves stepwise (±2 semitones) where possible. → voicing selector cost function. [H]
 - **R9. Melody pool = pentatonic** (+ maj7 color tone on major; dorian 6 on minor); chord tones (3rd/7th preferred over root) on strong beats, extensions on weak. → melody note table, chord-relative. [H]
 - **R10. Melody form**: 2-bar phrase = A + A′ (exactly one note or rhythm cell mutated); 4-bar period = call (ends off-tonic) + response (ends on chord tone); density 2–4 onsets/bar. → phrase generator. [H]
-- **R11. Harmony is static for the whole track; the arrangement IS the busy-ness stem mixer** — sections 20–30s, drums drop every 3rd–4th section, ABABB macro form. → stem-gate scheduler (already exists). [H, richardpryn.com/lofi-music-structure/]
+- **R11. Harmony is static for the whole track; the arrangement IS the busy-ness stem mixer** — sections 20–30s, drums drop every 3rd–4th section, ABABB macro form. → the consumer's stem gating (pixtuoid's mixer); this crate renders the lanes it gates. [H, richardpryn.com/lofi-music-structure/]
 - **R12. Whole chords land 10–30 ms behind the grid** (composes with swing offsets). → per-stem lag offset. [H]
 - **R13. Melody rhythm duration prior: 65% 8ths / 25% 16ths / 5% quarters / 5% halves.** → duration table. [G, mtsandra.github.io/blog/2023/lofi-generator/]
 
@@ -36,7 +36,7 @@ Each rule → the pixtuoid parameter it maps to.
 
 ## 3. SOUND targets per voice
 
-**Pad** — extensions/upper-shell register (MIDI 60–72+). Slow attack / long release AR; dual-voice detune **±5–10 cents**. Brickwall LPF ~2–4 kHz; HPF ~140 Hz. Primary sidechain-pump target. Loop length incommensurate with all other stems (see §4). [M fractal forum detune; SD modeaudio.com]
+**Pad** — extensions/upper-shell register (MIDI 60–72+). Slow attack / long release AR; dual-voice detune **±5–10 cents**. Brickwall LPF ~2–4 kHz; HPF ~140 Hz. Primary sidechain-pump target. Loop length incommensurate with all other stems (see §4) (declined here: the musical lanes phase-lock — AGENTS.md Invariants). [M fractal forum detune; SD modeaudio.com]
 
 **Bass** — sine + tanh saturation for audible harmonics (the sub carries power, harmonics carry audibility — matches our <62 Hz fingerprint). Root-only below MIDI 48; line restricted to root/5th/leading-tone. Dead center, mono. Soft attack; ducked by kick (kick wins the transient, sub swells behind). [SD edmprod.com/lofi-hip-hop/; G devpost lofigen; M joeysturgistones.com]
 
@@ -60,17 +60,17 @@ Each rule → the pixtuoid parameter it maps to.
 - **Bus order & glue**: corrective EQ → **glue comp (1.5–2:1, attack 10–30 ms, release ~150 ms, ≤2 dB GR, total chain <4 dB)** → tape chain (sat/wow/flutter) → limiter. [M audiospectra.net]
 - **Loudness**: **−16 to −14 LUFS integrated, ≤−1 dBTP**, no heavy limiting — an office bed plays under speech and quieter/more dynamic than a release master; preserved dynamics are themselves anti-fatigue. [M veniamastering.studio, widenisland.com]
 - **Stereo**: sub + kick dead center; **side-channel HPF ~150 Hz @ 6 dB/oct** (vinyl elliptical EQ — a slope, not a brickwall); width comes from the top: stereo-opposed wow/flutter, 180° EP autopan, slightly-panned duplicate noise beds. [SD gearspace mastering thread, flotownmastering.com]
-- **Anti-repetition**: stem loop lengths mutually **incommensurate** (Eno's 23½ s / 25⅞ s / 29 15/16 s model — never re-align); texture layers get ±2% pitch / ±3 dB per-instance variation; QA gate = **listen ≥4 repetitions** (the brain catches the seam on rep 3–4). [M reverbmachine.com, soundcy.com, audioedit.io]
+- **Anti-repetition**: stem loop lengths mutually **incommensurate** (Eno's 23½ s / 25⅞ s / 29 15/16 s model — never re-align) (declined here: the musical lanes phase-lock — AGENTS.md Invariants); texture layers get ±2% pitch / ±3 dB per-instance variation; QA gate = **listen ≥4 repetitions** (the brain catches the seam on rep 3–4). [M reverbmachine.com, soundcy.com, audioedit.io]
 
 ## 5. GENERATIVE lessons (prior art)
 
 - **The #1 repeated failure: naive Markov/stochastic harmony is directionless and never resolves.** Two independent authors hit it and abandoned it; fixed **jazz-turnaround grammar + substitution operators** (secondary dominants; base strings I–vi–ii–V, ii–V–I–vi) won. If stochastic flavor is ever wanted: forward-chain + backward-chain-from-resolution joined at a pivot. Our §1 ruleset already encodes the winning design. [G devpost.com/software/lofi-generator; medium.com/@w.patrick.kelly]
 - **Chord-relative melody encoding** (jacbz/Lofi, Apache-2.0): melody as scale degrees 0–15 against the *current chord*, 0=rest — quantizing to the chord's scale is the trick that keeps generated melodies consonant. Adopt the schema (Roman-numeral chord ints 0–8, valence/energy conditioning scalars map to busy-ness). [G github.com/jacbz/Lofi]
-- **Structure ceiling is low, deliberately**: best prior art tops out at 32-bar AABA with per-section stem add/drop; Magenta chose lofi *because* constrained structure makes "always sounds acceptable" achievable. Our busy-ness stem gating already exceeds prior art — **adding degrees of freedom is the main way these systems start sounding wrong.** [G magenta.withgoogle.com/lofi-player]
+- **Structure ceiling is low, deliberately**: best prior art tops out at 32-bar AABA with per-section stem add/drop; Magenta chose lofi *because* constrained structure makes "always sounds acceptable" achievable. pixtuoid's busy-ness stem gating already exceeds prior art — **adding degrees of freedom is the main way these systems start sounding wrong.** [G magenta.withgoogle.com/lofi-player]
 - **Static FX beat automated FX**: the Devpost author abandoned algorithmic effect automation as sounding worse than fixed settings — keep the tape chain parameters static per track, vary per seed. [G]
 - **The hard bugs are mix gremlins, not note choice** (low-piano ringing → the 200–700 Hz notch; missing transduction noise). Musicology confirms rolled-off highs + hiss/crackle ARE the genre's authenticity signal — our tape chain + crackle bed is the load-bearing layer, not garnish. [G Winston & Saywood 2019, IASPM; Neal, Organised Sound]
-- **Licenses**: safe to port — jacbz/Lofi (Apache-2.0), magenta/lofi-player (Apache-2.0, archived), **sharp11-jza** (BSD-2; probabilistic jazz-harmony automaton trained on the iRb 1,000+-standards corpus — the one shippable empirical transition grammar; port the automaton, not the JS), pieces-alex-bainter (MIT). **Do NOT bake tables derived from the Hooktheory dataset (CC BY-NC-SA, NonCommercial) or wayne391/lead-sheet-dataset (academic-only) into pixtuoid.** ChowTapeModel repo is GPL — reuse the paper's math only. [G]
+- **Licenses**: safe to port — jacbz/Lofi (Apache-2.0), magenta/lofi-player (Apache-2.0, archived), **sharp11-jza** (BSD-2; probabilistic jazz-harmony automaton trained on the iRb 1,000+-standards corpus — the one shippable empirical transition grammar; port the automaton, not the JS), pieces-alex-bainter (MIT). **Do NOT bake tables derived from the Hooktheory dataset (CC BY-NC-SA, NonCommercial) or wayne391/lead-sheet-dataset (academic-only) into this crate (or pixtuoid).** ChowTapeModel repo is GPL — reuse the paper's math only. [G]
 
 ---
 
-**Single most actionable deltas vs the current engine**: (1) retune the head bump toward ~60 Hz and re-fingerprint; (2) add differential swing (hats 56–62% vs kick/snare 52–54%) + the +10–30 ms kick/snare drag; (3) make the four stem loop lengths incommensurate; (4) velocity-keyed even-harmonic waveshaping on the EP pluck; (5) sidechain-duck the crackle bed off kick+snare; (6) glue comp (1.5:1/20 ms/150 ms/≤2 dB) ahead of the tanh stage; (7) enforce register clamps + the 140 Hz non-bass HPF so the measured 55–65%-below-62 Hz share is structural, not accidental.
+**Deltas vs the engine at the cut**: done — (1) head bump at 60–120 Hz (`lofi_post`), (2) differential swing + kick drag, (4) velocity-keyed EP 2nd harmonic (`ep_pluck_vel`); partial — (5) the night texture ducks off the kick; declined — (3) incommensurate loops (the musical lanes phase-lock by design, AGENTS.md Invariants; only the day texture runs free) and (7)'s 140 Hz HPF (stems are voiced out of the sub register instead, SKILL.md Phase 4); open — (6) glue comp.

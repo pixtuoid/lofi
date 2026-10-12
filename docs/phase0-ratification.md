@@ -1,10 +1,10 @@
 # Ambient sound Phase 0 — audition prototype (IvanWng97/pixtuoid#633)
 
-The ratified versions and measured targets the synth constants in `src/synth.rs` cite; the foley sounds it records (typing, rain, chime, printer) stayed in pixtuoid.
+The Phase 0 record: the taste anchor and the one-texture-stem noise floor the lanes keep; the foley it ratifies (typing, rain, chime, printer) stayed in pixtuoid. The music takes' fingerprints are pinned in `src/synth.rs`'s tests.
 
 Owner-ratified 2026-07-16. Tracks issue IvanWng97/pixtuoid#633 (locked decisions in the issue body;
 Phase 0 results in the comments). Everything here is deterministic numpy — run:
-`python3 .claude/skills/procedural-lofi/scripts/synth_audition.py` → `audio-demos/*.wav`.
+`python3 .claude/skills/procedural-lofi/scripts/synth_audition.py` → `audio-demos/*.wav` beside the script.
 
 ## Ratified sounds (taste anchor: demo_2_moderate)
 

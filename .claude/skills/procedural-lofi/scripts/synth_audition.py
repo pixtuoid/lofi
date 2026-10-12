@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Audition synth for pixtuoid ambient sound.
+"""Phase 0 audition synth from pixtuoid, whose office one-shots stayed there.
 
 Renders the lofi stems, the candidate procedural one-shots and busy-ness-level
 demo mixes to audio-demos/*.wav next to this script. Deterministic (seeded).

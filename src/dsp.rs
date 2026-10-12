@@ -1,11 +1,12 @@
 //! Minimal DSP kernel for the procedural synth — a real-input FFT, brickwall
 //! band filters, spectral-envelope noise shaping, and a deterministic noise
 //! stream. Everything runs ONCE per track to pre-render sample buffers
-//! (`synth.rs`), never per audio frame. Dependency-free on purpose:
-//! a consumer's wasm ships this module, and an FFT crate is a download every
-//! visitor pays.
+//! ([`render_lane`](crate::render_lane)), never per audio frame.
+//! Dependency-free on purpose: a consumer's wasm ships this module, and an FFT
+//! crate is a download every visitor pays.
 
-/// The one sample rate every buffer in this module uses (CD-standard mono).
+/// The one sample rate every buffer this crate makes or measures uses
+/// (CD-standard mono).
 pub const SAMPLE_RATE: u32 = 44_100;
 
 /// ⌊2⁶⁴/φ⌋, φ the golden ratio: splitmix64's increment.
@@ -25,9 +26,9 @@ fn splitmix_draw(seed: u64, n: u64) -> u64 {
     splitmix64(seed.wrapping_add(n.wrapping_mul(GOLDEN_GAMMA)))
 }
 
-/// Deterministic noise stream over the canonical splitmix64 finalizer
-/// (splitmix64) — seedable, so synthesized assets are reproducible
-/// run-to-run.
+/// Deterministic noise stream over the splitmix64 finalizer — seedable, so
+/// synthesized assets are reproducible run-to-run. No `Clone`: a clone replays
+/// the same draws, and the draw order is the sound.
 #[derive(Debug)]
 pub struct NoiseStream {
     seed: u64,
@@ -210,7 +211,9 @@ fn bin_freq(k: usize, n: usize, hz_per_bin: f32) -> f32 {
 
 /// Brickwall band-pass via FFT bin zeroing. Construction-time only — a
 /// linear-phase FIR would be overkill for pre-rendered assets. Keeps
-/// `buf.len()` (internally pads to a power of 2).
+/// `buf.len()`; `buf` is zero-padded to the next power of two, so a
+/// power-of-two buffer filters circularly (a seamless loop stays seamless) and
+/// any other length does not.
 pub fn bandpass(buf: &[f32], lo_hz: f32, hi_hz: f32) -> Vec<f32> {
     let (mut re, mut im, tw, hz_per_bin) = forward_spectrum(buf);
     let n = 2 * tw.len();
@@ -268,19 +271,20 @@ pub(crate) fn warp_resample(buf: &[f32], warps: &[(f32, f32)]) -> Vec<f32> {
 /// A power-of-two block of noise FFT-shaped to a measured octave-band
 /// envelope — CIRCULARLY seamless by construction (FFT-domain shaping is
 /// periodic in the block), so the returned block loops without a click.
-/// `bands` are `(lo_hz, hi_hz, energy_percent)` rows.
+/// `bands` are `(lo_hz, hi_hz, energy_percent)` rows; the block is normalized
+/// to peak 1.0.
 ///
 /// # Panics
 ///
-/// If `n_pow2` is not a power of two.
+/// If `n_pow2` is not a power of two of at least 2.
 pub fn shaped_noise_loop(
     n_pow2: usize,
     bands: &[(f32, f32, f32)],
     rng: &mut NoiseStream,
 ) -> Vec<f32> {
     assert!(
-        n_pow2.is_power_of_two(),
-        "a noise loop is a power-of-two block"
+        n_pow2 >= 2 && n_pow2.is_power_of_two(),
+        "a noise loop is a power-of-two block of at least 2 samples"
     );
     let noise: Vec<f32> = (0..n_pow2).map(|_| rng.norm()).collect();
     let tw = twiddles(n_pow2);
@@ -366,6 +370,12 @@ pub fn band_energy_share(buf: &[f32], lo_hz: f32, hi_hz: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[should_panic(expected = "a noise loop is a power-of-two block of at least 2 samples")]
+    fn a_one_sample_noise_loop_is_refused_at_the_guard() {
+        shaped_noise_loop(1, &[(100.0, 200.0, 100.0)], &mut NoiseStream::new(1));
+    }
 
     #[test]
     fn fft_round_trips() {

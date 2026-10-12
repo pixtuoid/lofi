@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Freeze the ratified composition's random realization into Rust const tables
-(audio/score.rs input), so the Rust port is deterministic data, not a re-roll.
+(src/score.rs input), so the Rust port is deterministic data, not a re-roll.
 
 Mirrors the seeded draw ORDER inside synth_audition.py's stem fns 1:1 — if those
 fns change, re-run this AND re-audition (a new realization = a new take).

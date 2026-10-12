@@ -11,11 +11,10 @@
 //! The frozen takes are `#[cfg(test)]` fingerprint anchors, not a fallback.
 //!
 //! The seed fully determines the song, so generation is DETERMINISTIC — a
-//! caller that wants a new song picks a new seed (pixtuoid takes it from the
-//! clock); the same seed renders the same song everywhere.
+//! caller that wants a new song picks a new seed; the same seed composes the same
+//! score everywhere.
 
 use super::dsp::NoiseStream;
-use super::score::DrumKind;
 
 /// The listening context a song is composed for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -42,8 +41,22 @@ pub(crate) enum LeadVoice {
     Vibraphone,
 }
 
-/// A generated 8-bar composition — the runtime-sized twin of the frozen
-/// `score` tables.
+/// Beats in one bar (4/4).
+pub(super) const BEATS_PER_BAR: f32 = 4.0;
+
+/// Drum event kinds. The night groove deliberately uses only Kick + Hat (the
+/// sleepy register); the day grooves carry the full kit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum DrumKind {
+    Kick,
+    Snare,
+    Hat,
+    OpenHat,
+}
+
+/// One composed song — tempo, lead voice, harmonic timeline and every lane's
+/// events — that [`render_lane`](crate::render_lane) synthesizes. Fields stay
+/// private so a music-only patch can reshape them.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Score {
     pub(super) mood: Mood,
@@ -86,7 +99,7 @@ impl Score {
     }
 
     pub(super) fn bar_s(&self) -> f32 {
-        self.beat_s() * super::score::BEATS_PER_BAR
+        self.beat_s() * BEATS_PER_BAR
     }
 
     pub(crate) fn loop_secs(&self) -> f32 {
@@ -754,7 +767,7 @@ fn day_drums(
     g: &GrooveTemplate,
     beat_s: f32,
 ) -> (Vec<(f32, DrumKind, f32)>, Vec<f32>) {
-    let bar_s = beat_s * super::score::BEATS_PER_BAR;
+    let bar_s = beat_s * BEATS_PER_BAR;
     let mut out = Vec::new();
     let mut kicks = Vec::new();
     for bar in 0..GEN_LOOP_BARS {
@@ -809,7 +822,7 @@ fn day_drums(
 
 /// The night groove: kick + soft closed hats only (the sleepy register).
 fn night_drums(rng: &mut NoiseStream, beat_s: f32) -> (Vec<(f32, DrumKind, f32)>, Vec<f32>) {
-    let bar_s = beat_s * super::score::BEATS_PER_BAR;
+    let bar_s = beat_s * BEATS_PER_BAR;
     let mut out = Vec::new();
     let mut kicks = Vec::new();
     for bar in 0..GEN_LOOP_BARS {
@@ -854,7 +867,7 @@ fn bass_events(
     beat_s: f32,
     mood: Mood,
 ) -> Vec<(f32, u8, f32)> {
-    let bar_s = beat_s * super::score::BEATS_PER_BAR;
+    let bar_s = beat_s * BEATS_PER_BAR;
     // night answers on beat 2 (the old baked sub's pulse); night's pickup_p 0.0
     // still DRAWS — deleting the branch would shift every later night draw
     let (answer_p, answer_beat, fifth_p, pickup_p, vel_base) = match mood {
@@ -896,7 +909,7 @@ fn keys_events(
     beat_s: f32,
     mood: Mood,
 ) -> Vec<(f32, u8, f32)> {
-    let bar_s = beat_s * super::score::BEATS_PER_BAR;
+    let bar_s = beat_s * BEATS_PER_BAR;
     let eighth = beat_s / 2.0;
     let (density, vel_base, vel_span) = match mood {
         Mood::Day => (range_f(rng, 0.28, 0.38), 0.42, 0.30),
@@ -956,7 +969,7 @@ pub fn compose(mood: Mood, seed: u64) -> Score {
     let (bar_chords, bar_roots) = timeline(&chords, &roots_pc, mood);
     let bpm = range_f(&mut rng, bpm_win.0, bpm_win.1).round();
     let beat_s = 60.0 / bpm;
-    let bar_s = beat_s * super::score::BEATS_PER_BAR;
+    let bar_s = beat_s * BEATS_PER_BAR;
 
     let lead = lead_events(&mut rng, &bar_chords, &scale_pcs, mood);
     let sparkle: Vec<(f32, u8, f32)> = lead
@@ -977,7 +990,7 @@ pub fn compose(mood: Mood, seed: u64) -> Score {
         Mood::Night => night_drums(&mut rng, beat_s),
     };
 
-    // the last musical draws; the voice draw stays the stream's tail
+    // the last musical draws
     let bass = bass_events(&mut rng, &bar_roots, beat_s, mood);
 
     // drawn AFTER every musical draw, so a voice-registry change can never

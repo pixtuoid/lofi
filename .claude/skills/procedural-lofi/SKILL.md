@@ -37,17 +37,13 @@ solves all three:
   13 dB above the bed). You never keep or ship the reference bytes. What ships is your own
   oscillator code hitting those numbers.
 - **Size**: a few kilobytes of constant tables + a synth function vs. megabytes of PCM.
-- **Never repeats (in practice)**, from three stacked tricks: (1) the frozen musical
-  composition — pad, drums, *and* the melody (keys + sparkle) — loops in lockstep, but the
-  loop is made **long enough** that its repetition doesn't fatigue (this project doubled its
-  day loop from 4 to 8 bars precisely because a short looped melody *was* audibly repetitive
-  — "loop the bed" does not mean "make it short"); (2) the genuinely-stochastic layers —
-  **rain drops and keystrokes** — *are* scattered fresh at runtime from a seeded RNG, laid
-  over the loop; (3) a **busy-ness stem mixer** fades whole stems (drums, keys…) in and out
-  by how active the scene is, so the *arrangement* keeps changing even though the notes
-  don't. The result reads as "never the same two minutes" without regenerating harmony.
-  (Regenerating melody live is possible but it's the hard, optional part — the shipped
-  product froze the melody and leaned on 1–3 instead.)
+- **Never repeats (in practice)**, from stacked tricks: (1) every seed composes a new song
+  (`compose`), and within a song the musical lanes loop in lockstep on a loop made **long
+  enough** not to fatigue (the day loop doubled from 4 to 8 bars because a short looped
+  melody *was* audibly repetitive — "loop the bed" does not mean "make it short"); (2) a
+  consumer scatters genuinely-stochastic layers fresh at runtime (pixtuoid's rain drops and
+  keystrokes); (3) a consumer's mixer fades whole lanes in and out (pixtuoid's by how busy
+  its office is), so the arrangement keeps changing even while the notes don't.
 
 The one law of the whole method:
 
@@ -65,7 +61,7 @@ The one law of the whole method:
 
 Prototype the whole sound in Python/numpy where the write→hear loop is seconds. Only port
 to Rust/C++/wasm once a human has ratified the *sound*. `scripts/synth_audition.py` is a
-worked example: deterministic numpy that writes `audio-demos/*.wav`. Iterating synth
+worked example: deterministic numpy that writes `audio-demos/*.wav` beside the script. Iterating synth
 recipes in a compiled language first is the classic time sink.
 
 ### Phase 1 — Reference-fingerprint each sound
@@ -77,7 +73,7 @@ For every distinct sound (the lofi bed, rain, typing, each one-shot):
    (`yt-dlp` / `curl` for analysis only; for an endless live stream, `yt-dlp -g` gets the
    HLS URL, then `ffmpeg -t 180` grabs a finite slice.)
 2. **Confirm the CHARACTER before deep-matching.** One sentence — "gentle rain or heavy
-   downpour?" — saves three wasted versions. On this project, three rain versions were
+   downpour?" — saves three wasted versions. On pixtuoid, three rain versions were
    built to the wrong reference (a heavy wash) before the owner clarified they wanted
    *gentle* rain.
 3. **Fingerprint it.** Measure **9 octave-band energies + spectral centroid + rolloff**
@@ -178,13 +174,13 @@ Port the numpy synth to your runtime language reading the frozen tables. Key eng
    at launch, loop the frozen composition, scatter the stochastic layers, gate stems by
    busy-ness.
 
-(The `scripts/` are the real working prototypes from this project, kept as a concrete
+(The `scripts/` are the real working prototypes from pixtuoid's Phase 0, kept as a concrete
 starting point — not a turnkey CLI; `synth_audition.py` runs standalone, and `export_score.py`
 imports `phase2_audition.py` — both are bundled. Adapt the voices to your own reference.)
 
 ---
 
-## The GENERATOR loop (this crate's composer — iterate in minutes, not arcs)
+## The GENERATOR loop (this crate's composer — iterate in minutes, not design cycles)
 
 Once a project graduates from frozen takes to a theory-constrained generator
 (`src/compose.rs` + `synth::render_lane` in `src/synth.rs`), the iteration loop changes
@@ -213,6 +209,6 @@ every taste axis is a data table or named const with ONE home:
 5. Render a batch (`cargo run --release --example lofi_audition -- --seeds N`;
    `--solo sparkle` isolates the lane) → owner listens → tighten or ship.
 
-Mix LANES stay instrument-blind (StemLevels/mixer/players never learn about voices) — a
+Mix LANES stay instrument-blind (a consumer's mixer sees lanes, never voices) — a
 lane is a busy-ness ROLE, an instrument is a timbre WITHIN it. That split is what keeps
-"blend in another instrument" a minutes-scale edit instead of an arc.
+"blend in another instrument" a minutes-scale edit instead of a design cycle.

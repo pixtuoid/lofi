@@ -11,7 +11,7 @@ Lofi that sounds better without leaving the genre. The genre is pinned by measur
 - **Measurement is the machine's ears; taste is the owner's.** Band shares, centroids and onset rates drive a change toward a target; only the owner's LISTEN says it sounds good. Hand over a finished audition, never each tweak (the `procedural-lofi` skill, "The core idea").
 - **A music change ends in an audition batch**: `cargo run --release --example lofi_audition -- --seeds N` renders random seeds through the real `render_lane` chain, and the owner blind-listens the composer, not one take (the example's header). One dud means tightening a constraint and re-batching (the skill's "GENERATOR loop").
 - **Where each taste axis lives**: the skill's "GENERATOR loop" table; a new instrument follows the checklist under it.
-- **The Phase 0 ratification record** is [`docs/phase0-ratification.md`](docs/phase0-ratification.md) (taste anchor `demo_2_moderate`). A synth constant changes in the audition first and is re-ratified before it is mirrored into `src/synth.rs` (its header).
+- **The Phase 0 ratification record** is [`docs/phase0-ratification.md`](docs/phase0-ratification.md) (taste anchor `demo_2_moderate`). A shipped synth constant changes through an audition batch and the owner's LISTEN, which the commit records (`src/synth.rs` header); the skill's numpy pipeline fingerprints references and prototypes a sound the engine doesn't have yet.
 
 ## What this is
 
@@ -26,7 +26,7 @@ Lofi that sounds better without leaving the genre. The genre is pinned by measur
 
 - **The rng draw order is the sound.** The voice draw stays the stream's tail so a new voice never recomposes a blessed seed (`src/compose.rs`, the comment at the end of `compose`).
 - **Dependency-free on purpose**: a wasm consumer ships `dsp`, and an FFT crate is a download its visitors pay (`src/dsp.rs` header).
-- **Playback never synthesizes**: rendering is a once-per-track pre-render (`src/synth.rs` header).
+- **Rendering is a pre-render**: whole-buffer and FFT-backed, run once per track, never inside an audio callback (`src/synth.rs` header).
 - **Frozen takes keep their darker chain**, and `lane_recipe` (`src/synth.rs`) is the one authority the fingerprint pins guard; brightening a frozen chain invalidates them.
 - **A regenerated score is a new take** and needs the owner's LISTEN gate (`src/score.rs` header).
 - **The score is bit-identical everywhere; rendered audio is not**: the composer uses no transcendental function (`+ - * /` are exact, [RFC 3514](https://rust-lang.github.io/rfcs/3514-float-semantics.html)), but `sin`/`exp` precision is [non-deterministic across platforms and Rust versions](https://doc.rust-lang.org/std/primitive.f32.html#method.sin), so tests pin fingerprints, never sample values.
@@ -43,7 +43,7 @@ Lofi that sounds better without leaving the genre. The genre is pinned by measur
 
 ## Release
 
-- The release PR is dispatched by hand (Actions → release-plz → Run workflow). Merging it publishes by crates.io trusted publishing through the `release` environment, whose required reviewer is the owner, and a release PR that `main` moved past is refused (`release-merge`); nothing else releases ([`release-plz.yml`](.github/workflows/release-plz.yml), [`release-plz.toml`](release-plz.toml)).
+- The release PR is dispatched by hand (Actions → release-plz → Run workflow). Merging it publishes by crates.io trusted publishing through the `release` environment, whose required reviewer is the owner, and a release PR that `main` moved past is refused (`release-merge`); nothing else releases, except 0.1.0, which the owner publishes by hand (trusted publishing cannot create a crate) ([`release-plz.yml`](.github/workflows/release-plz.yml), [`release-plz.toml`](release-plz.toml)).
 - Versions follow release-plz's 0.x defaults ([config](https://release-plz.dev/docs/config) `features_always_increment_minor`, [next_version](https://docs.rs/next_version)): `feat`/`fix` bump the patch, and a breaking commit (`!`) or an API break [its semver check](https://release-plz.dev/docs/semver-check) finds bumps the minor. A music-only change is a patch, so a consumer's `0.y` requirement takes it; a new `Mood` or `Lane` is an API break (both enums are exhaustive), which a consumer bumps by hand.
 - **A `dsp` output change is breaking**: pixtuoid's office foley builds on these primitives, and no semver check sees a changed buffer, so its commit carries `!`.
 - A commit's title is its changelog line: release-plz writes `CHANGELOG.md` from them.
@@ -59,4 +59,4 @@ Lofi that sounds better without leaving the genre. The genre is pinned by measur
 - **External claims are fetched, not remembered**, and so is "best practice": cite the doc URL or `path:line` fetched this session, else label it opinion.
 - **No review finding is accepted before its premise is checked** against the item it names, and **a refuted one produces a mechanism** (a test, a compile-time constraint, a CI gate) **or nothing**, never prose.
 - **Docs stay current in the same commit** as any structure, API or workflow change, and no new `.md` file or doc lands unless the owner asks: the owner reviews every doc change.
-- A session never pushes, merges or force-pushes without the owner's go, never skips hooks (`--no-verify`), and never files issues.
+- A session pushes its own PR branches and merges its own PR once the ruleset's gate holds (the required checks green on the current `main`, every review thread resolved); the release PR merges by the owner's hand. It never force-pushes or pushes to `main`, never skips hooks (`--no-verify`), and never files issues.

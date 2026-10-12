@@ -57,7 +57,7 @@ jobs:
         id: detect
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_BRANCH_PREFIX: release-plz-
+          PR_BRANCH_PREFIX: release-plz- # release-plz.toml's pr_branch_prefix
           REPOSITORY: ${{ github.repository }}
           SHA: ${{ github.sha }}
         run: |
@@ -92,6 +92,7 @@ jobs:
     permissions:
       contents: write
       id-token: write
+      pull-requests: read
     steps:
       - uses: actions/checkout@v7
         with:

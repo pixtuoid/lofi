@@ -1,6 +1,7 @@
 /target
 /.superpowers/
 /audio-demos/
+refs-lofigirl/
 /docs/superpowers/
 # Reference recordings are copyrighted and rendered takes are local auditions:
 # no audio file is ever committed (CI enforces it too).
@@ -8,5 +9,6 @@
 *.mp3
 *.flac
 *.aiff
+*.aif
 *.m4a
 *.ogg

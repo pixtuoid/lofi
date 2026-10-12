@@ -1,9 +1,9 @@
-//! The procedural sound recipes. Every constant is an auditioned, ratified
-//! value: change it in the audition first and re-ratify it (the
-//! `procedural-lofi` skill's Phase 0, recorded in `docs/phase0-ratification.md`),
-//! then mirror it here. All functions are PURE
-//! sample-buffer generators (mono f32 at [`SAMPLE_RATE`]) run once at
-//! startup — playback never synthesizes.
+//! The procedural sound recipes. Every constant is an owner-ratified value:
+//! change it through an audition batch of this chain
+//! (`examples/lofi_audition.rs`) and the owner's LISTEN, which the commit
+//! records. All functions are PURE sample-buffer generators (mono f32 at
+//! [`SAMPLE_RATE`]), whole-buffer and FFT-backed: a caller pre-renders a track
+//! once, never inside an audio callback.
 
 use super::dsp::{NoiseStream, SAMPLE_RATE, bandpass, lowpass};
 
@@ -53,8 +53,8 @@ const _: () = assert!(BED_LOOP_SAMPLES.is_power_of_two());
 const CRACKLE_POPS_PER_SEC: f32 = 0.18;
 
 /// The vinyl/room texture bed: tape hiss + a faint warm room hum + sparse soft
-/// crackle. Its crackle is per-boot random ON PURPOSE — unpitched, so variation
-/// is a feature; everything melodic is frozen in `score`.
+/// crackle. Its crackle draws from the caller's stream ON PURPOSE — unpitched, so
+/// variation is a feature; everything melodic comes from the [`Score`].
 pub(crate) fn texture_bed(rng: &mut NoiseStream) -> Vec<f32> {
     let n = BED_LOOP_SAMPLES;
     let raw: Vec<f32> = (0..n).map(|_| rng.norm()).collect();
@@ -85,7 +85,9 @@ pub(crate) fn texture_bed(rng: &mut NoiseStream) -> Vec<f32> {
 // The `#[cfg(test)]` stems below are fingerprint ANCHORS, not dead code: their
 // pins prove the shared cores `render_lane` ships still render the ratified sound.
 
-use super::score;
+use super::compose::DrumKind;
+#[cfg(test)]
+use super::{compose::BEATS_PER_BAR, score};
 
 #[cfg(test)]
 fn beat_s() -> f32 {
@@ -94,7 +96,7 @@ fn beat_s() -> f32 {
 
 #[cfg(test)]
 fn bar_s() -> f32 {
-    score::beat_s() * score::BEATS_PER_BAR
+    score::beat_s() * BEATS_PER_BAR
 }
 
 /// The lofi master chain, applied per MUSICAL stem (texture skips it — it
@@ -396,12 +398,11 @@ fn vibe_note(midi: u8, dur_s: f32, vel: f32) -> Vec<f32> {
 
 #[cfg(test)]
 fn night_bar_s() -> f32 {
-    score::night_beat_s() * score::BEATS_PER_BAR
+    score::night_beat_s() * BEATS_PER_BAR
 }
 
 /// The FROZEN night pad's baked sub level. The ratified v4 take renders the
-/// chords and the sub-bass floor in ONE buffer; GENERATED takes pass
-/// `sub_gain` 0.0 instead because their sub rides the separate bass lane (5).
+/// chords and the sub-bass floor in ONE buffer.
 #[cfg(test)]
 const NIGHT_PAD_SUB_GAIN: f32 = 3.2;
 
@@ -518,12 +519,12 @@ pub(crate) fn night_sparkle() -> Vec<f32> {
 }
 
 /// NOISE content is fresh per call; only timing/gain are frozen.
-fn drum_hit(rng: &mut NoiseStream, kind: score::DrumKind) -> Vec<f32> {
+fn drum_hit(rng: &mut NoiseStream, kind: DrumKind) -> Vec<f32> {
     match kind {
-        score::DrumKind::Kick => kick(rng),
-        score::DrumKind::Snare => snare(rng),
-        score::DrumKind::Hat => hat(rng, false),
-        score::DrumKind::OpenHat => hat(rng, true),
+        DrumKind::Kick => kick(rng),
+        DrumKind::Snare => snare(rng),
+        DrumKind::Hat => hat(rng, false),
+        DrumKind::OpenHat => hat(rng, true),
     }
 }
 
@@ -542,7 +543,7 @@ pub(crate) fn night_drums(rng: &mut NoiseStream) -> Vec<f32> {
 
 fn drums_core(
     loop_secs: f32,
-    table: &[(f32, score::DrumKind, f32)],
+    table: &[(f32, DrumKind, f32)],
     cutoff_hz: f32,
     drive: f32,
     peak: f32,
@@ -760,7 +761,10 @@ fn lane_recipe(mood: Mood, lane: Lane) -> (f32, f32, f32) {
     }
 }
 
-/// Render one lane of a generated take.
+/// Render one lane of `score` to mono f32 at [`SAMPLE_RATE`], peaking at most
+/// 1.0. Every lane but the day [`Lane::Texture`] is a whole number of the song's
+/// loops long, so a caller loops them in phase; the day texture runs free on its
+/// own length.
 pub fn render_lane(score: &Score, lane: Lane, rng: &mut NoiseStream) -> Vec<f32> {
     let loop_s = score.loop_secs();
     let (r0, r1, r2) = lane_recipe(score.mood, lane);
