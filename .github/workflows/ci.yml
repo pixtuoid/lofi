@@ -101,9 +101,9 @@ jobs:
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
           "$(go env GOPATH)/bin/actionlint"
 
-  # The one CI check the ruleset requires, so adding, removing or renaming a job
-  # above needs no ruleset edit. `always()`, not `!cancelled()`: a skipped gate
-  # reports success to a required check, so a cancelled run must reach it and red.
+  # The one CI check the ruleset requires, so a job change needs no ruleset edit.
+  # `always()`, not `!cancelled()`: "A job that is skipped will report its status as
+  # 'Success'" (docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-jobs-with-conditions).
   ci-gate:
     if: ${{ always() }}
     needs: [lint, test, msrv, wasm, workflows]
