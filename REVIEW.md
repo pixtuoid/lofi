@@ -1,11 +1,8 @@
 # Review rules
 
-What the automatic review ([`claude-review.yml`](.github/workflows/claude-review.yml)) checks in this repo, on top of [`AGENTS.md`](AGENTS.md). Each rule names the failure it catches.
+What the automatic review ([`claude-review.yml`](.github/workflows/claude-review.yml)) checks in this repo, on top of [`AGENTS.md`](AGENTS.md) and the [review contract](https://github.com/pixtuoid/.github/blob/main/.github/workflows/claude-review.yml), which owns severity, format and evidence. Each rule names the failure it catches.
 
-## Findings
-
-- **Severity**: `blocking` is a breach of any AGENTS.md rule, its conventions included, or a defect that breaks behavior, an invariant, security or a published contract (the public API, the score a seed composes, a shipped sound); any other real defect is `non-blocking`. Taste with no defect is not a finding.
-- **Format**: the severity, then `path:line` at the head, the evidence (the code read there), a reachable failure scenario, and the fix. A claim about anything outside this repo that the run did not fetch says "unverified".
+**Published contracts** here: the public API, the score a seed composes, and a shipped sound.
 
 ## Traps: the obvious reading is wrong here
 
@@ -16,7 +13,6 @@ What the automatic review ([`claude-review.yml`](.github/workflows/claude-review
 
 ## Always check
 
-- A breach of AGENTS.md: its invariants, workflow and conventions.
 - New behavior without a test; scope beyond what the PR body states; each claim the PR body makes.
 
 ## Do not flag
