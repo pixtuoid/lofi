@@ -18,7 +18,7 @@ pub(crate) const LANE_NAMES: [&str; Lane::ALL.len()] =
     ["pad", "sparkle", "keys", "drums", "texture", "bass"];
 
 /// How busy pixtuoid's office is, which picks each lane's [`tier_gain`].
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) enum Tier {
     Empty,
     /// The taste anchor, `demo_2_moderate` in `docs/phase0-ratification.md`.
@@ -184,4 +184,36 @@ pub(crate) fn soak_mix(beds: &[Vec<f32>], gains: &[f32]) -> Vec<f32> {
         }
     }
     mix
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_loop_longer_than_the_soak_target_still_plays_the_minimum_loops() {
+        let take_len = (SOAK_SECS * SAMPLE_RATE as f32) as usize + 1;
+        let mix = soak_mix(&[vec![0.0; take_len]], &[1.0]);
+        assert_eq!(mix.len(), take_len * MIN_SOAK_LOOPS);
+    }
+
+    #[test]
+    fn every_tier_name_parses_to_its_tier() {
+        for (name, tier) in [
+            ("empty", Tier::Empty),
+            ("moderate", Tier::Moderate),
+            ("busy", Tier::Busy),
+        ] {
+            let mut batch = Batch::default();
+            let parsed = batch.parse_flag("--tier", &mut std::iter::once(name.to_owned()));
+            assert!(matches!(parsed, Ok(true)), "{name}: {parsed:?}");
+            assert_eq!(batch.tier(), tier, "{name}");
+        }
+        let mut batch = Batch::default();
+        assert!(
+            batch
+                .parse_flag("--tier", &mut std::iter::once("loud".to_owned()))
+                .is_err()
+        );
+    }
 }

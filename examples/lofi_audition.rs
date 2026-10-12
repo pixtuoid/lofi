@@ -182,3 +182,18 @@ fn write_wav(path: &PathBuf, mono: &[f32]) -> std::io::Result<()> {
     }
     w.flush()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shuffled_names_are_each_take_once() {
+        for count in [1, 2, 7, 12] {
+            let mut names = shuffled_names(count);
+            names.sort();
+            let want: Vec<String> = (0..count).map(|i| format!("take_{i:02}.wav")).collect();
+            assert_eq!(names, want);
+        }
+    }
+}
