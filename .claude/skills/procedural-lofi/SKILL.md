@@ -184,10 +184,10 @@ imports `phase2_audition.py` — both are bundled. Adapt the voices to your own 
 
 ---
 
-## The GENERATOR loop (pixtuoid's Rust composer — iterate in minutes, not arcs)
+## The GENERATOR loop (this crate's composer — iterate in minutes, not arcs)
 
 Once a project graduates from frozen takes to a theory-constrained generator
-(`pixtuoid-scene/src/audio/compose.rs` + `synth::render_lane`), the iteration loop changes
+(`src/compose.rs` + `synth::render_lane` in `src/synth.rs`), the iteration loop changes
 shape: the LISTEN gate becomes **statistical** (blind-audition a batch of seeds; all
 acceptable = the GENERATOR is ratified — a dud = tighten a constraint and re-batch), and
 every taste axis is a data table or named const with ONE home:
@@ -210,7 +210,7 @@ every taste axis is a data table or named const with ONE home:
    the seed stream so new voices never redraw an already-blessed seed's notes (one banded
    unit-draw per mood — re-weight the bands rather than adding draws).
 4. Extend the distribution property test; run the compose suite (fast — no synthesis).
-5. Render a batch (`cargo run --release -p pixtuoid-scene --example lofi_audition -- --seeds N`;
+5. Render a batch (`cargo run --release --example lofi_audition -- --seeds N`;
    `--solo sparkle` isolates the lane) → owner listens → tighten or ship.
 
 Mix LANES stay instrument-blind (StemLevels/mixer/players never learn about voices) — a

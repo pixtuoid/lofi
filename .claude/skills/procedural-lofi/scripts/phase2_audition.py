@@ -4,8 +4,9 @@
 Renders the stem solos, a ~2 min per-tier soak (does the loop wear thin?), and a
 tier-gain transition ramped at the mixer's real RAMP_PER_S.
 
-Tier gain tables are pinned COPIES of crates/pixtuoid-scene/src/audio.rs — if
-those consts move, re-copy before re-auditioning.
+Tier gain tables are copies of pixtuoid's `crates/pixtuoid-scene/src/audio/mod.rs`
+tier tables (pixtuoid's office→music mapping; not this crate's) — if those
+consts move, re-copy before re-auditioning.
 """
 
 import numpy as np
