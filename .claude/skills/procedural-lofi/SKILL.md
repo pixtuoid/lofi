@@ -207,7 +207,9 @@ every taste axis is a data table or named const with ONE home:
    unit-draw per mood — re-weight the bands rather than adding draws).
 4. Extend the distribution property test; run the compose suite (fast — no synthesis).
 5. Render a batch (`cargo run --release --example lofi_audition -- --seeds N`;
-   `--solo sparkle` isolates the lane) → owner listens → tighten or ship.
+   `--solo sparkle` isolates the lane) → owner listens → tighten or ship. A change to a
+   shipped sound renders the batch on `main` and on the branch into two `--out` dirs, and
+   the owner blind-compares them: `python3 scripts/ab_listen.py BASE CAND --out verdict.json`.
 
 Mix LANES stay instrument-blind (a consumer's mixer sees lanes, never voices) — a
 lane is a busy-ness ROLE, an instrument is a timbre WITHIN it. That split is what keeps
