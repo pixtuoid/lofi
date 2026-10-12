@@ -4,7 +4,7 @@ Instructions for any AI coding agent in this repo. A rule that governs one item 
 
 ## The goal
 
-Lofi that sounds better without leaving the genre. The genre is pinned by measurement: the targets [`LOFI-BIBLE.md`](.claude/skills/procedural-lofi/reference/LOFI-BIBLE.md) marks MEASURED and the fingerprint pins; its literature numbers are starting points. The first listener is [pixtuoid](https://github.com/pixtuoid/pixtuoid)'s office, which loops these lanes for as long as it runs, so a take must not fatigue on repeat.
+Lofi that sounds better without leaving the genre. The owner's LISTEN holds the genre; [`LOFI-BIBLE.md`](.claude/skills/procedural-lofi/reference/LOFI-BIBLE.md)'s MEASURED tempo and spectral targets are guard rails `lofi_measure` prints on every sound change, and a change that leaves them says so beside the owner's verdict. The first listener is [pixtuoid](https://github.com/pixtuoid/pixtuoid)'s office, which loops these lanes for as long as it runs, so a take must not fatigue on repeat.
 
 ## Changing the sound
 
