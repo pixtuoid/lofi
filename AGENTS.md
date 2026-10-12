@@ -18,7 +18,7 @@ Procedural lofi: `compose(mood, seed)` yields a `Score`, `render_lane` synthesiz
 - **Playback never synthesizes**: rendering is a once-per-track pre-render (`src/synth.rs` header).
 - **Frozen takes keep their darker chain**, and `lane_recipe` (`src/synth.rs`) is the one authority the fingerprint pins guard; brightening a frozen chain invalidates them.
 - **A regenerated score is a new take** and needs the owner's LISTEN gate (`src/score.rs` header; ratified targets in `docs/phase0-ratification.md`).
-- **Same synthesis, not the same bits, across platforms**: `sin`/`exp` differ, so tests pin fingerprints, never sample values.
+- **The score is bit-identical everywhere; rendered audio is not**: the composer uses no transcendental function (`+ - * /` are exact, [RFC 3514](https://rust-lang.github.io/rfcs/3514-float-semantics.html)), but `sin`/`exp` precision is [non-deterministic across platforms and Rust versions](https://doc.rust-lang.org/std/primitive.f32.html#method.sin), so tests pin fingerprints, never sample values.
 - **A musical lane's length is an exact integer multiple of the loop's sample count**, so stems loop in phase (`musical_stems_share_one_loop_length`, `src/synth.rs`).
 - **A `dsp` output change ships as a minor bump with a changelog line**: pixtuoid's foley builds on these primitives.
 

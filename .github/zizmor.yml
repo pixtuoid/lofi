@@ -1,0 +1,12 @@
+# yaml-language-server: $schema=https://json.schemastore.org/zizmor.json
+
+rules:
+  unpinned-uses:
+    config:
+      # Every other action is hash-pinned, zizmor's default: a tag can move, and
+      # "Pinning an action to a full-length commit SHA is currently the only way
+      # to use an action as an immutable release" (GitHub's secure-use
+      # reference). `actions/*` floats on a major under .github/dependabot.yml's
+      # ignore, which names the same namespace.
+      policies:
+        actions/*: ref-pin

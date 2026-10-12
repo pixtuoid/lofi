@@ -1,0 +1,104 @@
+name: release-plz
+
+# Two triggers. `release-pr` is dispatched BY HAND, never on push:
+# release-plz refreshes an open release PR on every main push, and a PR that
+# carries non-bot commits is closed and re-opened fresh, so a bump a human
+# raised on it would be orphaned by the next Dependabot merge. `release` runs
+# only on a push to main that merges a release PR.
+#
+# RENAMING THIS FILE BREAKS PUBLISHING: the crates.io Trusted Publisher record
+# is keyed on the workflow filename (and the `release` environment), so the
+# OIDC claim stops matching until the record is updated.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  release-pr:
+    name: release PR
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.repository_id == '1414749270'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    concurrency:
+      group: release-plz-pr
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: release-plz/action@b8d6b54b02889ff2ae2bb82e8b57c3a8fc1683a5 # v0.5.139
+        with:
+          command: release-pr
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+
+  # release-plz's own test with `release_always = false`: the pushed commit's
+  # associated PRs include one whose head branch carries `pr_branch_prefix`
+  # (release_plz_core command/release.rs `should_release`). Every other push
+  # is a no-op for `release`, so nothing after this holds a runner for it.
+  release-merge:
+    name: is this push a merged release PR
+    if: github.event_name == 'push' && github.repository_id == '1414749270'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      release: ${{ steps.detect.outputs.release }}
+    steps:
+      - name: Detect a merged release PR; refuse a stale one
+        id: detect
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_BRANCH_PREFIX: release-plz-
+          REPOSITORY: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          head="$(gh api "repos/$REPOSITORY/commits/$SHA/pulls" \
+            --jq "[.[] | select(.head.ref | startswith(\"$PR_BRANCH_PREFIX\")) | .head.sha][0] // \"\"")"
+          release=false
+          if [[ -n "$head" ]]; then
+            # Its CHANGELOG and semver verdict cover only the main release-plz
+            # wrote its commit on, so that commit must sit on the merge's
+            # parent unrewritten: createCommitOnBranch stamps both its dates
+            # at once, and a rebase moves the committer date alone.
+            parent="$(gh api "repos/$REPOSITORY/commits/$SHA" --jq '.parents[0].sha')"
+            stale="$(gh api "repos/$REPOSITORY/compare/$parent...$head" \
+              --jq ".commits[0] | .parents[0].sha != \"$parent\" or .commit.author.date != .commit.committer.date")"
+            if [[ "$stale" != false ]]; then
+              echo "::error::the release PR merged at ${SHA::7} was not cut from main@${parent::7} (main moved after its dispatch, or was merged or rebased into it), so its changelog misses commits and nothing is published. Revert this commit, then re-dispatch release-plz.yml"
+              exit 1
+            fi
+            release=true
+          fi
+          echo "release=$release" >>"$GITHUB_OUTPUT"
+          echo "a merged release PR at ${SHA::7}: $release"
+
+  release:
+    name: publish and tag a merged release PR
+    needs: [release-merge]
+    if: needs.release-merge.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: release-plz/action@b8d6b54b02889ff2ae2bb82e8b57c3a8fc1683a5 # v0.5.139
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

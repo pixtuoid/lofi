@@ -1,0 +1,95 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions: {}
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo doc --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+      - name: no audio file is ever committed
+        run: |
+          set -euo pipefail
+          if git ls-files -- ':(icase)*.wav' ':(icase)*.mp3' ':(icase)*.flac' ':(icase)*.aiff' ':(icase)*.m4a' ':(icase)*.ogg' | grep .; then
+            echo "::error::audio files are tracked; references are copyrighted and takes are local"
+            exit 1
+          fi
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - run: cargo test --all-targets
+      - run: cargo test --doc
+
+  msrv:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install 1.98 --profile minimal
+      - run: cargo +1.98 check --lib --examples
+
+  wasm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - run: rustup target add wasm32-unknown-unknown
+      - run: cargo build --lib --target wasm32-unknown-unknown
+
+  workflows:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
+        with:
+          tool: zizmor@1.30.0
+      # The repo root, not just workflows/, so dependabot.yml is audited too.
+      - run: zizmor --config .github/zizmor.yml .
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          "$(go env GOPATH)/bin/actionlint"
