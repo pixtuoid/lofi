@@ -43,8 +43,8 @@ impl Tier {
 /// `lane`'s gain at `tier`: pixtuoid's `TierGain`s
 /// (<https://github.com/pixtuoid/pixtuoid/blob/9338cc3841f6d50f99d478a3b2290e2ac96feeec/crates/pixtuoid-scene/src/audio/mod.rs#L98-L107>),
 /// copied across repos where no test can pin them, so a LISTEN first diffs
-/// those lines on pixtuoid's `main` against these. The rows keep pixtuoid's
-/// `[empty, moderate, busy]` shape for that diff.
+/// pixtuoid's `main` against these with the `procedural-lofi` skill's GENERATOR
+/// step 5, which reads each row as `Lane::X => [empty, moderate, busy],`.
 pub(crate) fn tier_gain(lane: Lane, tier: Tier) -> f32 {
     let [empty, moderate, busy] = match lane {
         Lane::Pad => [0.75, 0.70, 0.65],
