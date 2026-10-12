@@ -1,0 +1,11 @@
+/target
+/audio-demos/
+/docs/superpowers/
+# Reference recordings are copyrighted and rendered takes are local auditions:
+# no audio file is ever committed (CI enforces it too).
+*.wav
+*.mp3
+*.flac
+*.aiff
+*.m4a
+*.ogg

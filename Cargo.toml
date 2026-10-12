@@ -1,0 +1,39 @@
+[package]
+name         = "pixtuoid-lofi"
+version      = "0.1.0"
+edition      = "2024"
+rust-version = "1.98"
+description  = "Procedural lofi in Rust: a seed composes a song, synthesized from constants — no samples, no dependencies."
+license      = "MIT"
+repository   = "https://github.com/pixtuoid/lofi"
+readme       = "README.md"
+keywords     = ["lofi", "music", "procedural", "synthesis", "audio"]
+categories   = ["multimedia::audio"]
+# An allowlist fails closed: a needed file it misses fails `cargo publish`'s
+# verify build, while an `exclude` would ship every repo-only file added later.
+include      = ["/src", "/examples/lofi_audition.rs", "/LICENSE", "/README.md"]
+
+[lints.rust]
+unreachable_pub = "warn"
+missing_debug_implementations = "warn"
+missing_docs = "warn"
+unsafe_code = "forbid"
+
+# An `allow` outlives the warning it silenced; an `expect` fails once its lint
+# stops firing, and a `reason` says why the suppression exists.
+[lints.clippy]
+allow_attributes                = "warn"
+allow_attributes_without_reason = "warn"
+# Picked from `pedantic` for the failure each prevents: an overflowing
+# `(a + b) / 2`, a hand-rolled range check before a cast, and an undocumented
+# error or panic contract (the Rust API Guidelines' C-FAILURE).
+manual_midpoint                 = "warn"
+checked_conversions             = "warn"
+missing_errors_doc              = "warn"
+missing_panics_doc              = "warn"
+# A widening cast as `T::from`, which can't go silently lossy if a type changes.
+cast_lossless                   = "warn"
+
+[lints.rustdoc]
+broken_intra_doc_links  = "deny"
+private_intra_doc_links = "deny"
