@@ -308,7 +308,7 @@ mod tests {
     }
 
     #[test]
-    fn the_guard_rails_are_lofi_bibles_measured_rows() {
+    fn the_guard_rails_are_lofi_bibles_tempo_and_spectral_rows() {
         let bible = include_str!("../.claude/skills/procedural-lofi/reference/LOFI-BIBLE.md");
         let [bpm_lo, bpm_hi] = BPM_RAIL;
         let ([sub_lo, sub_hi], [c_lo, c_hi]) = (SUB_SHARE_RAIL_PCT, CENTROID_RAIL_HZ);
