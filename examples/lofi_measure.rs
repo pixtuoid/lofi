@@ -335,6 +335,20 @@ mod tests {
     }
 
     #[test]
+    fn brown_noise_falls_6_db_per_octave() {
+        let mut rng = NoiseStream::new(1);
+        let mut walk = 0.0f64;
+        let brown: Vec<f32> = (0..1 << 20)
+            .map(|_| {
+                walk += f64::from(rng.unit() - 0.5);
+                walk as f32
+            })
+            .collect();
+        let slope = Spectrum::of(&brown).ltas_slope();
+        assert!((slope - (-6.0)).abs() < 0.5, "{slope}");
+    }
+
+    #[test]
     fn only_a_loop_cut_mid_cycle_reads_a_seam() {
         let n = 1 << 16;
         // a whole number of cycles per loop

@@ -114,6 +114,13 @@ pub(crate) fn gated_lufs(buf: &[f32]) -> f64 {
 mod tests {
     use super::*;
 
+    /// What a full-scale 997 Hz sine reads, so a sine's amplitude sets its loudness.
+    const FULL_SCALE_LKFS: f64 = -3.01;
+
+    fn amplitude_for(lkfs: f64) -> f64 {
+        10f64.powf((lkfs - FULL_SCALE_LKFS) / 20.0)
+    }
+
     fn sine_997_hz(n: usize, amplitude: impl Fn(usize) -> f64) -> Vec<f32> {
         (0..n)
             .map(|i| {
@@ -126,7 +133,7 @@ mod tests {
     #[test]
     fn a_full_scale_997_hz_sine_reads_minus_3_01_lkfs() {
         let l = gated_lufs(&sine_997_hz(SAMPLE_RATE as usize * 10, |_| 1.0));
-        assert!((l - (-3.01)).abs() <= 0.005, "{l}");
+        assert!((l - FULL_SCALE_LKFS).abs() <= 0.005, "{l}");
     }
 
     #[test]
@@ -154,6 +161,32 @@ mod tests {
         let n = SAMPLE_RATE as usize * 10;
         let l = gated_lufs(&sine_997_hz(n, |i| if i < n / 2 { 1.0 } else { 0.1 }));
         // ungated, the half 20 dB down would pull it to about −6
-        assert!((l - (-3.01)).abs() < 0.5, "{l}");
+        assert!((l - FULL_SCALE_LKFS).abs() < 0.5, "{l}");
+    }
+
+    #[test]
+    fn blocks_under_the_absolute_gate_stay_out_of_the_relative_gate() {
+        let s = SAMPLE_RATE as usize;
+        let level = |i: usize| match i / s {
+            0..4 => -20.0,
+            4..8 => -38.0,
+            _ => -80.0,
+        };
+        let l = gated_lufs(&sine_997_hz(40 * s, |i| amplitude_for(level(i))));
+        // the −80 blocks would sink the relative gate under the −38 ones, which
+        // would then pull the reading to about −23
+        assert!((l - (-20.0)).abs() < 0.5, "{l}");
+    }
+
+    #[test]
+    fn a_burst_across_the_wrap_reads_as_it_does_mid_loop() {
+        let n = SAMPLE_RATE as usize * 10;
+        let burst = SAMPLE_RATE as usize / 4;
+        let across = sine_997_hz(n, |i| f64::from(u8::from(i < burst || i >= n - burst)));
+        // a whole number of the standard's 100 ms block steps
+        let shift = SAMPLE_RATE as usize / 10 * 37;
+        let mid: Vec<f32> = (0..n).map(|i| across[(i + shift) % n]).collect();
+        let (a, b) = (gated_lufs(&across), gated_lufs(&mid));
+        assert!((a - b).abs() < 1e-9, "{a} vs {b}");
     }
 }
