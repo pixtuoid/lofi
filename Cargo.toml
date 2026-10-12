@@ -9,8 +9,9 @@ repository   = "https://github.com/pixtuoid/lofi"
 readme       = "README.md"
 keywords     = ["lofi", "music", "procedural", "synthesis", "audio"]
 categories   = ["multimedia::audio"]
-# An allowlist fails closed: a needed file it misses fails `cargo publish`'s
-# verify build, while an `exclude` would ship every repo-only file added later.
+# An allowlist, so a repo-only file added later doesn't ship. `cargo publish`'s
+# verify build compiles `/src` but no example (cargo 1.98.1), so nothing would
+# catch a missing `/examples/common`, which the shipped `lofi_audition` includes.
 include      = ["/src", "/examples/lofi_audition.rs", "/examples/common", "/LICENSE", "/README.md"]
 
 # The synthesis tests render whole takes, so unoptimized code sets the suite's
