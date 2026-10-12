@@ -176,5 +176,5 @@ fn write_wav(path: &PathBuf, mono: &[f32]) -> std::io::Result<()> {
         w.write_all(&pcm.to_le_bytes())?;
         w.write_all(&pcm.to_le_bytes())?;
     }
-    Ok(())
+    w.flush()
 }
