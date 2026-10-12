@@ -32,6 +32,11 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      # Both release jobs hold a write credential, so the shared action runs at
+      # a hash a later merge can't move, unlike ci.yml's `@main` ("Pinning an
+      # action to a full-length commit SHA is currently the only way to use an
+      # action as an immutable release", GitHub's secure-use reference).
+      - uses: pixtuoid/.github/.github/actions/setup-rust@5ff27299b8b8cda8c83279fed1b33a1e69b248e9
       - uses: release-plz/action@b8d6b54b02889ff2ae2bb82e8b57c3a8fc1683a5 # v0.5.139
         with:
           command: release-pr
@@ -98,6 +103,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - uses: pixtuoid/.github/.github/actions/setup-rust@5ff27299b8b8cda8c83279fed1b33a1e69b248e9
       - uses: release-plz/action@b8d6b54b02889ff2ae2bb82e8b57c3a8fc1683a5 # v0.5.139
         with:
           command: release
