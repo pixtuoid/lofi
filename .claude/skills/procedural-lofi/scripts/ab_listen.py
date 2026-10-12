@@ -59,7 +59,7 @@ def tally(pairs):
     counts = Counter()
     for p in pairs:
         m = NAME.fullmatch(p["name"])
-        counts[(m["mood"], m["mix"]) if m else ("?", "?"), p["verdict"]] += 1
+        counts[(m["mood"], m["mix"]), p["verdict"]] += 1
     print(f"\n{'mood':<6} {'mix':<9}" + "".join(f" {v:>5}" for v in VERDICTS))
     for group in sorted({g for g, _ in counts}):
         print(f"{group[0]:<6} {group[1]:<9}" + "".join(f" {counts[group, v]:>5}" for v in VERDICTS))
@@ -79,6 +79,11 @@ def main():
     cand = {p.name for p in args.cand.glob("*.wav")}
     if base ^ cand:
         print(f"unpaired, left out: {', '.join(sorted(base ^ cand))}")
+    # a --shuffle run draws its own take_XX order, so equal names there are
+    # different takes
+    opaque = sorted(n for n in base & cand if not NAME.fullmatch(n))
+    if opaque:
+        sys.exit(f"not unshuffled lofi_audition names, so a pair may hold two takes: {', '.join(opaque)}")
     names = sorted((base & cand) - judged)
     if not names and not pairs:
         sys.exit("no .wav name is in both directories")
