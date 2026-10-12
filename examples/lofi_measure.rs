@@ -24,9 +24,9 @@ const SR: f64 = SAMPLE_RATE as f64;
 /// The band shares' inner edges in Hz; the first is the guard rails' sub band.
 const BAND_EDGES_HZ: [f64; 6] = [62.0, 125.0, 250.0, 500.0, 1000.0, 2000.0];
 
-/// `LOFI-BIBLE.md`'s MEASURED rows, each printed as a guard rail beside the
-/// take's value: the tempo in BPM, the percent of power under
-/// [`BAND_EDGES_HZ`]`[0]`, and the centroid in Hz.
+/// `LOFI-BIBLE.md`'s MEASURED tempo and spectral targets, each printed as a
+/// guard rail beside the take's value: the tempo in BPM, the percent of power
+/// under [`BAND_EDGES_HZ`]`[0]`, and the centroid in Hz.
 const BPM_RAIL: [f64; 2] = [68.0, 90.0];
 const SUB_SHARE_RAIL_PCT: [f64; 2] = [55.0, 65.0];
 const CENTROID_RAIL_HZ: [f64; 2] = [140.0, 160.0];
