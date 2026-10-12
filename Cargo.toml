@@ -15,7 +15,7 @@ categories   = ["multimedia::audio"]
 include      = ["/src", "/examples/lofi_audition.rs", "/examples/common", "/LICENSE", "/README.md"]
 
 # The synthesis tests render whole takes, so unoptimized code sets the suite's
-# wall time; pixtuoid builds this crate at the same level for its own tests.
+# wall time; pixtuoid's `[profile.dev.package.pixtuoid-lofi]` exists for the same reason.
 [profile.test]
 opt-level = 2
 
