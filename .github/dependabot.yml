@@ -13,8 +13,9 @@ updates:
       # arrive without a PR, and Dependabot reads `@v7` as "version 7" and,
       # filtered by the cooldown below, would rewrite the self-updating ref into
       # an exact pin a week OLD, a downgrade. Only majors need a human. Every
-      # other action is SHA-pinned (zizmor's default, relaxed for this namespace
-      # alone in .github/zizmor.yml), so each of its updates arrives as a PR.
+      # other action but the org's review at `@main` is SHA-pinned (zizmor's
+      # default, relaxed in .github/zizmor.yml), so each of its updates arrives
+      # as a PR.
       - dependency-name: "actions/*"
         update-types:
           ["version-update:semver-patch", "version-update:semver-minor"]
