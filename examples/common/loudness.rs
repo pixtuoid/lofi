@@ -126,7 +126,7 @@ mod tests {
     #[test]
     fn a_full_scale_997_hz_sine_reads_minus_3_01_lkfs() {
         let l = gated_lufs(&sine_997_hz(SAMPLE_RATE as usize * 10, |_| 1.0));
-        assert!((l - (-3.01)).abs() <= 0.01, "{l}");
+        assert!((l - (-3.01)).abs() <= 0.005, "{l}");
     }
 
     #[test]
