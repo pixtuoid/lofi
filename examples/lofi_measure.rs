@@ -24,8 +24,10 @@ const SR: f64 = SAMPLE_RATE as f64;
 /// The band shares' inner edges in Hz; the first is the guard rails' sub band.
 const BAND_EDGES_HZ: [f64; 6] = [62.0, 125.0, 250.0, 500.0, 1000.0, 2000.0];
 
-/// `LOFI-BIBLE.md`'s MEASURED genre targets, printed as guard rails: the
-/// percent of power under [`BAND_EDGES_HZ`]`[0]`, and the centroid in Hz.
+/// `LOFI-BIBLE.md`'s MEASURED rows, each printed as a guard rail beside the
+/// take's value: the tempo in BPM, the percent of power under
+/// [`BAND_EDGES_HZ`]`[0]`, and the centroid in Hz.
+const BPM_RAIL: [f64; 2] = [68.0, 90.0];
 const SUB_SHARE_RAIL_PCT: [f64; 2] = [55.0, 65.0];
 const CENTROID_RAIL_HZ: [f64; 2] = [140.0, 160.0];
 
@@ -66,9 +68,9 @@ fn run() -> std::io::Result<()> {
         let take = render_take(&score);
         let loop_len = take[0].0.len();
         println!(
-            "{} seed {seed}: {:.0} bpm, lead {}, loop {:.2} s",
+            "{} seed {seed}: {}; lead {}, loop {:.2} s",
             batch.mood_name(),
-            score.bpm(),
+            rail(f64::from(score.bpm()), BPM_RAIL, " bpm"),
             score.lead_voice_name(),
             loop_len as f64 / SR
         );
@@ -306,17 +308,23 @@ mod tests {
     }
 
     #[test]
-    fn the_guard_rails_are_lofi_bibles_measured_targets() {
+    fn the_guard_rails_are_lofi_bibles_measured_rows() {
         let bible = include_str!("../.claude/skills/procedural-lofi/reference/LOFI-BIBLE.md");
+        let [bpm_lo, bpm_hi] = BPM_RAIL;
         let ([sub_lo, sub_hi], [c_lo, c_hi]) = (SUB_SHARE_RAIL_PCT, CENTROID_RAIL_HZ);
-        let target = format!(
-            "{sub_lo}–{sub_hi}% of power below {} Hz, centroid {c_lo}–{c_hi} Hz",
-            BAND_EDGES_HZ[0]
-        );
-        assert!(
-            bible.contains(&target),
-            "LOFI-BIBLE.md no longer reads {target:?}"
-        );
+        let rails = [
+            format!("BPM: {bpm_lo}–{bpm_hi} (MEASURED"),
+            format!(
+                "{sub_lo}–{sub_hi}% of power below {} Hz, centroid {c_lo}–{c_hi} Hz",
+                BAND_EDGES_HZ[0]
+            ),
+        ];
+        for rail in &rails {
+            assert!(
+                bible.contains(rail),
+                "LOFI-BIBLE.md no longer reads {rail:?}"
+            );
+        }
     }
 
     #[test]
