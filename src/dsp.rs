@@ -336,8 +336,7 @@ fn moving_average(x: &[f32], window: usize) -> Vec<f32> {
     out
 }
 
-/// Spectral centroid in Hz.
-#[cfg(test)]
+/// Spectral centroid of `buf` in Hz.
 pub fn centroid_hz(buf: &[f32]) -> f32 {
     let (re, im, _, hz_per_bin) = forward_spectrum(buf);
     let (mut num, mut den) = (0.0f64, 0.0f64);
@@ -349,8 +348,7 @@ pub fn centroid_hz(buf: &[f32]) -> f32 {
     (num / den.max(1e-12)) as f32
 }
 
-/// Fraction of spectral power inside `[lo_hz, hi_hz)`.
-#[cfg(test)]
+/// Fraction of `buf`'s spectral power inside `[lo_hz, hi_hz)`.
 pub fn band_energy_share(buf: &[f32], lo_hz: f32, hi_hz: f32) -> f32 {
     let (re, im, tw, hz_per_bin) = forward_spectrum(buf);
     let (mut band, mut total) = (0.0f64, 0.0f64);

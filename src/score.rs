@@ -1,6 +1,6 @@
 //! The FROZEN musical composition. These tables ARE one owner-ratified
 //! realization's events — deterministic data, not a re-roll. Regenerate via
-//! the skill's `scripts/export_score.py`; a regen is a NEW take and needs a fresh
+//! `.claude/skills/procedural-lofi/scripts/export_score.py`; a regen is a NEW take and needs a fresh
 //! owner LISTEN gate before it ships.
 
 #[cfg(test)]
@@ -310,7 +310,7 @@ mod night_tests {
 // these frozen takes, but their tables + the pins over them are what prove the
 // SHARED cores (pad/events/drums renderers) still produce the ratified sound.
 // Same freeze contract as night — humanization baked into the at-seconds
-// timestamps; regenerate via the skill's `scripts/export_score.py`, and a regen
+// timestamps; regenerate via `.claude/skills/procedural-lofi/scripts/export_score.py`, and a regen
 // needs a fresh LISTEN gate. Day 2 "morning": royal-road IV-V-iii-vi in C, 76
 // BPM, boom-bap backbeats on 2&4, a hand-written lead motif. Day 3 "golden
 // hour": I-vi-ii-V turnaround with voice-led inversions, 74 BPM, half-time.

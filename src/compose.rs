@@ -10,9 +10,9 @@
 //! of seeds (`examples/lofi_audition`) and the generator as a whole is ratified.
 //! The frozen takes are `#[cfg(test)]` fingerprint anchors, not a fallback.
 //!
-//! The seed is the `track_epoch` block, so generation is DETERMINISTIC
-//! — the same block renders the same song everywhere, and "never repeats" comes
-//! from the clock advancing, not from entropy.
+//! The seed fully determines the song, so generation is DETERMINISTIC — a
+//! caller that wants a new song picks a new seed (pixtuoid takes it from the
+//! clock); the same seed renders the same song everywhere.
 
 use super::dsp::NoiseStream;
 use super::score::DrumKind;
