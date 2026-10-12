@@ -27,7 +27,7 @@ Measurement steers a change toward a target; only the owner's LISTEN says it sou
 ## Workflow
 
 - [`ci.yml`](.github/workflows/ci.yml) is the gate, and no hook runs it: run its steps before pushing.
-- A session pushes its own PR branches and merges its own PR once the ruleset's checks pass and every review thread is resolved. It never force-pushes or pushes to `main`, never skips hooks (`--no-verify`), and never files issues.
+- A session pushes its own PR branches and merges its own PR once the ruleset's checks pass, the org's [shared review](https://github.com/pixtuoid/.github/blob/main/.github/workflows/claude-review.yml) among them, and every review thread is resolved. A blocking finding it refutes is dispositioned and resolved in its thread before the review re-runs (`gh run rerun <id> --failed`). It never force-pushes or pushes to `main`, never skips hooks (`--no-verify`), and never files issues.
 - A commit's title is its changelog line. In 0.x, `feat`/`fix` bump the patch and `!` bumps the minor ([release-plz](https://release-plz.dev/docs/config)). A new `Mood`/`Lane` or a changed `dsp` output takes `!`: pixtuoid's foley hears the latter, and no semver check does.
 - Releasing is the owner's: a hand-dispatched release PR, then the owner-approved `release` environment ([`release-plz.yml`](.github/workflows/release-plz.yml)).
 
