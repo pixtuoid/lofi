@@ -32,6 +32,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - uses: pixtuoid/.github/.github/actions/setup-rust@main
       - uses: release-plz/action@b8d6b54b02889ff2ae2bb82e8b57c3a8fc1683a5 # v0.5.139
         with:
           command: release-pr
@@ -98,6 +99,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - uses: pixtuoid/.github/.github/actions/setup-rust@main
       - uses: release-plz/action@b8d6b54b02889ff2ae2bb82e8b57c3a8fc1683a5 # v0.5.139
         with:
           command: release
