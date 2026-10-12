@@ -94,7 +94,15 @@ fn run() -> std::io::Result<()> {
         Some(_) => shuffled_names(takes.len()),
         None => takes.clone(),
     };
-    for (&seed, file) in seeds.iter().zip(&files) {
+    let mut order: Vec<(&String, &String, u64)> = files
+        .iter()
+        .zip(&takes)
+        .zip(&seeds)
+        .map(|((file, take), &seed)| (file, take, seed))
+        .collect();
+    // rendered in file-name order, so the files' times don't give the seeds away
+    order.sort();
+    for &(file, _, seed) in &order {
         let score = compose(batch.mood(), seed);
         let beds = render_take(&score).map(|(bed, _)| bed);
         let mut mixdown = soak_mix(&beds, &gains);
@@ -110,12 +118,10 @@ fn run() -> std::io::Result<()> {
             );
         }
     }
-    let mut order: Vec<(&String, &String)> = files.iter().zip(&takes).collect();
-    order.sort();
     match &key {
         Some(key) => {
             let mut w = BufWriter::new(File::create(key)?);
-            for (file, take) in &order {
+            for (file, take, _) in &order {
                 writeln!(w, "{file} {take}")?;
             }
             w.flush()?;
@@ -123,7 +129,7 @@ fn run() -> std::io::Result<()> {
         }
         None => println!("\nblind-audition (--shuffle KEYFILE hides the seeds):"),
     }
-    for (file, _) in &order {
+    for (file, ..) in &order {
         println!("  afplay {}", out.join(file).display());
     }
     Ok(())
