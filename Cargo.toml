@@ -13,6 +13,11 @@ categories   = ["multimedia::audio"]
 # verify build, while an `exclude` would ship every repo-only file added later.
 include      = ["/src", "/examples/lofi_audition.rs", "/LICENSE", "/README.md"]
 
+# The synthesis tests render whole takes, so unoptimized code sets the suite's
+# wall time; pixtuoid builds this crate at the same level for its own tests.
+[profile.test]
+opt-level = 2
+
 [lints.rust]
 unreachable_pub = "warn"
 missing_debug_implementations = "warn"
