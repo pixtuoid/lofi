@@ -139,7 +139,14 @@ fn run() -> std::io::Result<()> {
 /// which is "initialized with random keys"
 /// (<https://doc.rust-lang.org/std/hash/struct.RandomState.html#method.new>).
 fn shuffled_names(count: usize) -> Vec<String> {
-    let mut rng = NoiseStream::new(RandomState::new().hash_one(count));
+    shuffle_names(
+        count,
+        &mut NoiseStream::new(RandomState::new().hash_one(count)),
+    )
+}
+
+/// `count` opaque file names in the order `rng` shuffles them into.
+fn shuffle_names(count: usize, rng: &mut NoiseStream) -> Vec<String> {
     let mut order: Vec<usize> = (0..count).collect();
     for i in (1..count).rev() {
         let j = ((rng.unit() * (i + 1) as f32) as usize).min(i);
@@ -188,12 +195,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn shuffled_names_are_each_take_once() {
+    fn shuffled_names_are_each_take_once_and_not_kept_in_order() {
         for count in [1, 2, 7, 12] {
-            let mut names = shuffled_names(count);
-            names.sort();
             let want: Vec<String> = (0..count).map(|i| format!("take_{i:02}.wav")).collect();
-            assert_eq!(names, want);
+            let mut moved = false;
+            for seed in 0..16 {
+                let mut names = shuffle_names(count, &mut NoiseStream::new(seed));
+                moved |= names != want;
+                names.sort();
+                assert_eq!(names, want, "{count} names, seed {seed}");
+            }
+            // one name has only one order
+            assert!(
+                count == 1 || moved,
+                "{count} names stayed in order for every seed"
+            );
         }
     }
 }
