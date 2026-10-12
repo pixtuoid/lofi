@@ -17,25 +17,47 @@ const MOODS: [(&str, Mood); 2] = [("day", Mood::Day), ("night", Mood::Night)];
 pub(crate) const LANE_NAMES: [&str; Lane::ALL.len()] =
     ["pad", "sparkle", "keys", "drums", "texture", "bass"];
 
-/// pixtuoid's office tiers, quietest first: the `--tier` vocabulary and the
-/// order of each [`tier_gains`] row.
-pub(crate) const TIERS: [&str; 3] = ["empty", "moderate", "busy"];
+/// How busy pixtuoid's office is, which picks each lane's [`tier_gain`].
+#[derive(Clone, Copy, Default)]
+pub(crate) enum Tier {
+    Empty,
+    /// The taste anchor, `demo_2_moderate` in `docs/phase0-ratification.md`.
+    #[default]
+    Moderate,
+    Busy,
+}
 
-/// The taste anchor's tier, `demo_2_moderate` in `docs/phase0-ratification.md`.
-const DEFAULT_TIER: usize = 1;
+impl Tier {
+    const ALL: [Tier; 3] = [Tier::Empty, Tier::Moderate, Tier::Busy];
 
-/// `lane`'s gain at each of [`TIERS`]: pixtuoid's `TierGain`s
+    /// The `--tier` spelling.
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Tier::Empty => "empty",
+            Tier::Moderate => "moderate",
+            Tier::Busy => "busy",
+        }
+    }
+}
+
+/// `lane`'s gain at `tier`: pixtuoid's `TierGain`s
 /// (<https://github.com/pixtuoid/pixtuoid/blob/9338cc3841f6d50f99d478a3b2290e2ac96feeec/crates/pixtuoid-scene/src/audio/mod.rs#L98-L107>),
 /// copied across repos where no test can pin them, so a LISTEN first diffs
-/// those lines on pixtuoid's `main` against these.
-pub(crate) fn tier_gains(lane: Lane) -> [f32; TIERS.len()] {
-    match lane {
+/// those lines on pixtuoid's `main` against these. The rows keep pixtuoid's
+/// `[empty, moderate, busy]` shape for that diff.
+pub(crate) fn tier_gain(lane: Lane, tier: Tier) -> f32 {
+    let [empty, moderate, busy] = match lane {
         Lane::Pad => [0.75, 0.70, 0.65],
         Lane::Sparkle => [0.70, 0.0, 0.0],
         Lane::Keys => [0.0, 0.60, 0.70],
         Lane::Drums => [0.0, 0.35, 0.60],
         Lane::Texture => [0.78, 0.84, 0.78],
         Lane::Bass => [0.60, 0.70, 0.75],
+    };
+    match tier {
+        Tier::Empty => empty,
+        Tier::Moderate => moderate,
+        Tier::Busy => busy,
     }
 }
 
@@ -78,8 +100,8 @@ pub(crate) struct Batch {
     mood: usize,
     seeds: u64,
     start: u64,
-    /// The `--tier` given, as an index into [`TIERS`].
-    pub(crate) tier: Option<usize>,
+    /// The `--tier` given.
+    pub(crate) tier: Option<Tier>,
 }
 
 impl Default for Batch {
@@ -110,7 +132,10 @@ impl Batch {
                 }
             }
             "--start" => self.start = parse_count(args.next(), flag)?,
-            "--tier" => self.tier = Some(parse_choice(args.next(), flag, &TIERS)?),
+            "--tier" => {
+                self.tier =
+                    Some(Tier::ALL[parse_choice(args.next(), flag, &Tier::ALL.map(Tier::name))?]);
+            }
             _ => return Ok(false),
         }
         Ok(true)
@@ -128,9 +153,9 @@ impl Batch {
         self.start..self.start + self.seeds
     }
 
-    /// The tier the batch is heard at, as an index into [`TIERS`].
-    pub(crate) fn tier(&self) -> usize {
-        self.tier.unwrap_or(DEFAULT_TIER)
+    /// The tier the batch is heard at.
+    pub(crate) fn tier(&self) -> Tier {
+        self.tier.unwrap_or_default()
     }
 }
 

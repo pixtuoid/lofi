@@ -16,7 +16,7 @@ use std::process::ExitCode;
 use pixtuoid_lofi::dsp::SAMPLE_RATE;
 use pixtuoid_lofi::{Lane, compose};
 
-use batch::{Batch, LANE_NAMES, TIERS, render_take, soak_mix, tier_gains, usage_error};
+use batch::{Batch, LANE_NAMES, render_take, soak_mix, tier_gain, usage_error};
 use loudness::gated_lufs;
 
 const SR: f64 = SAMPLE_RATE as f64;
@@ -99,12 +99,12 @@ fn run() -> std::io::Result<()> {
             );
         }
         let beds = take.map(|(bed, _)| bed);
-        let mix = soak_mix(&beds, &Lane::ALL.map(|lane| tier_gains(lane)[tier]));
+        let mix = soak_mix(&beds, &Lane::ALL.map(|lane| tier_gain(lane, tier)));
         let spectrum = Spectrum::of(&mix);
         let sub = BAND_EDGES_HZ[0];
         println!(
             "  {} mix: {:.1} LUFS; below {sub} Hz {}; centroid {}; LTAS density slope {}-{} Hz {:.1} dB/oct; autocorrelation at the loop {:.4}",
-            TIERS[tier],
+            tier.name(),
             gated_lufs(&mix),
             rail(100.0 * spectrum.share(0.0, sub), SUB_SHARE_RAIL_PCT, "%"),
             rail(spectrum.centroid(), CENTROID_RAIL_HZ, " Hz"),
