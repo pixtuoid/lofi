@@ -1,15 +1,32 @@
 //! Minimal DSP kernel for the procedural synth — a real-input FFT, brickwall
 //! band filters, spectral-envelope noise shaping, and a deterministic noise
 //! stream. Everything runs ONCE per track to pre-render sample buffers
-//! (`synth.rs`, `foley.rs`), never per audio frame. Dependency-free on purpose:
-//! the site's wasm ships this module, and an FFT crate is a download every
+//! (`synth.rs`), never per audio frame. Dependency-free on purpose:
+//! a consumer's wasm ships this module, and an FFT crate is a download every
 //! visitor pays.
 
 /// The one sample rate every buffer in this module uses (CD-standard mono).
 pub const SAMPLE_RATE: u32 = 44_100;
 
+/// ⌊2⁶⁴/φ⌋, φ the golden ratio: splitmix64's increment.
+const GOLDEN_GAMMA: u64 = 0x9e37_79b9_7f4a_7c15;
+const SPLITMIX64_M1: u64 = 0xbf58_476d_1ce4_e5b9;
+const SPLITMIX64_M2: u64 = 0x94d0_49bb_1331_11eb;
+
+/// The splitmix64 finalizer.
+pub(crate) fn splitmix64(z: u64) -> u64 {
+    let z = (z ^ (z >> 30)).wrapping_mul(SPLITMIX64_M1);
+    let z = (z ^ (z >> 27)).wrapping_mul(SPLITMIX64_M2);
+    z ^ (z >> 31)
+}
+
+/// Draw `n` of the splitmix64 stream seeded at `seed`, counting from 1.
+fn splitmix_draw(seed: u64, n: u64) -> u64 {
+    splitmix64(seed.wrapping_add(n.wrapping_mul(GOLDEN_GAMMA)))
+}
+
 /// Deterministic noise stream over the canonical splitmix64 finalizer
-/// (`pixtuoid_core::id`) — seedable, so synthesized assets are reproducible
+/// (splitmix64) — seedable, so synthesized assets are reproducible
 /// run-to-run.
 #[derive(Debug)]
 pub struct NoiseStream {
@@ -18,22 +35,23 @@ pub struct NoiseStream {
 }
 
 impl NoiseStream {
+    /// A stream seeded at `seed`; equal seeds draw equal sequences.
     pub fn new(seed: u64) -> Self {
         Self { seed, counter: 0 }
     }
 
     fn next_u64(&mut self) -> u64 {
         self.counter = self.counter.wrapping_add(1);
-        crate::splitmix_draw(self.seed, self.counter)
+        splitmix_draw(self.seed, self.counter)
     }
 
     /// Uniform in [0, 1).
-    pub(crate) fn unit(&mut self) -> f32 {
+    pub fn unit(&mut self) -> f32 {
         (self.next_u64() >> 40) as f32 / (1u64 << 24) as f32
     }
 
     /// Approximately standard-normal (Irwin–Hall n=4, unit variance).
-    pub(crate) fn norm(&mut self) -> f32 {
+    pub fn norm(&mut self) -> f32 {
         (self.unit() + self.unit() + self.unit() + self.unit() - 2.0) * 1.732_051
     }
 }
@@ -193,7 +211,7 @@ fn bin_freq(k: usize, n: usize, hz_per_bin: f32) -> f32 {
 /// Brickwall band-pass via FFT bin zeroing. Construction-time only — a
 /// linear-phase FIR would be overkill for pre-rendered assets. Keeps
 /// `buf.len()` (internally pads to a power of 2).
-pub(crate) fn bandpass(buf: &[f32], lo_hz: f32, hi_hz: f32) -> Vec<f32> {
+pub fn bandpass(buf: &[f32], lo_hz: f32, hi_hz: f32) -> Vec<f32> {
     let (mut re, mut im, tw, hz_per_bin) = forward_spectrum(buf);
     let n = 2 * tw.len();
     for (k, (r, i)) in re.iter_mut().zip(&mut im).enumerate() {
@@ -208,7 +226,8 @@ pub(crate) fn bandpass(buf: &[f32], lo_hz: f32, hi_hz: f32) -> Vec<f32> {
     out
 }
 
-pub(crate) fn lowpass(buf: &[f32], cutoff_hz: f32) -> Vec<f32> {
+/// Brickwall low-pass at `cutoff_hz`.
+pub fn lowpass(buf: &[f32], cutoff_hz: f32) -> Vec<f32> {
     bandpass(buf, 0.0, cutoff_hz)
 }
 
@@ -254,7 +273,7 @@ pub(crate) fn warp_resample(buf: &[f32], warps: &[(f32, f32)]) -> Vec<f32> {
 /// # Panics
 ///
 /// If `n_pow2` is not a power of two.
-pub(crate) fn shaped_noise_loop(
+pub fn shaped_noise_loop(
     n_pow2: usize,
     bands: &[(f32, f32, f32)],
     rng: &mut NoiseStream,
@@ -319,7 +338,7 @@ fn moving_average(x: &[f32], window: usize) -> Vec<f32> {
 
 /// Spectral centroid in Hz.
 #[cfg(test)]
-pub(crate) fn centroid_hz(buf: &[f32]) -> f32 {
+pub fn centroid_hz(buf: &[f32]) -> f32 {
     let (re, im, _, hz_per_bin) = forward_spectrum(buf);
     let (mut num, mut den) = (0.0f64, 0.0f64);
     for (k, (r, i)) in re.iter().zip(&im).enumerate() {
@@ -332,7 +351,7 @@ pub(crate) fn centroid_hz(buf: &[f32]) -> f32 {
 
 /// Fraction of spectral power inside `[lo_hz, hi_hz)`.
 #[cfg(test)]
-pub(crate) fn band_energy_share(buf: &[f32], lo_hz: f32, hi_hz: f32) -> f32 {
+pub fn band_energy_share(buf: &[f32], lo_hz: f32, hi_hz: f32) -> f32 {
     let (re, im, tw, hz_per_bin) = forward_spectrum(buf);
     let (mut band, mut total) = (0.0f64, 0.0f64);
     for k in 1..=tw.len() {

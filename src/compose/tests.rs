@@ -5,6 +5,13 @@ use super::*;
 
 const SWEEP: u64 = 64;
 
+/// FNV-1a over 64-bit words — the hash the goldens below were recorded with.
+fn fnv1a(words: impl IntoIterator<Item = u64>) -> u64 {
+    words.into_iter().fold(0xcbf2_9ce4_8422_2325, |h, w| {
+        (h ^ w).wrapping_mul(0x0000_0100_0000_01b3)
+    })
+}
+
 #[test]
 fn template_chords_and_roots_are_diatonic_or_deliberately_chromatic() {
     for (name, progs) in [
@@ -435,7 +442,7 @@ fn a_seeded_groove_lays_every_hit_where_it_did() {
         }
         words.extend(kicks.into_iter().map(f32::to_bits));
     }
-    let h = pixtuoid_core::id::fnv1a(words.into_iter().map(u64::from));
+    let h = fnv1a(words.into_iter().map(u64::from));
     assert_eq!(h, GOLDEN, "{h:#018x}");
 }
 
@@ -472,7 +479,7 @@ fn every_seed_composes_the_score_it_did() {
             words.push(s.lead_voice as u64);
         }
     }
-    let h = pixtuoid_core::id::fnv1a(words);
+    let h = fnv1a(words);
     assert_eq!(h, EVERY_SEED_GOLDEN, "{h:#018x}");
 }
 

@@ -1,7 +1,8 @@
 //! The procedural sound recipes. Every constant is an auditioned, ratified
 //! value: change it in the audition first and re-ratify it (the
-//! `procedural-lofi` skill's Phase 0), then mirror it here. All functions are
-//! PURE sample-buffer generators (mono f32 at [`SAMPLE_RATE`]) run once at
+//! `procedural-lofi` skill's Phase 0, recorded in `docs/phase0-ratification.md`),
+//! then mirror it here. All functions are PURE
+//! sample-buffer generators (mono f32 at [`SAMPLE_RATE`]) run once at
 //! startup — playback never synthesizes.
 
 use super::dsp::{NoiseStream, SAMPLE_RATE, bandpass, lowpass};
@@ -100,7 +101,7 @@ fn bar_s() -> f32 {
 /// IS the medium). No hiss here: per-stem hiss STACKS across the musical
 /// stems, so the medium noise is `texture_bed`'s job, exactly once.
 fn lofi_post(buf: &[f32], drive: f32) -> Vec<f32> {
-    let warped = crate::audio::dsp::warp_resample(buf, &[(0.7, 0.0025), (8.0, 0.0006)]);
+    let warped = crate::dsp::warp_resample(buf, &[(0.7, 0.0025), (8.0, 0.0006)]);
     let t = drive.tanh();
     let sat: Vec<f32> = warped.iter().map(|&x| (x * drive).tanh() / t).collect();
     // tape 15ips head-bump ≈ 60Hz — low enough to catch the bass fundamentals (LOFI-BIBLE §4)
@@ -178,7 +179,7 @@ fn hat(rng: &mut NoiseStream, open: bool) -> Vec<f32> {
     let (dur, decay) = if open { (0.35, 9.0) } else { (0.06, 60.0) };
     let n = n_samples(dur);
     let raw: Vec<f32> = (0..n).map(|_| rng.norm()).collect();
-    let hp = crate::audio::dsp::highpass(&raw, 6000.0);
+    let hp = crate::dsp::highpass(&raw, 6000.0);
     hp.iter()
         .enumerate()
         .map(|(i, hp)| hp * (-(i as f32 / SR) * decay).exp() * 0.5)
@@ -713,15 +714,22 @@ fn lead_voice_fn(score: &Score) -> fn(u8, f32, f32) -> Vec<f32> {
 /// from one rng stream, so that order is part of the sound.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Lane {
+    /// Sustained chord bed.
     Pad,
+    /// The lead voice's melody.
     Sparkle,
+    /// The keys part under the melody.
     Keys,
+    /// The drum kit.
     Drums,
+    /// The ambient texture bed.
     Texture,
+    /// Bass line.
     Bass,
 }
 
 impl Lane {
+    /// Every lane, in render order.
     pub const ALL: [Lane; 6] = [
         Lane::Pad,
         Lane::Sparkle,
@@ -792,11 +800,11 @@ pub fn render_lane(score: &Score, lane: Lane, rng: &mut NoiseStream) -> Vec<f32>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio::dsp::{band_energy_share, centroid_hz};
+    use crate::dsp::{band_energy_share, centroid_hz};
 
     #[test]
     fn lane_recipe_is_the_ratified_shipping_params() {
-        use crate::audio::compose::Mood;
+        use crate::compose::Mood;
         assert_eq!(lane_recipe(Mood::Day, Lane::Sparkle), (2.0, 3200.0, 0.6));
         assert_eq!(lane_recipe(Mood::Day, Lane::Keys), (0.9, 2400.0, 0.8));
         assert_eq!(lane_recipe(Mood::Day, Lane::Drums), (7500.0, 2.2, 0.85));
@@ -809,7 +817,7 @@ mod tests {
 
     #[test]
     fn a_day_lead_sits_above_its_pad() {
-        use crate::audio::compose::compose;
+        use crate::compose::compose;
         let score = compose(Mood::Day, 0);
         let mut rng = NoiseStream::new(0);
         let pad = render_lane(&score, Lane::Pad, &mut rng);
@@ -1130,7 +1138,7 @@ mod tests {
         // seeds per mood suffice as the synthesis smoke
         for mood in [Mood::Day, Mood::Night] {
             for seed in [0u64, 7] {
-                let score = super::super::compose::compose(mood, seed);
+                let score = crate::compose::compose(mood, seed);
                 let mut rng = NoiseStream::new(9);
                 let beds = Lane::ALL.map(|l| render_lane(&score, l, &mut rng));
                 let n = n_samples(score.loop_secs());

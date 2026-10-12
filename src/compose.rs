@@ -17,9 +17,12 @@
 use super::dsp::NoiseStream;
 use super::score::DrumKind;
 
+/// The listening context a song is composed for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Mood {
+    /// The daytime pool of progressions and lead voices.
     Day,
+    /// The night-time pool of progressions and lead voices.
     Night,
 }
 
@@ -73,6 +76,7 @@ pub struct Score {
 pub(super) const GEN_LOOP_BARS: usize = 8;
 
 impl Score {
+    /// Tempo in beats per minute.
     pub fn bpm(&self) -> f32 {
         self.bpm
     }
@@ -89,6 +93,7 @@ impl Score {
         self.bar_s() * GEN_LOOP_BARS as f32
     }
 
+    /// Display name of the lead instrument this score drew.
     pub fn lead_voice_name(&self) -> &'static str {
         match self.lead_voice {
             LeadVoice::EpVel => "ep",
@@ -939,7 +944,7 @@ fn keys_events(
 /// Compose one full take from a seed — deterministic, no clock and no I/O.
 /// Synthesis lives in [`super::synth::render_lane`].
 pub fn compose(mood: Mood, seed: u64) -> Score {
-    let mut rng = NoiseStream::new(pixtuoid_core::id::splitmix64(seed ^ 0x10F1_C0DE));
+    let mut rng = NoiseStream::new(crate::dsp::splitmix64(seed ^ 0x10F1_C0DE));
 
     let (progs, bpm_win): (&[Progression], (f32, f32)) = match mood {
         Mood::Day => (&DAY_PROGRESSIONS, DAY_BPM),

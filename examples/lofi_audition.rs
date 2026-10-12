@@ -1,9 +1,9 @@
 //! The generator's STATISTICAL listen gate: render N random-seed takes to wav so
 //! the owner blind-auditions the COMPOSER, not one take. Renders through the REAL
-//! `synth::render_lane` chain, so what you hear is what ships.
+//! `render_lane` chain, so what you hear is what ships.
 //!
 //! Usage:
-//!   cargo run --release -p pixtuoid-scene --example lofi_audition -- \
+//!   cargo run --release --example lofi_audition -- \
 //!     [--mood day|night] [--seeds N] [--start S] [--out DIR] \
 //!     [--solo pad|sparkle|keys|drums|texture|bass]
 
@@ -12,9 +12,8 @@ use std::io::{BufWriter, Write as _};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use pixtuoid_scene::audio::compose::{Mood, compose};
-use pixtuoid_scene::audio::dsp::{NoiseStream, SAMPLE_RATE};
-use pixtuoid_scene::audio::synth::{Lane, render_lane};
+use pixtuoid_lofi::dsp::{NoiseStream, SAMPLE_RATE};
+use pixtuoid_lofi::{Lane, Mood, compose, render_lane};
 
 /// Audition mix gains per mood, in [`Lane::ALL`] order
 /// (pad, sparkle, keys, drums, texture, bass).
