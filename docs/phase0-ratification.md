@@ -1,8 +1,8 @@
-# Ambient sound Phase 0 — audition prototype (IvanWng97/pixtuoid#633)
+# Ambient sound Phase 0 — audition prototype (pixtuoid/pixtuoid#633)
 
 The Phase 0 record: the taste anchor and the one-texture-stem noise floor the lanes keep; the foley it ratifies (typing, rain, chime, printer) stayed in pixtuoid. The music takes' fingerprints are pinned in `src/synth.rs`'s tests.
 
-Owner-ratified 2026-07-16. Tracks issue IvanWng97/pixtuoid#633 (locked decisions in the issue body;
+Owner-ratified 2026-07-16. Tracks issue pixtuoid/pixtuoid#633 (locked decisions in the issue body;
 Phase 0 results in the comments). Everything here is deterministic numpy — run:
 `python3 .claude/skills/procedural-lofi/scripts/synth_audition.py` → `audio-demos/*.wav` beside the script.
 
@@ -45,4 +45,4 @@ References used (re-downloadable, NOT stored): media.rainymood.com/0.m4a
 live stream). Live streams: yt-dlp direct download never ends — `yt-dlp -g`
 for the HLS URL then `ffmpeg -t <s>`. Physics notes: Minnaert bubble resonance
 (glug), inharmonic chime-bar modes 1:2.76:5.40 (ding), tape wow/flutter+head-bump
-(lofi chain) — citations in IvanWng97/pixtuoid#633.
+(lofi chain) — citations in pixtuoid/pixtuoid#633.

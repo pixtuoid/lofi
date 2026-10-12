@@ -1,6 +1,6 @@
 # pixtuoid-lofi
 
-A seed composes a lofi song; the song is synthesized from constants. No samples, no dependencies, deterministic. Cut from [pixtuoid](https://github.com/IvanWng97/pixtuoid), whose terminal office it scores; history kept.
+A seed composes a lofi song; the song is synthesized from constants. No samples, no dependencies, deterministic. Cut from [pixtuoid](https://github.com/pixtuoid/pixtuoid), whose terminal office it scores; history kept.
 
 ```sh
 cargo add pixtuoid-lofi
