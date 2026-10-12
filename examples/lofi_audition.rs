@@ -1,49 +1,36 @@
 //! The generator's STATISTICAL listen gate: render N random-seed takes to wav so
 //! the owner blind-auditions the COMPOSER, not one take. Renders through the REAL
-//! `render_lane` chain, so what you hear is what ships.
+//! `render_lane` chain and mixes it at one of pixtuoid's tiers, so what you hear
+//! is what ships.
 //!
 //! Usage:
 //!   cargo run --release --example lofi_audition -- \
 //!     [--mood day|night] [--seeds N] [--start S] [--out DIR] \
-//!     [--solo pad|sparkle|keys|drums|texture|bass]
+//!     [--tier empty|moderate|busy | --solo pad|sparkle|keys|drums|texture|bass] \
+//!     [--shuffle KEYFILE]
+
+#[path = "common/batch.rs"]
+mod batch;
+#[path = "common/loudness.rs"]
+mod loudness;
 
 use std::fs::File;
+use std::hash::{BuildHasher as _, RandomState};
 use std::io::{BufWriter, Write as _};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use pixtuoid_lofi::dsp::{NoiseStream, SAMPLE_RATE};
-use pixtuoid_lofi::{Lane, Mood, compose, render_lane};
+use pixtuoid_lofi::{Lane, compose};
 
-/// Audition mix gains per mood, in [`Lane::ALL`] order
-/// (pad, sparkle, keys, drums, texture, bass).
-const DAY_MIX: [f32; Lane::ALL.len()] = [0.70, 0.60, 0.55, 0.45, 0.84, 0.62];
-const NIGHT_MIX: [f32; Lane::ALL.len()] = [0.75, 0.55, 0.50, 0.30, 0.84, 0.68];
+use batch::{
+    Batch, LANE_NAMES, TIERS, parse_choice, render_take, soak_mix, tier_gains, usage_error,
+};
+use loudness::gated_lufs;
 
-/// Soak length target per take — long enough to hear the loop breathe.
-const SOAK_SECS: f32 = 90.0;
-
-/// Every take renders at ONE loudness, so a blind A/B compares takes not gain.
-const TARGET_RMS_DBFS: f32 = -16.0;
-
-/// The soloable lanes, in [`Lane::ALL`] order — the ONE spelling `--solo` accepts.
-const SOLO_LANES: [&str; Lane::ALL.len()] = ["pad", "sparkle", "keys", "drums", "texture", "bass"];
-
-/// The `--mood` vocabulary paired with its [`Mood`], so the parse and the error
-/// message can't list different spellings.
-const MOODS: [(&str, Mood); 2] = [("day", Mood::Day), ("night", Mood::Night)];
-
-/// A usage error. This example IS the blind-audition gate, so an unusable
-/// argument fails instead of rendering a DIFFERENT take than the one asked for.
-fn usage_error(msg: String) -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::InvalidInput, msg)
-}
-
-fn parse_count(v: Option<String>, flag: &str) -> std::io::Result<u64> {
-    let raw = v.ok_or_else(|| usage_error(format!("{flag} needs a non-negative integer")))?;
-    raw.parse()
-        .map_err(|_| usage_error(format!("{flag} needs a non-negative integer, got {raw:?}")))
-}
+/// Every take renders at ONE gated loudness, so a blind A/B compares takes, not
+/// gain.
+const TARGET_LUFS: f64 = -18.0;
 
 fn main() -> ExitCode {
     match run() {
@@ -56,116 +43,112 @@ fn main() -> ExitCode {
 }
 
 fn run() -> std::io::Result<()> {
-    let mut mood = Mood::Day;
-    let mut seeds = 12u64;
-    let mut start = 0u64;
+    let mut batch = Batch::default();
     let mut out = PathBuf::from("audio-demos");
     let mut solo: Option<usize> = None;
+    let mut key: Option<PathBuf> = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
+        if batch.parse_flag(&a, &mut args)? {
+            continue;
+        }
         match a.as_str() {
-            "--mood" => {
-                let v = args.next().unwrap_or_default();
-                match MOODS.iter().find(|(name, _)| *name == v) {
-                    Some(&(_, m)) => mood = m,
-                    None => {
-                        return Err(usage_error(format!(
-                            "unknown --mood {v:?}; valid: {}",
-                            MOODS.map(|(name, _)| name).join("|")
-                        )));
-                    }
-                }
-            }
-            "--seeds" => {
-                seeds = parse_count(args.next(), "--seeds")?;
-                if seeds == 0 {
-                    return Err(usage_error("--seeds must be at least 1".into()));
-                }
-            }
-            "--start" => start = parse_count(args.next(), "--start")?,
             "--out" => match args.next() {
                 Some(v) => out = PathBuf::from(v),
                 None => return Err(usage_error("--out needs a directory".into())),
             },
-            "--solo" => {
-                let v = args.next().unwrap_or_default();
-                match SOLO_LANES.iter().position(|&l| l == v) {
-                    Some(i) => solo = Some(i),
-                    None => {
-                        return Err(usage_error(format!(
-                            "unknown --solo lane {v:?}; valid: {}",
-                            SOLO_LANES.join("|")
-                        )));
-                    }
-                }
-            }
+            "--solo" => solo = Some(parse_choice(args.next(), "--solo", &LANE_NAMES)?),
+            "--shuffle" => match args.next() {
+                Some(v) => key = Some(PathBuf::from(v)),
+                None => return Err(usage_error("--shuffle needs a key file".into())),
+            },
             other => {
                 return Err(usage_error(format!(
-                    "unknown argument {other:?}; valid: --mood --seeds --start --out --solo"
+                    "unknown argument {other:?}; valid: --mood --seeds --start --out --tier --solo --shuffle"
                 )));
             }
         }
     }
+    if solo.is_some() && batch.tier.is_some() {
+        return Err(usage_error(
+            "--solo plays one lane, so it takes no --tier".into(),
+        ));
+    }
     std::fs::create_dir_all(&out)?;
 
-    let tag = match mood {
-        Mood::Day => "day",
-        Mood::Night => "night",
-    };
-    let mix = match mood {
-        Mood::Day => DAY_MIX,
-        Mood::Night => NIGHT_MIX,
-    };
-    let mut listing = Vec::new();
-    for seed in start..start + seeds {
-        let score = compose(mood, seed);
-        let mut rng = NoiseStream::new(9);
-        let beds = Lane::ALL.map(|l| render_lane(&score, l, &mut rng));
-        let take_len = beds[0].len();
-        let loops = (SOAK_SECS * SAMPLE_RATE as f32 / take_len as f32).ceil() as usize;
-        let total = take_len * loops.max(1);
-        let mut mixdown = vec![0.0f32; total];
-        for (lane, (bed, gain)) in beds.iter().zip(mix).enumerate() {
-            match solo {
-                Some(s) if s != lane => continue,
-                Some(_) => {
-                    for (i, slot) in mixdown.iter_mut().enumerate() {
-                        *slot += bed[i % bed.len()] * 0.8;
-                    }
-                }
-                None => {
-                    for (i, slot) in mixdown.iter_mut().enumerate() {
-                        *slot += bed[i % bed.len()] * gain;
-                    }
-                }
-            }
+    let (mix_name, gains) = match solo {
+        Some(s) => {
+            let mut gains = [0.0; Lane::ALL.len()];
+            gains[s] = 1.0;
+            (LANE_NAMES[s], gains)
         }
-        rms_normalize(&mut mixdown);
-        let path = out.join(format!("gen_{tag}_{seed:03}.wav"));
+        None => {
+            let tier = batch.tier();
+            (TIERS[tier], Lane::ALL.map(|lane| tier_gains(lane)[tier]))
+        }
+    };
+    let seeds: Vec<u64> = batch.seeds().collect();
+    let takes: Vec<String> = seeds
+        .iter()
+        .map(|seed| format!("gen_{}_{mix_name}_{seed:03}.wav", batch.mood_name()))
+        .collect();
+    let files = match key {
+        Some(_) => shuffled_names(takes.len()),
+        None => takes.clone(),
+    };
+    for (&seed, file) in seeds.iter().zip(&files) {
+        let score = compose(batch.mood(), seed);
+        let beds = render_take(&score).map(|(bed, _)| bed);
+        let mut mixdown = soak_mix(&beds, &gains);
+        loudness_normalize(&mut mixdown);
+        let path = out.join(file);
         write_wav(&path, &mixdown)?;
-        println!(
-            "  seed {seed:3}  {:>3.0} bpm  lead={:5}  {}",
-            score.bpm(),
-            score.lead_voice_name(),
-            path.display()
-        );
-        listing.push(path);
+        if key.is_none() {
+            println!(
+                "  seed {seed:3}  {:>3.0} bpm  lead={:5}  {}",
+                score.bpm(),
+                score.lead_voice_name(),
+                path.display()
+            );
+        }
     }
-    println!("\nblind-audition (shuffled order recommended):");
-    for p in &listing {
-        println!("  afplay {}", p.display());
+    let mut order: Vec<(&String, &String)> = files.iter().zip(&takes).collect();
+    order.sort();
+    match &key {
+        Some(key) => {
+            let mut w = BufWriter::new(File::create(key)?);
+            for (file, take) in &order {
+                writeln!(w, "{file} {take}")?;
+            }
+            w.flush()?;
+            println!("\nblind-audition:");
+        }
+        None => println!("\nblind-audition (--shuffle KEYFILE hides the seeds):"),
+    }
+    for (file, _) in &order {
+        println!("  afplay {}", out.join(file).display());
     }
     Ok(())
 }
 
-/// Scale the mixdown to `TARGET_RMS_DBFS`; the gain is capped so a sparse take
-/// can't be blown up into noise.
-fn rms_normalize(x: &mut [f32]) {
-    let rms = (x.iter().map(|v| v * v).sum::<f32>() / x.len().max(1) as f32).sqrt();
-    let target = 10f32.powf(TARGET_RMS_DBFS / 20.0);
-    let g = (target / rms.max(1e-9)).min(4.0);
+/// `count` opaque file names in a random order, seeded from a [`RandomState`],
+/// which is "initialized with random keys"
+/// (<https://doc.rust-lang.org/std/hash/struct.RandomState.html#method.new>).
+fn shuffled_names(count: usize) -> Vec<String> {
+    let mut rng = NoiseStream::new(RandomState::new().hash_one(count));
+    let mut order: Vec<usize> = (0..count).collect();
+    for i in (1..count).rev() {
+        let j = ((rng.unit() * (i + 1) as f32) as usize).min(i);
+        order.swap(i, j);
+    }
+    order.iter().map(|i| format!("take_{i:02}.wav")).collect()
+}
+
+/// Scale the mixdown to [`TARGET_LUFS`].
+fn loudness_normalize(x: &mut [f32]) {
+    let gain = 10f64.powf((TARGET_LUFS - gated_lufs(x)) / 20.0) as f32;
     for v in x.iter_mut() {
-        *v *= g;
+        *v *= gain;
     }
 }
 
