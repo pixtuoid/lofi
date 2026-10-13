@@ -389,15 +389,57 @@ mod tests {
         assert_eq!(first_diff, None);
     }
 
+    /// `frames` frames of `seed` from `controls`, in calls of `sizes` and then
+    /// one for the rest, each of `asks` made once its frame count has played,
+    /// which splits the call it falls in.
+    fn play(
+        seed: u64,
+        controls: Controls,
+        asks: &[(usize, Controls)],
+        sizes: &[usize],
+        frames: usize,
+    ) -> Vec<Frame> {
+        let mut p = Performance::new(seed, controls);
+        let mut out = Vec::with_capacity(frames);
+        let mut asks = asks.iter().peekable();
+        let mut sizes = sizes.iter();
+        let mut left = 0;
+        while out.len() < frames {
+            while let Some(&&(at, c)) = asks.peek()
+                && at == out.len()
+            {
+                p.set_controls(c);
+                asks.next();
+            }
+            if left == 0 {
+                left = sizes.next().copied().unwrap_or(frames);
+            }
+            let until = asks.peek().map_or(frames, |&&(at, _)| at);
+            let n = left.min(until - out.len());
+            out.extend(next(&mut p, n));
+            left -= n;
+        }
+        assert_eq!(p.position(), frames as u64);
+        out
+    }
+
     #[test]
     fn render_plays_the_same_frames_however_the_calls_chunk_them() {
-        let (seed, c) = (3, Controls::default());
-        let boundary = song_len(seed, 0, c);
-        // through song 1's first loop, past every tail of song 0
-        let span = boundary + song_len(seed, 1, c) / LOOPS_PER_SONG;
-        let whole = next(&mut Performance::new(seed, c), span);
+        let seed = 3;
+        let busy = Controls::default().with_intensity(1.0).with_rain(1.0);
+        let order = [Controls::default(), night(), busy];
+        let lens = [0, 1, 2].map(|k| song_len(seed, k, order[k as usize]));
+        let bounds = [lens[0], lens[0] + lens[1]];
+        // each song asks for the next one's controls halfway through
+        let asks = [(lens[0] / 2, order[1]), (bounds[0] + lens[1] / 2, order[2])];
+        // through song 2's first loop, past every tail of song 1
+        let span = bounds[1] + lens[2] / LOOPS_PER_SONG;
+        let whole = play(seed, order[0], &asks, &[], span);
         assert!(
-            audible(&whole[..boundary]) && audible(&whole[boundary..]),
+            [0, bounds[0], bounds[1]]
+                .windows(2)
+                .all(|w| audible(&whole[w[0]..w[1]]))
+                && audible(&whole[bounds[1]..]),
             "an invariance over silence proves nothing"
         );
         let mut rng = NoiseStream::new(1);
@@ -412,46 +454,54 @@ mod tests {
             total += size;
             random.push(size);
         }
+        let [b0, b1] = bounds;
         let chunkings = [
             ("random sizes", random),
-            ("one frame at the boundary", vec![boundary, 1]),
-            ("a call across the boundary", vec![boundary - 63, 127]),
+            ("one frame at each boundary", vec![b0, 1, b1 - b0 - 1, 1]),
+            (
+                "a call across each boundary",
+                vec![b0 - 63, 127, b1 - b0 - 127, 127],
+            ),
         ];
-        for (name, chunks) in chunkings {
-            let mut p = Performance::new(seed, c);
-            let mut at = 0;
-            for size in chunks.into_iter().chain([span]) {
-                let n = size.min(span - at);
-                let got = next(&mut p, n);
-                assert_eq!(
-                    first_diff(&got, &whole[at..at + n]).map(|i| at + i),
-                    None,
-                    "{name}: the first frame that differs"
-                );
-                at += n;
-            }
-            assert_eq!(p.position(), span as u64, "{name}");
-        }
+        let off: Vec<String> = std::thread::scope(|scope| {
+            let runs: Vec<_> = (chunkings.iter())
+                .map(|(name, sizes)| {
+                    let got = scope.spawn(|| play(seed, order[0], &asks, sizes, span));
+                    (name, got)
+                })
+                .collect();
+            runs.into_iter()
+                .filter_map(|(name, got)| {
+                    let got = got.join().expect("a run panicked");
+                    first_diff(&got, &whole).map(|at| format!("{name}: frame {at}"))
+                })
+                .collect()
+        });
+        assert!(off.is_empty(), "the first frame that differs: {off:#?}");
     }
 
     #[test]
     fn a_song_plays_the_same_reached_by_playback_or_alone() {
         let (seed, c) = (5, Controls::default());
-        let mut playing = Performance::new(seed, c);
+        // songs before it at other controls, which it must not remember
+        let mut playing = Performance::new(seed, night().with_intensity(0.0));
         playing.finish_song();
+        playing.set_controls(c.with_intensity(1.0).with_rain(1.0));
+        playing.finish_song();
+        playing.set_controls(c);
         let reached = playing.finish_song();
-        let alone = audition::song(seed, 1, c);
+        let alone = audition::song(seed, 2, c);
         assert!(audible(&alone));
         assert_eq!(reached.len(), alone.len());
         let first_loop = alone.len() / LOOPS_PER_SONG;
         assert!(
             first_diff(&reached[..first_loop], &alone[..first_loop]).is_some(),
-            "song 0's tails ring into song 1"
+            "song 1's tails ring into song 2"
         );
         assert_eq!(
             first_diff(&reached[first_loop..], &alone[first_loop..]),
             None,
-            "song 1 after the tails, from its second loop"
+            "song 2 after the tails, from its second loop"
         );
     }
 
