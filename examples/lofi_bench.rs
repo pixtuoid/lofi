@@ -1,5 +1,5 @@
-//! Local gates for what CI can't afford: `Performance::render`'s cost, and an
-//! hour of each room playing finite at a steady level. Never in CI, which
+//! Local gates for what CI can't afford: `Performance::render`'s cost, and a
+//! run of each room playing finite at a steady level. Never in CI, which
 //! would spend minutes on them and whose shared runners' clocks time their
 //! neighbors too (opinion). Exits non-zero when a gate fails, and names the
 //! machine, since the times are only its.
@@ -39,9 +39,9 @@ const MEAN_RTF: f64 = 0.05;
 /// The seeds the slowest chunk is sought over.
 const SEEDS: Range<u64> = 0..3;
 
-/// How long each room plays, in seconds, rounded up to its next song: an
-/// hour.
-const HOUR_S: u32 = 60 * 60;
+/// How long each room plays, in seconds, to the end of its last song.
+/// The mean settles within minutes, and this spans many song transitions.
+const ROOM_S: u32 = 20 * 60;
 
 fn main() -> ExitCode {
     if cfg!(debug_assertions) {
@@ -66,7 +66,7 @@ fn main() -> ExitCode {
         ("busy", TIER_INTENSITIES[2]),
     ] {
         let controls = Controls::default().with_intensity(intensity);
-        pass &= an_hour(&mut buf, room, controls);
+        pass &= play_room(&mut buf, room, controls);
     }
     if pass {
         ExitCode::SUCCESS
@@ -105,24 +105,24 @@ fn slowest_chunk(buf: &mut [Frame]) -> (f64, u64, u64) {
     worst
 }
 
-/// Plays [`HOUR_S`] of `room` under `controls` in `buf`-long chunks, and
+/// Plays [`ROOM_S`] of `room` under `controls` in `buf`-long chunks, and
 /// says whether it passed its gates: the mean real-time factor within
 /// [`MEAN_RTF`], every frame finite, and its songs' gated loudness varying no
 /// more than the whole-lane mix's did at its controls, give or take
 /// [`LUFS_SD_TOLERANCE`].
-fn an_hour(buf: &mut [Frame], room: &str, controls: Controls) -> bool {
+fn play_room(buf: &mut [Frame], room: &str, controls: Controls) -> bool {
     let Some(&(.., whole_lane)) = (WHOLE_LANE_LUFS_SD.iter())
         .find(|&&(i, d, _)| i == controls.intensity && d == controls.daylight)
     else {
         say(&format!(
-            "an hour, {room} room: no whole-lane loudness to hold it to"
+            "{room} room: no whole-lane loudness to hold it to"
         ));
         return false;
     };
     let seed = SEEDS.start;
     let mut music = Performance::new(seed, controls);
     let (mut took, mut songs) = (0.0, Vec::new());
-    while music.position() < u64::from(HOUR_S) * u64::from(SAMPLE_RATE) {
+    while music.position() < u64::from(ROOM_S) * u64::from(SAMPLE_RATE) {
         let len = audition::song_len(seed, songs.len() as u64, controls);
         let mut left = Vec::with_capacity(len);
         while left.len() < len {
@@ -135,20 +135,19 @@ fn an_hour(buf: &mut [Frame], room: &str, controls: Controls) -> bool {
                 .position(|f| !f.iter().all(|v| v.is_finite()))
             {
                 let frame = music.position() - (n - i) as u64;
-                say(&format!(
-                    "an hour, {room} room: frame {frame} plays {:?}",
-                    buf[i]
-                ));
+                say(&format!("{room} room: frame {frame} plays {:?}", buf[i]));
                 return false;
             }
             left.extend(buf[..n].iter().map(|&[l, _]| l));
         }
         songs.push(gated_lufs(&left, SAMPLE_RATE));
     }
-    let rtf = took * f64::from(SAMPLE_RATE) / music.position() as f64;
+    let played = music.position() as f64 / f64::from(SAMPLE_RATE);
+    let rtf = took / played;
     let (sd, bound) = (audition::lufs_sd(&songs), whole_lane * LUFS_SD_TOLERANCE);
     say(&format!(
-        "an hour, {room} room: mean real-time factor {rtf:.4} (gate {MEAN_RTF}); {} songs, every frame finite, gated loudness sd {sd:.4} LU (gate {bound:.4})",
+        "{room} room, {:.1} min: mean real-time factor {rtf:.4} (gate {MEAN_RTF}); {} songs, every frame finite, gated loudness sd {sd:.4} LU (gate {bound:.4})",
+        played / 60.0,
         songs.len()
     ));
     // `<=`, which the NaN sd a silent song's -inf LUFS makes fails
