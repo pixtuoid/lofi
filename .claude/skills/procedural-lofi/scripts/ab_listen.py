@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Blind A/B of a sound change. Pairs the renders a baseline batch and a
 candidate batch share by name (`lofi_audition --out BASE_DIR` on main, then
-`--out CAND_DIR` on the branch), plays each pair in a random order with the
+`--out CAND_DIR` on the branch; for the engines, `--engine v1 --out BASE_DIR`,
+then `--engine v2 --out CAND_DIR`), plays each pair in a random order with the
 candidate on a random side, and records every verdict with its unblinding.
 Verdicts save after each pair, and a rerun with the same --out resumes.
 

@@ -18,7 +18,7 @@ use super::dsp::NoiseStream;
 
 /// The listening context a song is composed for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Mood {
+pub(crate) enum Mood {
     /// The daytime pool of progressions and lead voices.
     Day,
     /// The night-time pool of progressions and lead voices.
@@ -956,7 +956,7 @@ fn keys_events(
 /// Compose one full take from a seed — deterministic, no clock and no I/O.
 /// A [`Performance`](crate::Performance) plays it;
 /// [`render_lane`](super::synth::render_lane) renders one lane whole.
-pub fn compose(mood: Mood, seed: u64) -> Score {
+pub(crate) fn compose(mood: Mood, seed: u64) -> Score {
     let mut rng = NoiseStream::new(crate::dsp::splitmix64(seed ^ 0x10F1_C0DE));
 
     let (progs, bpm_win): (&[Progression], (f32, f32)) = match mood {

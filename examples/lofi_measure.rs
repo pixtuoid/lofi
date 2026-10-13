@@ -1,10 +1,13 @@
-//! The listening loop's numbers: what a sound change moves, per lane and in a
-//! pixtuoid tier's mix. They steer a change; only the owner's LISTEN judges it.
-//! Renders through the REAL `render_lane` chain, so it measures what ships.
+//! The listening loop's numbers: what a sound change moves in a pixtuoid
+//! tier's mix, and per lane through `--engine v1`. They steer a change; only
+//! the owner's LISTEN judges it. `--engine v2`, the default, measures a
+//! `Performance`'s song, which is what lofi ships; `--engine v1` measures the
+//! same score's lanes rendered whole and their mix looped as long, at the
+//! stage where the stream's mix meets its ceiling, so the two mixes compare.
 //!
 //! Usage:
 //!   cargo run --release --example lofi_measure -- \
-//!     [--mood day|night] [--seeds N] [--start S] [--tier empty|moderate|busy]
+//!     [--engine v1|v2] [--mood day|night] [--seeds N] [--start S] [--tier empty|moderate|busy]
 
 #[path = "common/batch.rs"]
 mod batch;
@@ -12,11 +15,12 @@ mod batch;
 mod loudness;
 
 use std::process::ExitCode;
+use std::time::{Duration, Instant};
 
-use pixtuoid_lofi::audition::compose;
+use pixtuoid_lofi::audition::LOOPS_PER_SONG;
 use pixtuoid_lofi::dsp::SAMPLE_RATE;
 
-use batch::{Batch, LANE_NAMES, render_take, soak_mix, usage_error};
+use batch::{Batch, Engine, LANE_NAMES, render_take, soak_mix, usage_error};
 use loudness::gated_lufs;
 
 const SR: f64 = SAMPLE_RATE as f64;
@@ -56,17 +60,45 @@ fn run() -> std::io::Result<()> {
     while let Some(a) = args.next() {
         if !batch.parse_flag(&a, &mut args)? {
             return Err(usage_error(format!(
-                "unknown argument {a:?}; valid: --mood --seeds --start --tier"
+                "unknown argument {a:?}; valid: --engine --mood --seeds --start --tier"
             )));
         }
     }
     let tier = batch.tier();
     let bands = bands();
     let header: Vec<String> = bands.iter().map(|&b| band_label(b)).collect();
+    let row = |name: &str, buf: &[f32], seam: String, took: Duration| {
+        let spectrum = Spectrum::of(buf);
+        let shares: String = bands
+            .iter()
+            .map(|&(lo, hi)| format!(" {:>6.1}%", 100.0 * spectrum.share(lo, hi)))
+            .collect();
+        println!(
+            "  {name:<8} {:>6.1}{shares} {:>8.0} {seam:>6} {:>6.0}",
+            gated_lufs(buf, SAMPLE_RATE),
+            spectrum.centroid(),
+            took.as_secs_f64() * 1e3
+        );
+        spectrum
+    };
     for seed in batch.seeds() {
-        let score = compose(batch.mood(), seed);
-        let take = render_take(&score);
-        let loop_len = take[0].0.len();
+        let score = batch.score(seed);
+        // v1 renders each lane's loop once, then plays it again
+        let (lanes, mix, took, rendered) = match batch.engine {
+            Engine::V1 => {
+                let (beds, took) = render_take(&score);
+                let mix = soak_mix(&beds, &tier.lane_gains());
+                let rendered = beds[0].len();
+                (Some((beds, took)), mix, took.iter().sum(), rendered)
+            }
+            Engine::V2 => {
+                let started = Instant::now();
+                let mix = batch.perform(seed)?;
+                let rendered = mix.len();
+                (None, mix, started.elapsed(), rendered)
+            }
+        };
+        let loop_len = mix.len() / LOOPS_PER_SONG;
         println!(
             "{} seed {seed}: {}; lead {}, loop {:.2} s",
             batch.mood_name(),
@@ -86,34 +118,24 @@ fn run() -> std::io::Result<()> {
             "seam",
             "ms"
         );
-        for (name, (bed, took)) in LANE_NAMES.iter().zip(&take) {
-            let spectrum = Spectrum::of(bed);
-            let shares: String = bands
-                .iter()
-                .map(|&(lo, hi)| format!(" {:>6.1}%", 100.0 * spectrum.share(lo, hi)))
-                .collect();
-            println!(
-                "  {name:<8} {:>6.1}{shares} {:>8.0} {:>6.2} {:>6.0}",
-                gated_lufs(bed, SAMPLE_RATE),
-                spectrum.centroid(),
-                seam_ratio(bed),
-                took.as_secs_f64() * 1e3
-            );
+        if let Some((beds, took)) = &lanes {
+            for ((name, bed), took) in LANE_NAMES.iter().zip(beds).zip(took) {
+                row(name, bed, format!("{:.2}", seam_ratio(bed)), *took);
+            }
         }
-        let beds = take.map(|(bed, _)| bed);
-        let mix = soak_mix(&beds, &tier.lane_gains());
-        let spectrum = Spectrum::of(&mix);
+        let spectrum = row("mix", &mix, "-".into(), took);
         let sub = BAND_EDGES_HZ[0];
         println!(
-            "  {} mix: {:.1} LUFS; below {sub} Hz {}; centroid {}; LTAS density slope {}-{} Hz {:.1} dB/oct; autocorrelation at the loop {:.4}",
+            "  {} mix through {}: below {sub} Hz {}; centroid {}; LTAS density slope {}-{} Hz {:.1} dB/oct; autocorrelation at the loop {:.4}; rendered at {:.4} of real time",
             tier.name(),
-            gated_lufs(&mix, SAMPLE_RATE),
+            batch.engine.name(),
             rail(100.0 * spectrum.share(0.0, sub), SUB_SHARE_RAIL_PCT, "%"),
             rail(spectrum.centroid(), CENTROID_RAIL_HZ, " Hz"),
             LTAS_SPAN_HZ[0],
             LTAS_SPAN_HZ[1],
             spectrum.ltas_slope(),
-            loop_autocorrelation(&mix, loop_len)
+            loop_autocorrelation(&mix, loop_len),
+            took.as_secs_f64() / (rendered as f64 / SR)
         );
     }
     Ok(())

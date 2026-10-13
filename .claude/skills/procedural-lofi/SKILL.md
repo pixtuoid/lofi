@@ -207,8 +207,9 @@ every taste axis is a data table or named const with ONE home:
    unit-draw per mood — re-weight the bands rather than adding draws).
 4. Extend the distribution property test; run the compose suite (fast — no synthesis).
 5. Render a batch (`cargo run --release --example lofi_audition -- --seeds N`;
-   `--solo sparkle` isolates the lane) → owner listens → tighten or ship. A change to a
-   shipped sound first diffs the tier gains moved here against pixtuoid's (no output: in step),
+   `--engine v1 --solo sparkle` isolates the lane, rendered whole) → owner listens →
+   tighten or ship. A change to a shipped sound first diffs the tier gains moved here
+   against pixtuoid's (no output: in step),
    ```bash
    diff <(gh api repos/pixtuoid/pixtuoid/contents/crates/pixtuoid-scene/src/audio/mod.rs --jq .content | base64 -d |
             sed -nE 's/^const (PAD|SPARKLE|KEYS|DRUMS|TEXTURE|BASS)_GAIN: TierGain = TierGain::new\((.*)\);$/\1 \2/p' | tr '[:upper:]' '[:lower:]') \
@@ -217,6 +218,9 @@ every taste axis is a data table or named const with ONE home:
    then renders the batch on `main` and on the branch into two `--out` dirs, and the owner
    blind-compares them:
    `python3 .claude/skills/procedural-lofi/scripts/ab_listen.py BASE CAND --out verdict.json`.
+   A change of engine renders both batches on one commit, `--engine v1 --out BASE` and
+   `--engine v2 --out CAND` with the same `--mood`, `--tier` and seeds: each take keeps its
+   name and its score under either engine.
 
 Mix LANES stay instrument-blind (a consumer's mixer sees lanes, never voices) — a
 lane is a busy-ness ROLE, an instrument is a timbre WITHIN it. That split is what keeps

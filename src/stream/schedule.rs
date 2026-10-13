@@ -16,7 +16,7 @@ const LANES: usize = Lane::ALL.len();
 pub(crate) const BLOCK: usize = 1024;
 
 /// A song plays its loop this many times.
-pub(crate) const LOOPS_PER_SONG: usize = 4;
+pub const LOOPS_PER_SONG: usize = 4;
 
 /// The daylight below which a song is composed for the night.
 const DUSK: f32 = 0.5;
@@ -25,6 +25,16 @@ const DUSK: f32 = 0.5;
 /// reached without composing the ones before it.
 fn song_seed(seed: u64, k: u64) -> u64 {
     splitmix_draw(seed, k + 1)
+}
+
+/// The score song `k` of `seed`'s run plays under `controls`.
+pub fn song_score(seed: u64, k: u64, controls: Controls) -> Score {
+    let mood = if controls.daylight < DUSK {
+        Mood::Night
+    } else {
+        Mood::Day
+    };
+    compose(mood, song_seed(seed, k))
 }
 
 /// The songs a seed composes, played one after another.
@@ -109,13 +119,8 @@ struct Song {
 
 impl Song {
     fn new(seed: u64, k: u64, controls: Controls, levels: [f64; LANES], sr: u32) -> Self {
-        let seed = song_seed(seed, k);
-        let mood = if controls.daylight < DUSK {
-            Mood::Night
-        } else {
-            Mood::Day
-        };
-        let score = compose(mood, seed);
+        let score = song_score(seed, k, controls);
+        let (mood, seed) = (score.mood, song_seed(seed, k));
         // as long as `render_lane` renders a loop, so each note lands where it
         // always has
         let loop_len = samples_at(score.loop_secs(), sr);
@@ -302,6 +307,18 @@ mod tests {
                 *a != Song::new(2, k as u64, day, UNITY, SAMPLE_RATE).score,
                 "seeds 1 and 2 share song {k}"
             );
+        }
+    }
+
+    #[test]
+    fn a_run_plays_each_songs_score() {
+        for c in [Controls::default(), Controls::default().with_daylight(0.0)] {
+            let mut run = Schedule::new(6, 0, SAMPLE_RATE);
+            for k in 0..3 {
+                run.start_song(c, UNITY);
+                let played = run.song.as_ref().map(|song| &song.score);
+                assert_eq!(played, Some(&song_score(6, k, c)), "song {k} at {c:?}");
+            }
         }
     }
 

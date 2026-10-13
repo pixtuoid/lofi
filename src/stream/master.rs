@@ -43,7 +43,7 @@ pub fn lane_gain(lane: Lane, intensity: f32) -> f32 {
 /// (<https://github.com/pixtuoid/pixtuoid/blob/a63f1782f477c357666e71a9c1147090b47fe17d/crates/pixtuoid-scene/src/audio/mixer.rs#L63-L65>),
 /// which leaves the ceiling a rare backstop. How a caller plays it:
 /// [`render`](crate::Performance::render).
-pub(crate) const MASTER_GAIN: f64 = 0.35;
+pub const MASTER_GAIN: f64 = 0.35;
 
 /// The peak no sample of [`render`](crate::Performance::render) passes, after
 /// EBU R 128 (<https://tech.ebu.ch/docs/r/r128.pdf>), which recommends "that
