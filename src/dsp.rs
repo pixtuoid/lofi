@@ -22,7 +22,7 @@ pub(crate) fn splitmix64(z: u64) -> u64 {
 }
 
 /// Draw `n` of the splitmix64 stream seeded at `seed`, counting from 1.
-fn splitmix_draw(seed: u64, n: u64) -> u64 {
+pub(crate) fn splitmix_draw(seed: u64, n: u64) -> u64 {
     splitmix64(seed.wrapping_add(n.wrapping_mul(GOLDEN_GAMMA)))
 }
 
@@ -44,6 +44,12 @@ impl NoiseStream {
     fn next_u64(&mut self) -> u64 {
         self.counter = self.counter.wrapping_add(1);
         splitmix_draw(self.seed, self.counter)
+    }
+
+    /// A stream seeded by this one's next draw, so what it draws moves no
+    /// sibling fork's draws.
+    pub(crate) fn fork(&mut self) -> Self {
+        Self::new(self.next_u64())
     }
 
     /// Uniform in [0, 1).

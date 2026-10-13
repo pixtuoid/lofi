@@ -10,8 +10,13 @@ use super::dsp::{NoiseStream, SAMPLE_RATE, bandpass, lowpass};
 
 const SR: f32 = SAMPLE_RATE as f32;
 
-fn n_samples(dur_s: f32) -> usize {
+pub(crate) fn n_samples(dur_s: f32) -> usize {
     (dur_s * SR).round() as usize
+}
+
+/// The sample a note at `at_s` starts on.
+fn onset(at_s: f32) -> usize {
+    (at_s * SR) as usize
 }
 
 fn env_ar(n: usize, attack_s: f32, release_s: f32) -> impl Fn(usize) -> f32 {
@@ -25,7 +30,7 @@ fn env_ar(n: usize, attack_s: f32, release_s: f32) -> impl Fn(usize) -> f32 {
 }
 
 fn place(buf: &mut [f32], snippet: &[f32], at_s: f32, gain: f32) {
-    let start = (at_s * SR) as usize;
+    let start = onset(at_s);
     for (i, &s) in snippet.iter().enumerate() {
         if let Some(slot) = buf.get_mut(start + i) {
             *slot += s * gain;
@@ -415,8 +420,28 @@ pub(crate) fn night_pad() -> Vec<f32> {
         &score::NIGHT_CHORDS,
         night_bar_s(),
         score::NIGHT_LOOP_BARS,
+        night_chord,
         Some((&score::NIGHT_BASS_ROOTS, NIGHT_PAD_SUB_GAIN)),
     )
+}
+
+/// One night pad chord, held through the bar and its ring.
+fn night_chord(chord: &[u8; 4], bar_s: f32) -> Vec<f32> {
+    let tau = std::f32::consts::TAU;
+    let nd = n_samples(bar_s + 1.2);
+    let mut sig = vec![0.0f32; nd];
+    for (i, &m) in chord.iter().enumerate() {
+        let f = midi_freq(f32::from(m));
+        let env = env_ar(nd, 0.5 + 0.1 * i as f32, 1.8);
+        for (j, slot) in sig.iter_mut().enumerate() {
+            let t = j as f32 / SR;
+            let tone = (tau * f * t).sin()
+                + 0.22 * (tau * 2.0 * f * t).sin()
+                + 0.05 * (tau * 3.0 * f * t).sin();
+            *slot += tone * env(j) * 0.8;
+        }
+    }
+    sig
 }
 
 /// `sub`: `Some((roots, gain))` bakes the FROZEN v4 anchor's sub floor into
@@ -425,25 +450,13 @@ fn night_pad_core(
     chords: &[[u8; 4]],
     bar_s: f32,
     loop_bars: usize,
+    voice: fn(&[u8; 4], f32) -> Vec<f32>,
     sub: Option<(&[u8; 4], f32)>,
 ) -> Vec<f32> {
     let tau = std::f32::consts::TAU;
     let mut buf = vec![0.0f32; n_samples(bar_s * loop_bars as f32)];
-    for (bar, &chord) in chords.iter().cycle().take(loop_bars).enumerate() {
-        let dur = bar_s + 1.2;
-        let nd = n_samples(dur);
-        let mut sig = vec![0.0f32; nd];
-        for (i, &m) in chord.iter().enumerate() {
-            let f = midi_freq(f32::from(m));
-            let env = env_ar(nd, 0.5 + 0.1 * i as f32, 1.8);
-            for (j, slot) in sig.iter_mut().enumerate() {
-                let t = j as f32 / SR;
-                let tone = (tau * f * t).sin()
-                    + 0.22 * (tau * 2.0 * f * t).sin()
-                    + 0.05 * (tau * 3.0 * f * t).sin();
-                *slot += tone * env(j) * 0.8;
-            }
-        }
+    for (bar, chord) in chords.iter().cycle().take(loop_bars).enumerate() {
+        let mut sig = voice(chord, bar_s);
         if let Some((bass_roots, sub_gain)) = sub {
             let fb = midi_freq(f32::from(bass_roots[bar % bass_roots.len()]));
             for half in 0..2 {
@@ -478,6 +491,7 @@ fn night_events_stem(events: &[(f32, u8, f32)], dur_s: f32, cutoff_hz: f32, peak
     events_stem_core(score::night_loop_secs(), events, dur_s, cutoff_hz, peak)
 }
 
+#[cfg(test)]
 fn events_stem_core(
     loop_secs: f32,
     events: &[(f32, u8, f32)],
@@ -627,28 +641,43 @@ fn night_texture_core(loop_secs: f32, kick_times: &[f32], rng: &mut NoiseStream)
 
 #[cfg(test)]
 pub(super) fn day_take_pad(take: &score::DayTake) -> Vec<f32> {
-    day_pad_core(take.chords, take.bar_s(), score::DAY_TAKE_LOOP_BARS)
+    day_pad_core(
+        take.chords,
+        take.bar_s(),
+        score::DAY_TAKE_LOOP_BARS,
+        day_chord,
+    )
 }
 
-fn day_pad_core(chords: &[[u8; 4]], bar_s: f32, loop_bars: usize) -> Vec<f32> {
+/// One day pad chord, held through the bar and its ring.
+fn day_chord(chord: &[u8; 4], bar_s: f32) -> Vec<f32> {
+    let tau = std::f32::consts::TAU;
+    let nd = n_samples(bar_s + 0.9);
+    let mut chord_sig = vec![0.0f32; nd];
+    for (i, &m) in chord.iter().enumerate() {
+        let f = midi_freq(f32::from(m));
+        let env = env_ar(nd, 0.25 + 0.08 * i as f32, 1.2);
+        for (j, slot) in chord_sig.iter_mut().enumerate() {
+            let t = j as f32 / SR;
+            let tone = (tau * f * t).sin()
+                + 0.30 * (tau * 2.0 * f * t).sin()
+                + 0.08 * (tau * 3.0 * f * t).sin();
+            *slot += tone * env(j);
+        }
+    }
+    chord_sig
+}
+
+fn day_pad_core(
+    chords: &[[u8; 4]],
+    bar_s: f32,
+    loop_bars: usize,
+    voice: fn(&[u8; 4], f32) -> Vec<f32>,
+) -> Vec<f32> {
     let tau = std::f32::consts::TAU;
     let mut buf = vec![0.0f32; n_samples(bar_s * loop_bars as f32)];
-    for (bar, &chord) in chords.iter().cycle().take(loop_bars).enumerate() {
-        let dur = bar_s + 0.9;
-        let nd = n_samples(dur);
-        let mut chord_sig = vec![0.0f32; nd];
-        for (i, &m) in chord.iter().enumerate() {
-            let f = midi_freq(f32::from(m));
-            let env = env_ar(nd, 0.25 + 0.08 * i as f32, 1.2);
-            for (j, slot) in chord_sig.iter_mut().enumerate() {
-                let t = j as f32 / SR;
-                let tone = (tau * f * t).sin()
-                    + 0.30 * (tau * 2.0 * f * t).sin()
-                    + 0.08 * (tau * 3.0 * f * t).sin();
-                *slot += tone * env(j);
-            }
-        }
-        place(&mut buf, &chord_sig, bar as f32 * bar_s, 1.0);
+    for (bar, chord) in chords.iter().cycle().take(loop_bars).enumerate() {
+        place(&mut buf, &voice(chord, bar_s), bar as f32 * bar_s, 1.0);
     }
     let mut buf = lowpass(&buf, 2600.0);
     for (i, v) in buf.iter_mut().enumerate() {
@@ -687,7 +716,7 @@ pub(super) fn day_take_drums(take: &score::DayTake, rng: &mut NoiseStream) -> Ve
     drums_core(take.loop_secs(), take.drums, cutoff, drive, peak, rng)
 }
 
-use super::compose::{LeadVoice, Mood, Score};
+use super::compose::{GEN_LOOP_BARS, LeadVoice, Mood, Score};
 
 /// The "bright" master for GENERATED takes: a one-pole tilt shelf, then
 /// re-normalize to the bed's pre-tilt peak. FROZEN takes keep their darker
@@ -762,6 +791,98 @@ fn lane_recipe(mood: Mood, lane: Lane) -> (f32, f32, f32) {
     }
 }
 
+/// What one lane of a score plays: the ONE mapping from a lane to its events
+/// and voice, read by [`render_lane`] and by the stream alike.
+pub(crate) enum Part<'a> {
+    /// A chord a bar, each held through the bar and its ring.
+    Chords {
+        chords: &'a [[u8; 4]; GEN_LOOP_BARS],
+        bar_s: f32,
+        voice: fn(&[u8; 4], f32) -> Vec<f32>,
+    },
+    /// `(at_s, midi, vel)` notes, each `dur_s` long.
+    Notes {
+        events: &'a [(f32, u8, f32)],
+        voice: fn(u8, f32, f32) -> Vec<f32>,
+        dur_s: f32,
+    },
+    /// `(at_s, kind, gain)` drum hits.
+    Hits(&'a [(f32, DrumKind, f32)]),
+    /// The texture: a bed, with no notes.
+    Bed,
+}
+
+pub(crate) fn part(score: &Score, lane: Lane) -> Part<'_> {
+    let (dur_s, ..) = lane_recipe(score.mood, lane);
+    match lane {
+        Lane::Pad => Part::Chords {
+            chords: &score.bar_chords,
+            bar_s: score.bar_s(),
+            voice: match score.mood {
+                Mood::Day => day_chord,
+                Mood::Night => night_chord,
+            },
+        },
+        Lane::Sparkle => Part::Notes {
+            events: &score.sparkle,
+            voice: lead_voice_fn(score),
+            dur_s,
+        },
+        Lane::Keys => Part::Notes {
+            events: &score.keys,
+            voice: ep_pluck_vel,
+            dur_s,
+        },
+        Lane::Bass => Part::Notes {
+            events: &score.bass,
+            voice: bass_note,
+            dur_s,
+        },
+        Lane::Drums => Part::Hits(&score.drums),
+        Lane::Texture => Part::Bed,
+    }
+}
+
+impl Part<'_> {
+    /// Each note's first sample in the loop, in event order: where
+    /// [`render_lane`] places it.
+    pub(crate) fn onsets(&self) -> Vec<usize> {
+        match *self {
+            Part::Chords { chords, bar_s, .. } => (0..chords.len())
+                .map(|bar| onset(bar as f32 * bar_s))
+                .collect(),
+            Part::Notes { events, .. } => events.iter().map(|&(at, ..)| onset(at)).collect(),
+            Part::Hits(hits) => hits.iter().map(|&(at, ..)| onset(at)).collect(),
+            Part::Bed => Vec::new(),
+        }
+    }
+
+    /// Note `i` of [`onsets`](Self::onsets), and the gain it mixes in at; a
+    /// hit draws its noise from `rng`.
+    pub(crate) fn note(&self, i: usize, rng: &mut NoiseStream) -> (Vec<f32>, f32) {
+        match *self {
+            Part::Chords {
+                chords,
+                bar_s,
+                voice,
+            } => (voice(&chords[i], bar_s), 1.0),
+            Part::Notes {
+                events,
+                voice,
+                dur_s,
+            } => {
+                let (_, midi, vel) = events[i];
+                (voice(midi, dur_s, vel), 1.0)
+            }
+            Part::Hits(hits) => {
+                let (_, kind, gain) = hits[i];
+                (drum_hit(rng, kind), gain)
+            }
+            Part::Bed => (Vec::new(), 1.0),
+        }
+    }
+}
+
 /// Render one lane of `score` to mono f32 at [`SAMPLE_RATE`], peaking at most
 /// 1.0. Every lane but the day [`Lane::Texture`] is a whole number of the song's
 /// loops long, so a caller loops them in phase; the day texture runs free on its
@@ -769,34 +890,35 @@ fn lane_recipe(mood: Mood, lane: Lane) -> (f32, f32, f32) {
 pub fn render_lane(score: &Score, lane: Lane, rng: &mut NoiseStream) -> Vec<f32> {
     let loop_s = score.loop_secs();
     let (r0, r1, r2) = lane_recipe(score.mood, lane);
-    let mut bed = match (score.mood, lane) {
-        (Mood::Day, Lane::Pad) => day_pad_core(
-            &score.bar_chords,
-            score.bar_s(),
-            super::compose::GEN_LOOP_BARS,
-        ),
-        (Mood::Day, Lane::Sparkle) => {
-            events_stem_voiced(loop_s, &score.sparkle, r0, r1, r2, lead_voice_fn(score))
-        }
-        (Mood::Day, Lane::Keys) => events_stem_core(loop_s, &score.keys, r0, r1, r2),
-        (Mood::Day, Lane::Drums) => drums_core(loop_s, &score.drums, r0, r1, r2, rng),
-        (Mood::Day, Lane::Texture) => texture_bed(rng),
+    let mut bed = match (score.mood, part(score, lane)) {
+        (
+            Mood::Day,
+            Part::Chords {
+                chords,
+                bar_s,
+                voice,
+            },
+        ) => day_pad_core(chords, bar_s, GEN_LOOP_BARS, voice),
         // the generated night pad renders NO baked sub — the bass lane owns that register
-        (Mood::Night, Lane::Pad) => night_pad_core(
-            &score.bar_chords,
-            score.bar_s(),
-            super::compose::GEN_LOOP_BARS,
-            None,
-        ),
-        (Mood::Night, Lane::Sparkle) => {
-            events_stem_voiced(loop_s, &score.sparkle, r0, r1, r2, lead_voice_fn(score))
-        }
-        (Mood::Night, Lane::Keys) => events_stem_core(loop_s, &score.keys, r0, r1, r2),
-        (Mood::Night, Lane::Drums) => drums_core(loop_s, &score.drums, r0, r1, r2, rng),
-        (Mood::Night, Lane::Texture) => night_texture_core(loop_s, &score.kick_times, rng),
-        (Mood::Day | Mood::Night, Lane::Bass) => {
-            events_stem_voiced(loop_s, &score.bass, r0, r1, r2, bass_note)
-        }
+        (
+            Mood::Night,
+            Part::Chords {
+                chords,
+                bar_s,
+                voice,
+            },
+        ) => night_pad_core(chords, bar_s, GEN_LOOP_BARS, voice, None),
+        (
+            _,
+            Part::Notes {
+                events,
+                voice,
+                dur_s,
+            },
+        ) => events_stem_voiced(loop_s, events, dur_s, r1, r2, voice),
+        (_, Part::Hits(hits)) => drums_core(loop_s, hits, r0, r1, r2, rng),
+        (Mood::Day, Part::Bed) => texture_bed(rng),
+        (Mood::Night, Part::Bed) => night_texture_core(loop_s, &score.kick_times, rng),
     };
     brighten(&mut bed);
     bed

@@ -1,10 +1,23 @@
-//! Streaming building blocks for the lane chains: each keeps its state across
-//! `process` calls, so a chain renders the same samples however
-//! [`Performance::render`](crate::Performance::render) is chunked.
+//! The streaming engine's parts: each keeps its state across calls, so
+//! [`Performance::render`](crate::Performance::render) plays the same frames
+//! however it is chunked.
 
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the lane chains don't call these yet")
+)]
 pub(crate) mod biquad;
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the lane chains don't call these yet")
+)]
 pub(crate) mod delay;
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the lane chains don't call these yet")
+)]
 pub(crate) mod onepole;
+pub(crate) mod schedule;
 
 /// Below this a feedback state is silence: "a number whose absolute value is
 /// below 10⁻²⁰ can be considered as 0" ([de Soras][denormal], §3).

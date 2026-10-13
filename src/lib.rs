@@ -8,10 +8,6 @@ mod compose;
 mod perform;
 #[cfg(test)]
 mod score;
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the lane chains don't call these yet")
-)]
 mod stream;
 mod synth;
 
