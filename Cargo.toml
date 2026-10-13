@@ -23,7 +23,9 @@ opt-level = 2
 unreachable_pub = "warn"
 missing_debug_implementations = "warn"
 missing_docs = "warn"
-unsafe_code = "forbid"
+# `deny`, which an `expect` can override, so `tests/alloc_budget.rs` can count
+# allocations; `src/lib.rs` forbids it in the library.
+unsafe_code = "deny"
 
 # An `allow` outlives the warning it silenced; an `expect` fails once its lint
 # stops firing, and a `reason` says why the suppression exists.
