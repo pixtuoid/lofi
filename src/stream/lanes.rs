@@ -8,6 +8,7 @@ use std::f64::consts::{FRAC_PI_2, TAU};
 
 use super::biquad::{Cascade, butter_lowpass, cookbook_bandpass};
 use super::delay::DelayLine;
+use super::hiss::Hiss;
 use super::onepole::Tilt;
 use super::schedule::BLOCK;
 use crate::compose::Mood;
@@ -209,7 +210,7 @@ impl Tape {
 /// tilt.
 #[derive(Debug)]
 pub(crate) struct Room {
-    hiss: Cascade,
+    hiss: Hiss,
     /// The hiss over a step.
     hissed: Vec<f64>,
     gains: [f64; 2],
@@ -232,7 +233,7 @@ pub(crate) struct Room {
 impl Room {
     fn new(len: usize, kicks: &[usize], gains: [f64; 2], sr: u32) -> Self {
         Self {
-            hiss: butter_lowpass(HISS_HZ, ORDER, sr),
+            hiss: Hiss::new(HISS_HZ, sr),
             hissed: Vec::with_capacity(BLOCK),
             gains,
             kicks: kicks.to_vec(),
@@ -252,17 +253,15 @@ impl Room {
         self.len + self.crossfade
     }
 
-    /// Plays the bed over `buf`, which holds the lane's crackle, drawing one
-    /// hiss sample from `noise` per frame of bed.
+    /// Plays the bed over `buf`, which holds the lane's crackle, its hiss
+    /// drawn from `noise`.
     fn process(&mut self, buf: &mut [f64], noise: &mut NoiseStream) {
         let [gain_in, gain_out] = self.gains;
         let end = self.end();
         let bed = end.saturating_sub(self.frame).min(buf.len());
         self.hissed.clear();
-        self.hissed
-            .extend((0..bed).map(|_| f64::from(noise.norm())));
         self.hissed.resize(buf.len(), 0.0);
-        self.hiss.process(&mut self.hissed);
+        self.hiss.fill(&mut self.hissed[..bed], noise);
         for (i, n) in (self.frame..self.frame + buf.len()).enumerate() {
             buf[i] = if n < end {
                 let sum = self.hissed[i] * f64::from(HISS_LEVEL) + self.hum(n) + buf[i];
@@ -318,7 +317,7 @@ impl Room {
     }
 
     fn at_rest(&self) -> bool {
-        self.frame >= self.end() && self.hiss.at_rest() && self.tilt.at_rest()
+        self.frame >= self.end() && self.tilt.at_rest()
     }
 }
 

@@ -4,6 +4,7 @@
 
 pub(crate) mod biquad;
 pub(crate) mod delay;
+pub(crate) mod hiss;
 pub(crate) mod lanes;
 pub(crate) mod master;
 pub(crate) mod onepole;

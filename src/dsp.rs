@@ -65,11 +65,11 @@ impl NoiseStream {
 
 /// `e^(−2πik/n)` for `k` in `0..n/2` as `(cos, sin)` rows, built per transform
 /// pair and dropped: a kept table for the longest beds pins megabytes.
-type Twiddles = Vec<(f32, f32)>;
+pub(crate) type Twiddles = Vec<(f32, f32)>;
 
 /// [`Twiddles`] for `n`, in f64: a recurrence across a stage drifts by its
 /// length.
-fn twiddles(n: usize) -> Twiddles {
+pub(crate) fn twiddles(n: usize) -> Twiddles {
     (0..n / 2)
         .map(|k| {
             let a = -2.0 * std::f64::consts::PI * k as f64 / n as f64;
@@ -81,7 +81,7 @@ fn twiddles(n: usize) -> Twiddles {
 /// In-place iterative radix-2 FFT (Cooley–Tukey), unscaled. `re`/`im` len
 /// must be a power of two no longer than the table: `tw` is [`twiddles`] for
 /// a power of two at least `re.len()`.
-fn fft(re: &mut [f32], im: &mut [f32], tw: &[(f32, f32)], inverse: bool) {
+pub(crate) fn fft(re: &mut [f32], im: &mut [f32], tw: &[(f32, f32)], inverse: bool) {
     let n = re.len();
     debug_assert!(n.is_power_of_two() && im.len() == n && 2 * tw.len() >= n);
     let mut j = 0usize;
