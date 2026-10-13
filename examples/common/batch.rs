@@ -256,12 +256,10 @@ mod tests {
     fn every_tier_and_mood_plays_under_the_controls_it_names() {
         let [empty, moderate, busy] = TIER_INTENSITIES;
         for (name, intensity) in [("empty", empty), ("moderate", moderate), ("busy", busy)] {
-            let batch = parsed("--tier", name);
-            assert_eq!(
-                batch.map(|b| b.controls().intensity).ok(),
-                Some(intensity),
-                "{name}"
-            );
+            let batch = parsed("--tier", name).expect("the tier parses");
+            assert_eq!(batch.controls().intensity, intensity, "{name}");
+            let gains = Lane::ALL.map(|lane| lane_gain(lane, intensity));
+            assert_eq!(batch.lane_gains(), gains, "{name}'s v1 mix");
         }
         assert!(parsed("--tier", "loud").is_err());
         let [day, night] =
