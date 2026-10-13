@@ -13,11 +13,12 @@ The verdict is the controller's proposal (opinion): per mood and over every
 take, an exact one-sided sign test, ties dropped, that cand scores LOWER than
 base on each judge's headline score, or sits FARTHER from the corpus by
 per-song FAD. Any test significant at ALPHA is REGRESSION; a group with too
-few untied pairs for a test to ever reach ALPHA is INSUFFICIENT, and so is the
-batch, which exits non-zero; anything else is PASS. The owner's blind listen,
-when given, overrides this verdict. Every
-third-octave band whose difference passes TO_EXPLAIN_DB is listed
-TO-EXPLAIN: a PR names its cause, but it fails nothing.
+few untied pairs for a test to ever reach ALPHA is INSUFFICIENT; anything else
+is PASS. The batch takes its worst group's verdict, a detected regression
+first, and exits non-zero unless it PASSes. The owner's blind listen, when
+given, overrides this verdict. Every third-octave band whose difference
+passes TO_EXPLAIN_DB is listed TO-EXPLAIN: a PR names its cause, but it fails
+nothing.
 
 A score is a guard against regression from a base batch to a candidate,
 never an objective to maximize: lofi's character (hiss, crackle, roll-off) is
@@ -364,9 +365,10 @@ def group_verdict(tests):
 
 
 def batch_verdict(groups):
-    """The batch's verdict over its groups': INSUFFICIENT if any is, then
-    REGRESSION if any is, else PASS."""
-    for worst in ("INSUFFICIENT", "REGRESSION"):
+    """The batch's verdict over its groups': REGRESSION if any is, since a
+    detected regression stands however few pairs another group had, then
+    INSUFFICIENT if any is, else PASS."""
+    for worst in ("REGRESSION", "INSUFFICIENT"):
         if worst in groups:
             return worst
     return "PASS"
@@ -544,6 +546,8 @@ def main():
                 f" ±{TO_EXPLAIN_DB:g} dB, median {t['median_db']:+.1f} ({t['min_db']:+.1f}..{t['max_db']:+.1f})"
             )
     print(f"\nverdict: {overall}  ({args.dir / 'judge.json'})")
+    if overall == "REGRESSION":
+        sys.exit("cand scores worse than base")
     if overall == "INSUFFICIENT":
         sys.exit(f"a group has fewer than {MIN_UNTIED} untied pairs in some test, too few to ever reject at {ALPHA}")
 
