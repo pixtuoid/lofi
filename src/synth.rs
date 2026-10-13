@@ -142,7 +142,11 @@ fn bar_s() -> f32 {
 
 /// Tape wow and flutter, `(rate_hz, pitch deviation)` pairs as
 /// [`warp_resample`](crate::dsp::warp_resample) takes them.
-pub(crate) const WARPS: [(f32, f32); 2] = [(0.7, 0.0025), (8.0, 0.0006)];
+pub(crate) const WARPS: [(f32, f32); 2] = [WOW, (8.0, 0.0006)];
+
+/// The slow, deep warp of [`WARPS`], named apart so what leans on it finds
+/// it by name, not by place.
+pub(crate) const WOW: (f32, f32) = (0.7, 0.0025);
 
 /// The tape drive of every musical lane but the drums, which
 /// [`lane_recipe`] gives their own.

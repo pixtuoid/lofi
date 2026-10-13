@@ -329,6 +329,7 @@ mod tests {
     use crate::compose::DrumKind;
     use crate::dsp::{SAMPLE_RATE, band_energy_share};
     use crate::stream::schedule::{LOOPS_PER_SONG, Schedule};
+    use crate::synth::WOW;
 
     fn controls(mood: Mood) -> Controls {
         let daylight = match mood {
@@ -358,7 +359,7 @@ mod tests {
         // a quarter of the wow's cycle in, where the warp lags least, within
         // the flutter's swing of a frame: a stage sounding even one frame
         // early sounds before the kick
-        let onset = samples_at(0.25 / WARPS[0].0, sr);
+        let onset = samples_at(0.25 / WOW.0, sr);
         let hits = [(0.0, DrumKind::Kick, 1.0)];
         let part = Part::Hits(&hits);
         let (kick, gain) = part.note(0, &mut NoiseStream::new(9), sr);
