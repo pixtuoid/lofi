@@ -485,4 +485,131 @@ mod tests {
         assert!((low - 0.70).abs() < 0.05, "low band {low}");
         assert!((high - 0.30).abs() < 0.05, "high band {high}");
     }
+
+    /// The octave edges a fingerprint reads power shares between, in Hz.
+    const OCTAVE_EDGES_HZ: [f32; 10] = [
+        0.0,
+        125.0,
+        250.0,
+        500.0,
+        1000.0,
+        2000.0,
+        4000.0,
+        8000.0,
+        16000.0,
+        SAMPLE_RATE as f32 / 2.0,
+    ];
+
+    /// `buf`'s fingerprint: its RMS in dB, its peak, its centroid and its
+    /// power's share in each octave.
+    fn fingerprint(buf: &[f32]) -> Vec<f32> {
+        let power = buf.iter().map(|&v| f64::from(v * v)).sum::<f64>() / buf.len() as f64;
+        let peak = buf.iter().fold(0.0f32, |p, v| p.max(v.abs()));
+        let shares = (OCTAVE_EDGES_HZ.windows(2)).map(|w| band_energy_share(buf, w[0], w[1]));
+        [(10.0 * power.log10()) as f32, peak, centroid_hz(buf)]
+            .into_iter()
+            .chain(shares)
+            .collect()
+    }
+
+    #[test]
+    fn the_public_filters_keep_their_fingerprints() {
+        // over a platform's last-bit `sin`, and under any change pixtuoid's
+        // foley, tuned on these outputs, could hear (opinion)
+        const TOLERANCE: f32 = 1e-4;
+        // a keystroke's length, not a power of two, so the padding shows
+        let mut rng = NoiseStream::new(11);
+        let noise: Vec<f32> = (0..2646).map(|_| rng.norm()).collect();
+        // the bands pixtuoid's rain plays
+        // (crates/pixtuoid-scene/src/audio/foley.rs at a63f178)
+        let rain = [
+            (20.0, 60.0, 1.5),
+            (60.0, 125.0, 3.5),
+            (125.0, 250.0, 6.9),
+            (250.0, 500.0, 14.3),
+            (500.0, 1000.0, 24.4),
+            (1000.0, 2000.0, 25.3),
+            (2000.0, 4000.0, 10.2),
+            (4000.0, 8000.0, 8.9),
+            (8000.0, 16000.0, 4.0),
+        ];
+        let mut drops = NoiseStream::new(5);
+        let wash = shaped_noise_loop(1 << 16, &rain, &mut drops);
+        // RMS, peak and centroid, then a share per octave
+        type Fingerprint = [f32; 3 + OCTAVE_EDGES_HZ.len() - 1];
+        let cases: [(&str, Vec<f32>, usize, Fingerprint); 3] = [
+            (
+                "bandpass",
+                bandpass(&noise, 900.0, 3000.0),
+                noise.len(),
+                [
+                    -10.244952,
+                    1.0600876,
+                    1877.087,
+                    0.0001621343,
+                    0.00019316099,
+                    0.00044842198,
+                    0.061360985,
+                    0.4954008,
+                    0.44222355,
+                    0.00014493968,
+                    4.7951376e-5,
+                    1.8008892e-5,
+                ],
+            ),
+            (
+                "lowpass",
+                lowpass(&noise, 4000.0),
+                noise.len(),
+                [
+                    -7.590567,
+                    1.2667441,
+                    1829.902,
+                    0.021072902,
+                    0.047142792,
+                    0.057722352,
+                    0.15510617,
+                    0.27290294,
+                    0.4448293,
+                    0.0012147744,
+                    8.259414e-6,
+                    5.318578e-7,
+                ],
+            ),
+            (
+                "shaped_noise_loop",
+                wash,
+                1 << 16,
+                [
+                    -12.900906,
+                    1.0,
+                    1956.3048,
+                    0.048485186,
+                    0.06570255,
+                    0.14594305,
+                    0.24840866,
+                    0.2583636,
+                    0.10464047,
+                    0.088480085,
+                    0.039949004,
+                    2.7414626e-5,
+                ],
+            ),
+        ];
+        let mut off = Vec::new();
+        for (name, buf, len, want) in cases {
+            let got = fingerprint(&buf);
+            let strays =
+                (got.iter().zip(want)).any(|(g, w)| (g - w).abs() > TOLERANCE * w.abs().max(1.0));
+            if buf.len() != len || strays {
+                off.push(format!("{name}: {} samples, {got:?}", buf.len()));
+            }
+        }
+        // the draws it took, which every later draw of pixtuoid's stream follows
+        let next = drops.unit();
+        if next != 0.789_408_7 {
+            off.push(format!("shaped_noise_loop's stream draws {next} next"));
+        }
+        assert!(off.is_empty(), "off their fingerprints: {off:#?}");
+    }
 }
