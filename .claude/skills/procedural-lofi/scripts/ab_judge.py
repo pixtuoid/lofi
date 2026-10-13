@@ -264,33 +264,44 @@ class Fad:
             digest = hashlib.sha256((refs / "audio" / t["file"]).read_bytes()).hexdigest()
             if digest != t["sha256"]:
                 sys.exit(f"{t['file']} doesn't match its manifest sha256; refusing the corpus")
-        # fadtk downloads a missing checkpoint from the repo's head, so it
-        # finds the pinned one where it looks first
+        # fadtk loads whatever sits where it looks first and downloads a
+        # missing checkpoint from the repo's head, so only a link to the
+        # pinned one may sit there
         repo, rev, file = LAION_CLAP
+        pinned = Path(hf_hub_download(repo, file, revision=rev))
         seeded = Path(fadtk.model_loader.__file__).parent / ".model-checkpoints" / file
-        if not seeded.exists():
+        if not (seeded.is_symlink() and seeded.resolve() == pinned.resolve()):
+            seeded.unlink(missing_ok=True)
             seeded.parent.mkdir(parents=True, exist_ok=True)
-            seeded.symlink_to(hf_hub_download(repo, file, revision=rev))
+            seeded.symlink_to(pinned)
         self.model = fadtk.model_loader.CLAPLaionModel(FAD_EMBEDDING)
         self.model.load_model()
-        key = f"{hashlib.sha256(manifest).hexdigest()}-{self.model.name}-{takes_lufs:.1f}"
-        cache = Path(sys.prefix) / "fad-cache" / f"{key}.npz"
+        manifest_sha = hashlib.sha256(manifest).hexdigest()
+        caches = Path(sys.prefix) / "fad-cache"
+        caches.mkdir(parents=True, exist_ok=True)
+        # the corpus alone sets it, and measuring it decodes every track
+        quietest_file = caches / f"{manifest_sha}-quietest.json"
+        if quietest_file.exists():
+            quietest = json.loads(quietest_file.read_text())["lufs"]
+        else:
+            quietest = min(mono_lufs(*self.read(refs, t)) for t in tracks)
+            quietest_file.write_text(json.dumps({"lufs": quietest}) + "\n")
+        # one level for every input, the takes' unless a reference is
+        # quieter, so no reference is ever raised and clipped
+        self.lufs = min(takes_lufs, quietest)
+        # keyed by the level it holds, which any batch louder than the
+        # quietest reference shares
+        cache = caches / f"{manifest_sha}-{self.model.name}-{self.lufs:.2f}.npz"
         if cache.exists():
             with np.load(cache) as stats:
-                self.lufs = float(stats["lufs"])
                 self.mu, self.cov = stats["mu"], stats["cov"]
                 self.calibration = dict(zip(stats["held"].tolist(), stats["held_fad"].tolist()))
             return
-        # one level for every input, the takes' unless a reference is
-        # quieter, so no reference is ever raised and clipped
-        quietest = min(mono_lufs(*self.read(refs, t)) for t in tracks)
-        self.lufs = min(takes_lufs, quietest)
         # the lowest sha256s, a choice no file order moves
         held = {t["file"] for t in sorted(tracks, key=lambda t: t["sha256"])[:HOLDOUT]}
         frames = np.concatenate([self.embed(*self.read(refs, t)) for t in tracks if t["file"] not in held])
         self.mu, self.cov = calc_embd_statistics(frames)
         self.calibration = {f: self.score(*self.read(refs, {"file": f})) for f in sorted(held)}
-        cache.parent.mkdir(parents=True, exist_ok=True)
         np.savez(
             cache,
             lufs=self.lufs,
