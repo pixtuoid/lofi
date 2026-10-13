@@ -46,7 +46,7 @@ fn a_performance_plays_two_songs_and_a_transition_within_its_heap_budget() {
     // set the budget found
     let (seed, day) = (6, Controls::default().with_intensity(1.0).with_rain(1.0));
     let night = day.with_daylight(0.0);
-    let span = audition::song(seed, 0, day).len() + audition::song(seed, 1, night).len();
+    let span = audition::song_len(seed, 0, day) + audition::song_len(seed, 1, night);
     // a chunk as a player renders ahead, allocated before the count starts
     let mut chunk = vec![Frame::default(); SAMPLE_RATE as usize / 2];
     let before = LIVE.load(Relaxed);

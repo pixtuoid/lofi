@@ -178,6 +178,13 @@ impl Performance {
         self.render(&mut out);
         out
     }
+
+    /// How many frames song `k` of `seed`'s run lasts under `controls`.
+    pub(crate) fn song_len(seed: u64, k: u64, controls: Controls) -> usize {
+        let mut p = Self::from_song(seed, k, controls);
+        p.start_due_song();
+        p.schedule.song_left()
+    }
 }
 
 #[cfg(test)]
@@ -196,13 +203,6 @@ mod tests {
         let mut out = vec![Frame::default(); frames];
         p.render(&mut out);
         out
-    }
-
-    /// How many frames song `k` of `seed`'s run lasts under `controls`.
-    fn song_len(seed: u64, k: u64, controls: Controls) -> usize {
-        let mut p = Performance::from_song(seed, k, controls);
-        p.start_due_song();
-        p.schedule.song_left()
     }
 
     /// The first frame at which `a` and `b` differ in a bit.
@@ -302,7 +302,8 @@ mod tests {
             let runs: Vec<_> = (runs.iter())
                 .map(|&(seed, a, b)| {
                     scope.spawn(move || {
-                        let span = song_len(seed, 0, a) + song_len(seed, 1, b) / LOOPS_PER_SONG;
+                        let span = audition::song_len(seed, 0, a)
+                            + audition::song_len(seed, 1, b) / LOOPS_PER_SONG;
                         let mut p = Performance::new(seed, a);
                         p.set_controls(b);
                         let mut ceiling = Ceiling::new(SAMPLE_RATE);
@@ -428,7 +429,7 @@ mod tests {
         let seed = 3;
         let busy = Controls::default().with_intensity(1.0).with_rain(1.0);
         let order = [Controls::default(), night(), busy];
-        let lens = [0, 1, 2].map(|k| song_len(seed, k, order[k as usize]));
+        let lens = [0, 1, 2].map(|k| audition::song_len(seed, k, order[k as usize]));
         let bounds = [lens[0], lens[0] + lens[1]];
         // each song asks for the next one's controls halfway through
         let asks = [(lens[0] / 2, order[1]), (bounds[0] + lens[1] / 2, order[2])];
@@ -505,17 +506,8 @@ mod tests {
         );
     }
 
-    /// `lofi_measure`'s default batch.
-    const SPREAD_SEEDS: std::ops::Range<u64> = 0..12;
-
-    /// How far the whole-lane mix's gated loudness spread across
-    /// [`SPREAD_SEEDS`] at pixtuoid's Moderate tier, in LU, by daylight: what
-    /// lofi played before it streamed, which the commit that set it records.
-    /// Songs may spread no wider: a non-regression, not a target.
-    const WHOLE_LANE_SPREAD_LU: [(f32, f64); 2] = [(1.0, 1.516), (0.0, 0.795)];
-
-    /// `song`'s gated loudness, in LUFS, which must be finite: a spread's
-    /// `min` and `max` would skip a NaN.
+    /// `song`'s gated loudness, in LUFS, which must be finite: a silent or a
+    /// NaN song's would make [`audition::lufs_sd`] NaN, which no bound fails.
     fn lufs(song: &[Frame]) -> f64 {
         let left: Vec<f32> = song.iter().map(|&[l, _]| l).collect();
         let lufs = crate::loudness::gated_lufs(&left, SAMPLE_RATE);
@@ -523,54 +515,69 @@ mod tests {
         lufs
     }
 
-    /// How far `lufs` spread: the loudest less the quietest.
-    fn spread(lufs: &[f64]) -> f64 {
-        let (quietest, loudest) = (lufs.iter())
-            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), &l| {
-                (lo.min(l), hi.max(l))
-            });
-        loudest - quietest
-    }
-
     #[test]
-    fn songs_spread_in_loudness_no_wider_than_the_whole_lane_mix() {
-        let off: Vec<String> = (WHOLE_LANE_SPREAD_LU.iter())
-            .filter_map(|&(daylight, bound)| {
-                let c = Controls::default().with_daylight(daylight);
+    fn songs_vary_in_loudness_no_more_than_the_whole_lane_mix() {
+        let off: Vec<String> = (audition::WHOLE_LANE_LUFS_SD.iter())
+            .filter(|&&(intensity, ..)| intensity == Controls::default().intensity)
+            .filter_map(|&(intensity, daylight, whole_lane)| {
+                let c = Controls::default()
+                    .with_intensity(intensity)
+                    .with_daylight(daylight);
                 let songs: Vec<f64> = std::thread::scope(|scope| {
-                    let runs: Vec<_> = SPREAD_SEEDS
-                        .map(|seed| scope.spawn(move || lufs(&audition::song(seed, 0, c))))
+                    let runs: Vec<_> = audition::WHOLE_LANE_SEEDS
+                        .map(|seed| {
+                            scope.spawn(move || {
+                                // song 0's second loop, the first its own
+                                // tails ring into, as they do every later one
+                                let loop_len = audition::song_len(seed, 0, c) / LOOPS_PER_SONG;
+                                let mut p = Performance::new(seed, c);
+                                next(&mut p, loop_len);
+                                lufs(&next(&mut p, loop_len))
+                            })
+                        })
                         .collect();
                     (runs.into_iter())
                         .map(|run| run.join().expect("a song panicked"))
                         .collect()
                 });
-                let spread = spread(&songs);
-                (spread > bound)
-                    .then(|| format!("daylight {daylight}: {spread:.3} LU over {bound}"))
+                let (sd, bound) = (
+                    audition::lufs_sd(&songs),
+                    whole_lane * audition::LUFS_SD_TOLERANCE,
+                );
+                (sd > bound).then(|| format!("daylight {daylight}: {sd:.4} LU over {bound:.4}"))
             })
             .collect();
-        assert!(off.is_empty(), "songs spread wider: {off:#?}");
+        assert!(off.is_empty(), "songs vary more: {off:#?}");
     }
 
     #[test]
-    fn an_hour_plays_finite_at_a_steady_level() {
-        let (daylight, bound) = WHOLE_LANE_SPREAD_LU[0];
-        let mut p = Performance::new(1, Controls::default().with_daylight(daylight));
-        let mut songs = Vec::new();
-        while p.position() < 60 * 60 * u64::from(SAMPLE_RATE) {
+    fn ten_minutes_of_changing_controls_play_finite() {
+        // every song asks the next for other controls, so each boundary
+        // changes the mood or the room
+        let asks = [
+            Controls::default(),
+            night().with_intensity(0.0),
+            Controls::default().with_intensity(1.0).with_rain(1.0),
+        ];
+        let mut p = Performance::new(7, asks[0]);
+        let mut songs = 0;
+        while p.position() < 10 * 60 * u64::from(SAMPLE_RATE) {
             let from = p.position();
             let song = p.finish_song();
+            songs += 1;
+            p.set_controls(asks[songs % asks.len()]);
             if let Some(i) = song.iter().position(|f| !f.iter().all(|v| v.is_finite())) {
                 panic!("frame {} plays {:?}", from + i as u64, song[i]);
             }
-            songs.push(lufs(&song));
+            assert!(
+                audible(&song),
+                "song {songs} is silent: finite proves nothing"
+            );
         }
-        let spread = spread(&songs);
         assert!(
-            spread <= bound,
-            "{} songs spread {spread:.3} LU, over the whole-lane mix's {bound}",
-            songs.len()
+            songs > 3,
+            "ten minutes crossed only {} songs' boundaries",
+            songs - 1
         );
     }
 
@@ -627,7 +634,7 @@ mod tests {
     #[test]
     fn set_controls_takes_effect_at_the_next_song_and_the_last_call_wins() {
         let seed = 6;
-        let boundary = song_len(seed, 0, Controls::default());
+        let boundary = audition::song_len(seed, 0, Controls::default());
         let mut plain = Performance::new(seed, Controls::default());
         let unasked = [plain.finish_song(), plain.finish_song()].concat();
         // `frames` frames, each of `calls` made once its frame count has played

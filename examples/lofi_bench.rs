@@ -1,6 +1,8 @@
-//! `Performance::render`'s cost against two local gates, never run in CI, whose
-//! shared runners' clocks time their neighbors too (opinion). Exits non-zero
-//! when a gate fails, and names the machine, since the numbers are only its.
+//! Local gates for what CI can't afford: `Performance::render`'s cost, and an
+//! hour of each room playing finite at a steady level. Never in CI, which
+//! would spend minutes on them and whose shared runners' clocks time their
+//! neighbors too (opinion). Exits non-zero when a gate fails, and names the
+//! machine, since the times are only its.
 //!
 //! Usage, natively, then on wasm32 under Node, through a harness that lends the
 //! build a clock and a console, which that target's std lacks:
@@ -8,14 +10,19 @@
 //!   cargo build --release --example lofi_bench --target wasm32-unknown-unknown
 //!   node examples/lofi_bench.mjs target/wasm32-unknown-unknown/release/examples/lofi_bench.wasm
 
+#[path = "common/loudness.rs"]
+mod loudness;
+
 use std::hint::black_box;
 use std::ops::Range;
 use std::process::ExitCode;
 
+use pixtuoid_lofi::audition::{self, LUFS_SD_TOLERANCE, TIER_INTENSITIES, WHOLE_LANE_LUFS_SD};
 use pixtuoid_lofi::dsp::SAMPLE_RATE;
-use pixtuoid_lofi::{Controls, Frame, Performance, audition};
+use pixtuoid_lofi::{Controls, Frame, Performance};
 
 use host::{Clock, machine, say};
+use loudness::gated_lufs;
 
 /// The span a player renders ahead in, in seconds.
 const CHUNK_S: f64 = 0.5;
@@ -32,8 +39,9 @@ const MEAN_RTF: f64 = 0.05;
 /// The seeds the slowest chunk is sought over.
 const SEEDS: Range<u64> = 0..3;
 
-/// How long each room's mean is taken over, in seconds: an hour.
-const MEAN_OVER_S: u32 = 60 * 60;
+/// How long each room plays, in seconds, rounded up to its next song: an
+/// hour.
+const HOUR_S: u32 = 60 * 60;
 
 fn main() -> ExitCode {
     if cfg!(debug_assertions) {
@@ -43,21 +51,22 @@ fn main() -> ExitCode {
     say(&format!("machine: {}", machine()));
     let chunk = (CHUNK_S * f64::from(SAMPLE_RATE)) as usize;
     let mut buf = vec![Frame::default(); chunk];
-    let worst = slowest_chunk(&mut buf);
+    let (worst, seed, at) = slowest_chunk(&mut buf);
     let share = worst / CHUNK_S;
     say(&format!(
-        "slowest {CHUNK_S} s chunk over two songs and their transition, at intensity 1 and rain 1: {:.2} ms, {:.1} % of the chunk (gate {:.0} %)",
+        "slowest {CHUNK_S} s chunk over two songs and their transition, at intensity 1 and rain 1: {:.2} ms, {:.1} % of the chunk (gate {:.0} %), seed {seed} at {:.1} s",
         worst * 1e3,
         share * 1e2,
-        WORST_CHUNK_SHARE * 1e2
+        WORST_CHUNK_SHARE * 1e2,
+        at as f64 / f64::from(SAMPLE_RATE)
     ));
     let mut pass = share <= WORST_CHUNK_SHARE;
-    for (room, intensity) in [("empty", 0.0), ("busy", 1.0)] {
-        let rtf = mean_rtf(&mut buf, Controls::default().with_intensity(intensity));
-        say(&format!(
-            "mean real-time factor over an hour, {room} room: {rtf:.4} (gate {MEAN_RTF})"
-        ));
-        pass &= rtf <= MEAN_RTF;
+    for (room, intensity) in [
+        ("empty", TIER_INTENSITIES[0]),
+        ("busy", TIER_INTENSITIES[2]),
+    ] {
+        let controls = Controls::default().with_intensity(intensity);
+        pass &= an_hour(&mut buf, room, controls);
     }
     if pass {
         ExitCode::SUCCESS
@@ -69,37 +78,81 @@ fn main() -> ExitCode {
 
 /// The longest one `render` of a `buf`-long chunk took, in seconds, over each
 /// of [`SEEDS`]' first two songs: a busy, rainy day's, then a night's, whose
-/// first bars the day's tails ring over.
-fn slowest_chunk(buf: &mut [Frame]) -> f64 {
+/// first bars the day's tails ring over. With it, the seed and the frame the
+/// chunk started at, which tell a cold start from a transition.
+fn slowest_chunk(buf: &mut [Frame]) -> (f64, u64, u64) {
     let day = Controls::default().with_intensity(1.0).with_rain(1.0);
     let night = day.with_daylight(0.0);
-    let mut worst = 0.0f64;
+    let mut worst = (0.0, SEEDS.start, 0);
     for seed in SEEDS {
-        let span = audition::song(seed, 0, day).len() + audition::song(seed, 1, night).len();
+        let span = audition::song_len(seed, 0, day) + audition::song_len(seed, 1, night);
         let mut music = Performance::new(seed, day);
         music.set_controls(night);
         while music.position() < span as u64 {
-            let n = buf.len().min(span - music.position() as usize);
+            let (at, n) = (
+                music.position(),
+                buf.len().min(span - music.position() as usize),
+            );
             let clock = Clock::start();
             music.render(&mut buf[..n]);
-            worst = worst.max(clock.secs());
+            let took = clock.secs();
             black_box(&buf);
+            if took > worst.0 {
+                worst = (took, seed, at);
+            }
         }
     }
     worst
 }
 
-/// The seconds rendering [`MEAN_OVER_S`] took under `controls`, in `buf`-long
-/// chunks, per second rendered.
-fn mean_rtf(buf: &mut [Frame], controls: Controls) -> f64 {
-    let mut music = Performance::new(SEEDS.start, controls);
-    let frames = u64::from(MEAN_OVER_S) * u64::from(SAMPLE_RATE);
-    let clock = Clock::start();
-    while music.position() < frames {
-        music.render(buf);
-        black_box(&buf);
+/// Plays [`HOUR_S`] of `room` under `controls` in `buf`-long chunks, and
+/// says whether it passed its gates: the mean real-time factor within
+/// [`MEAN_RTF`], every frame finite, and its songs' gated loudness varying no
+/// more than the whole-lane mix's did at its controls, give or take
+/// [`LUFS_SD_TOLERANCE`].
+fn an_hour(buf: &mut [Frame], room: &str, controls: Controls) -> bool {
+    let Some(&(.., whole_lane)) = (WHOLE_LANE_LUFS_SD.iter())
+        .find(|&&(i, d, _)| i == controls.intensity && d == controls.daylight)
+    else {
+        say(&format!(
+            "an hour, {room} room: no whole-lane loudness to hold it to"
+        ));
+        return false;
+    };
+    let seed = SEEDS.start;
+    let mut music = Performance::new(seed, controls);
+    let (mut took, mut songs) = (0.0, Vec::new());
+    while music.position() < u64::from(HOUR_S) * u64::from(SAMPLE_RATE) {
+        let len = audition::song_len(seed, songs.len() as u64, controls);
+        let mut left = Vec::with_capacity(len);
+        while left.len() < len {
+            let n = buf.len().min(len - left.len());
+            let clock = Clock::start();
+            music.render(&mut buf[..n]);
+            took += clock.secs();
+            if let Some(i) = buf[..n]
+                .iter()
+                .position(|f| !f.iter().all(|v| v.is_finite()))
+            {
+                let frame = music.position() - (n - i) as u64;
+                say(&format!(
+                    "an hour, {room} room: frame {frame} plays {:?}",
+                    buf[i]
+                ));
+                return false;
+            }
+            left.extend(buf[..n].iter().map(|&[l, _]| l));
+        }
+        songs.push(gated_lufs(&left, SAMPLE_RATE));
     }
-    clock.secs() / f64::from(MEAN_OVER_S)
+    let rtf = took * f64::from(SAMPLE_RATE) / music.position() as f64;
+    let (sd, bound) = (audition::lufs_sd(&songs), whole_lane * LUFS_SD_TOLERANCE);
+    say(&format!(
+        "an hour, {room} room: mean real-time factor {rtf:.4} (gate {MEAN_RTF}); {} songs, every frame finite, gated loudness sd {sd:.4} LU (gate {bound:.4})",
+        songs.len()
+    ));
+    // `<=`, which the NaN sd a silent song's -inf LUFS makes fails
+    rtf <= MEAN_RTF && sd <= bound
 }
 
 /// What the host lends the bench: std's clock and stdout natively.
