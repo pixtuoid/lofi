@@ -7,7 +7,7 @@ What the automatic review ([`claude-review.yml`](.github/workflows/claude-review
 ## Traps: the obvious reading is wrong here
 
 - **The rng draw order is the sound.** A draw added anywhere but the tail of `compose`'s stream, or a re-pinned `every_seed_composes_the_score_it_did`, `a_seeded_groove_lays_every_hit_where_it_did` or `day_take_stems_match_the_ratified_fingerprints`, is a sound change, never a test fix: CI goes green on a recomposed office.
-- **A changed sound needs the owner's LISTEN.** A diff that changes a shipped lane's samples (a `synth` constant, a `compose` rule, `lane_recipe`, a `score` take) is blocking unless the PR records the audition batch and the owner's verdict ([Changing the sound](AGENTS.md#changing-the-sound)): no test hears a taste regression.
+- **A changed sound needs a judge verdict.** A diff that changes a shipped lane's samples (a `synth` constant, a `compose` rule, `lane_recipe`, a `score` take) is blocking unless the PR records the A/B batch and `ab_judge.py`'s verdict, or the owner's LISTEN overriding it ([Changing the sound](AGENTS.md#changing-the-sound)): no unit test hears a taste regression.
 - **The score is bit-identical; samples are not.** A transcendental function on `compose`'s path splits a seed's score across platforms, and a test pinning rendered sample values passes on one OS or toolchain and fails on another.
 - **Semver rides the title the squash merge takes** (the PR's, or a lone commit's), which is the changelog line. A changed `dsp` output, or a new `Mood` or `Lane` variant, without `!` there ships a break as a patch.
 

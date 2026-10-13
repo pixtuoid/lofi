@@ -1,9 +1,9 @@
 //! The procedural sound recipes. Every constant is an owner-ratified value:
-//! change it through an audition batch of this chain
-//! (`examples/lofi_audition.rs`) and the owner's LISTEN, which the commit
-//! records. All functions are PURE sample-buffer generators (mono f32 at
-//! [`SAMPLE_RATE`]), whole-buffer and FFT-backed: a caller pre-renders a track
-//! once, never inside an audio callback.
+//! change it through an A/B batch of this chain (`examples/lofi_audition.rs`)
+//! and `ab_judge.py`'s verdict, which the commit records. All functions are
+//! PURE sample-buffer generators (mono f32 at [`SAMPLE_RATE`]), whole-buffer
+//! and FFT-backed: a caller pre-renders a track once, never inside an audio
+//! callback.
 
 use super::dsp::{NoiseStream, SAMPLE_RATE, bandpass, lowpass};
 

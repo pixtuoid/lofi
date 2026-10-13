@@ -1,7 +1,7 @@
 //! The FROZEN musical composition. These tables ARE one owner-ratified
 //! realization's events — deterministic data, not a re-roll. The day-1 tables
 //! regenerate via `.claude/skills/procedural-lofi/scripts/export_score.py`; a
-//! regen is a NEW take and needs a fresh owner LISTEN gate before it ships.
+//! regen is a NEW take and needs a fresh A/B verdict before it ships.
 
 use super::compose::{BEATS_PER_BAR, DrumKind};
 
@@ -130,7 +130,7 @@ mod tests {
 // The NIGHT/RAINY mood track. Events are frozen AT-SECONDS with the
 // humanization (differential swing, kick drag, jitter, velocity breathing)
 // baked into the timestamps — its exporter, a local phase-0 script, was not
-// kept, so a regen or BPM change is a NEW take and needs a fresh LISTEN gate.
+// kept, so a regen or BPM change is a NEW take and needs a fresh A/B verdict.
 
 pub(super) const NIGHT_BPM: f32 = 68.0;
 pub(super) const NIGHT_LOOP_BARS: usize = 8;
@@ -279,7 +279,7 @@ mod night_tests {
 // SHARED cores (pad/events/drums renderers) still produce the ratified sound.
 // Same freeze contract as night — humanization baked into the at-seconds
 // timestamps; their exporter was not kept either, and a regen needs a fresh
-// LISTEN gate. Day 2 "morning": royal-road IV-V-iii-vi in C, 76 BPM, boom-bap
+// A/B verdict. Day 2 "morning": royal-road IV-V-iii-vi in C, 76 BPM, boom-bap
 // backbeats on 2&4, a hand-written lead motif. Day 3 "golden hour": I-vi-ii-V
 // turnaround with voice-led inversions, 74 BPM, half-time.
 
@@ -340,7 +340,7 @@ pub(super) static DAY3: DayTake = DayTake {
 };
 
 // frozen take A; do not hand-edit — a regen is a NEW take
-// and needs a fresh LISTEN gate
+// and needs a fresh A/B verdict
 pub(super) const DAY2_BPM: f32 = 76.0;
 pub(super) const DAY2_CHORDS: [[u8; 4]; 4] = [
     [53, 57, 60, 64],
@@ -481,7 +481,7 @@ pub(super) const DAY2_DRUMS: [(f32, DrumKind, f32); 85] = [
 ];
 
 // frozen take B; do not hand-edit — a regen is a NEW take
-// and needs a fresh LISTEN gate
+// and needs a fresh A/B verdict
 pub(super) const DAY3_BPM: f32 = 74.0;
 pub(super) const DAY3_CHORDS: [[u8; 4]; 4] = [
     [48, 52, 55, 59],
