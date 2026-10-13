@@ -599,8 +599,7 @@ mod tests {
         let mut off = Vec::new();
         for (name, buf, len, want) in cases {
             let got = fingerprint(&buf);
-            let strays =
-                (got.iter().zip(want)).any(|(g, w)| (g - w).abs() > TOLERANCE * w.abs().max(1.0));
+            let strays = (got.iter().zip(want)).any(|(g, w)| (g - w).abs() > TOLERANCE * w.abs());
             if buf.len() != len || strays {
                 off.push(format!("{name}: {} samples, {got:?}", buf.len()));
             }
