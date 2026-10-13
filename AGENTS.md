@@ -4,11 +4,11 @@ Instructions for any AI coding agent in this repo. A rule that governs one item 
 
 ## The goal
 
-Lofi that sounds better without leaving the genre. The owner's LISTEN holds the genre; [`LOFI-BIBLE.md`](.claude/skills/procedural-lofi/reference/LOFI-BIBLE.md)'s MEASURED tempo and spectral targets are guard rails `lofi_measure` prints on every sound change, and a change that leaves them says so beside the owner's verdict. The first listener is [pixtuoid](https://github.com/pixtuoid/pixtuoid)'s office, which plays lofi for as long as it runs, so the music must not fatigue over hours.
+Lofi that sounds better without leaving the genre. The A/B judge holds the genre; [`LOFI-BIBLE.md`](.claude/skills/procedural-lofi/reference/LOFI-BIBLE.md)'s MEASURED tempo and spectral targets are guard rails `lofi_measure` prints on every sound change, and a change that leaves them says so beside the judge's verdict. The first listener is [pixtuoid](https://github.com/pixtuoid/pixtuoid)'s office, which plays lofi for as long as it runs, so the music must not fatigue over hours.
 
 ## Changing the sound
 
-Measurement steers a change toward a target; only the owner's LISTEN says it sounds good. A music change ends in an audition batch the owner blind-listens (`cargo run --release --example lofi_audition -- --seeds N`), and its commit records the verdict. Where each taste axis lives and how to add an instrument: the `procedural-lofi` skill's "GENERATOR loop". The taste anchor is in [`docs/phase0-ratification.md`](docs/phase0-ratification.md).
+Measurement steers a change toward a target; `ab_judge.py` says whether it sounds worse, and the owner's blind listen, when given, overrides it. A music change ends in an A/B batch the judge scores (the `procedural-lofi` skill's "GENERATOR loop" step 5), and its commit records the verdict. Where each taste axis lives and how to add an instrument: the `procedural-lofi` skill's "GENERATOR loop". The taste anchor is in [`docs/phase0-ratification.md`](docs/phase0-ratification.md).
 
 ## Map
 
