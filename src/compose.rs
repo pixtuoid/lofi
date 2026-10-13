@@ -55,8 +55,7 @@ pub(super) enum DrumKind {
 }
 
 /// One composed song — tempo, lead voice, harmonic timeline and every lane's
-/// events — that [`render_lane`](crate::render_lane) synthesizes. Fields stay
-/// private so a music-only patch can reshape them.
+/// events — that `synth`'s voices play.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Score {
     pub(super) mood: Mood,

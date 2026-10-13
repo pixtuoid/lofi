@@ -5,8 +5,8 @@ use std::io;
 use std::ops::Range;
 use std::time::{Duration, Instant};
 
+use pixtuoid_lofi::audition::{Lane, Mood, Score, render_lane};
 use pixtuoid_lofi::dsp::{NoiseStream, SAMPLE_RATE};
-use pixtuoid_lofi::{Lane, Mood, Score, render_lane};
 
 /// The `--mood` vocabulary paired with its [`Mood`], so the parse and the error
 /// message can't list different spellings.

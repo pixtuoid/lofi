@@ -13,8 +13,8 @@ mod loudness;
 
 use std::process::ExitCode;
 
+use pixtuoid_lofi::audition::{Lane, compose};
 use pixtuoid_lofi::dsp::SAMPLE_RATE;
-use pixtuoid_lofi::{Lane, compose};
 
 use batch::{Batch, LANE_NAMES, render_take, soak_mix, tier_gain, usage_error};
 use loudness::gated_lufs;

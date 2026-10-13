@@ -4,7 +4,7 @@ Instructions for any AI coding agent in this repo. A rule that governs one item 
 
 ## The goal
 
-Lofi that sounds better without leaving the genre. The owner's LISTEN holds the genre; [`LOFI-BIBLE.md`](.claude/skills/procedural-lofi/reference/LOFI-BIBLE.md)'s MEASURED tempo and spectral targets are guard rails `lofi_measure` prints on every sound change, and a change that leaves them says so beside the owner's verdict. The first listener is [pixtuoid](https://github.com/pixtuoid/pixtuoid)'s office, which loops these lanes for as long as it runs, so a take must not fatigue on repeat.
+Lofi that sounds better without leaving the genre. The owner's LISTEN holds the genre; [`LOFI-BIBLE.md`](.claude/skills/procedural-lofi/reference/LOFI-BIBLE.md)'s MEASURED tempo and spectral targets are guard rails `lofi_measure` prints on every sound change, and a change that leaves them says so beside the owner's verdict. The first listener is [pixtuoid](https://github.com/pixtuoid/pixtuoid)'s office, which plays lofi for as long as it runs, so the music must not fatigue over hours.
 
 ## Changing the sound
 
@@ -12,23 +12,25 @@ Measurement steers a change toward a target; only the owner's LISTEN says it sou
 
 ## Map
 
+- `perform`: the public engine, `Performance` and its `Controls`.
 - `compose`: seed → `Score`. The rng draw order is the sound.
 - `synth`: voices, the master chain, `render_lane`.
 - `dsp`: the public primitives, dependency-free on purpose.
 - `score`: test-only frozen takes that the fingerprint pins guard.
+- `audition`: lofi's own tools' access to the parts; no contract.
 
 ## Invariants no single item owns
 
 - **The score is bit-identical everywhere; rendered audio is not.** `+ - * /` are exact ([RFC 3514](https://rust-lang.github.io/rfcs/3514-float-semantics.html)) but `sin`/`exp` [are not](https://doc.rust-lang.org/std/primitive.f32.html#method.sin), so tests pin fingerprints, never sample values.
-- **A musical lane is a whole number of loops long**, counted in samples, so stems loop in phase (`generated_beds_are_finite_phase_locked_and_in_the_sound_world`).
-- **The public API is what `src/lib.rs` exports**: every `pub` is a semver promise.
+- **Output is a pure function of the seed and the `(position, Controls)` timeline**: no `render` chunking changes it, and song k's noise comes from `(seed, k)`, never from render history (the chunk-invariance and no-history tests).
+- **The public API is what `src/lib.rs` exports, `audition` aside**: every other `pub` is a semver promise; `audition` serves lofi's own tools and promises nothing.
 - **No audio file is ever committed** (`.gitignore`, CI): the references are copyrighted.
 
 ## Workflow
 
 - [`ci.yml`](.github/workflows/ci.yml) is the gate, and no hook runs it: run its steps before pushing.
 - A session pushes its own PR branches and merges its own PR once the ruleset's checks pass, the org's [shared review](https://github.com/pixtuoid/.github/blob/main/.github/workflows/claude-review.yml) among them, and every review thread is resolved. A blocking finding it refutes is dispositioned and resolved in its thread before the review re-runs (`gh run rerun <id> --failed`). It never force-pushes or pushes to `main`, never skips hooks (`--no-verify`), and never files issues.
-- A commit's title is its changelog line. In 0.x, `feat`/`fix` bump the patch and `!` bumps the minor ([release-plz](https://release-plz.dev/docs/config)). A new `Mood`/`Lane` or a changed `dsp` output takes `!`: pixtuoid's foley hears the latter, and no semver check does.
+- A commit's title is its changelog line. In 0.x, `feat`/`fix` bump the patch and `!` bumps the minor ([release-plz](https://release-plz.dev/docs/config)). A changed `dsp` output takes `!`: pixtuoid's foley hears it, and no semver check does. A new `Controls` field doesn't ([`#[non_exhaustive]`](https://doc.rust-lang.org/cargo/reference/semver.html#struct-add-public-field-when-no-private)), as long as its default keeps the old sound.
 - Releasing is the owner's: a hand-dispatched release PR, then the owner-approved `release` environment ([`release-plz.yml`](.github/workflows/release-plz.yml)).
 
 ## Conventions

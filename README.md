@@ -1,22 +1,21 @@
 # pixtuoid-lofi
 
-A seed composes a lofi song; the song is synthesized from constants. No samples, no dependencies, deterministic. Cut from [pixtuoid](https://github.com/pixtuoid/pixtuoid), whose terminal office it scores; history kept.
+A seed composes an endless run of lofi songs, synthesized from constants. No samples, no dependencies, deterministic. Cut from [pixtuoid](https://github.com/pixtuoid/pixtuoid), whose terminal office it scores; history kept.
 
 ```sh
 cargo add pixtuoid-lofi
 ```
 
 ```rust
-use pixtuoid_lofi::dsp::NoiseStream;
-use pixtuoid_lofi::{Lane, Mood, compose, render_lane};
+use pixtuoid_lofi::{Controls, Frame, Performance};
 
-let score = compose(Mood::Night, 7);
-let mut rng = NoiseStream::new(1);
-let bass = render_lane(&score, Lane::Bass, &mut rng);
-assert!(!bass.is_empty());
+let mut music = Performance::new(7, Controls::default().with_intensity(1.0));
+let mut chunk = [Frame::default(); 1024];
+music.render(&mut chunk);
+assert_eq!(music.position(), 1024);
 ```
 
-Each lane renders to mono `f32` at `dsp::SAMPLE_RATE`; mixing and playback are the caller's.
+`render` fills `[left, right]` frames at `dsp::SAMPLE_RATE`, mixed and under lofi's own ceiling; playback is the caller's.
 
 ## Determinism
 
@@ -28,7 +27,7 @@ The same seed gives the same score, event for event and bit for bit, on every pl
 cargo run --release --example lofi_audition -- --seeds 4
 ```
 
-Writes one wav per seed, mixed at one of pixtuoid's tiers (`--tier empty|moderate|busy`) and matched on gated loudness; `--solo <lane>` isolates a lane, and `--shuffle KEYFILE` hides which seed is which. In the repo, `--example lofi_measure` prints what a change moves, per lane and in the tier's mix.
+Writes one wav per seed at one of pixtuoid's tiers (`--tier empty|moderate|busy`), matched on gated loudness. `--engine v2` renders a `Performance` at the tier's intensity; without it, the lanes render whole and mix, and `--solo <lane>` isolates one. `--shuffle KEYFILE` hides which seed is which. In the repo, `--example lofi_measure` prints what a change moves, per lane and in the tier's mix, and takes `--engine v2` too.
 
 ## License
 

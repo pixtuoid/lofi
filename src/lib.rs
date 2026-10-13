@@ -2,10 +2,12 @@
 
 pub mod dsp;
 
+#[doc(hidden)]
+pub mod audition;
 mod compose;
+mod perform;
 #[cfg(test)]
 mod score;
 mod synth;
 
-pub use compose::{Mood, Score, compose};
-pub use synth::{Lane, render_lane};
+pub use perform::{Controls, Frame, Performance};

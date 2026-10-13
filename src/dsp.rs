@@ -1,7 +1,7 @@
 //! Minimal DSP kernel for the procedural synth — a real-input FFT, brickwall
 //! band filters, spectral-envelope noise shaping, and a deterministic noise
-//! stream. Everything runs ONCE per track to pre-render sample buffers
-//! ([`render_lane`](crate::render_lane)), never per audio frame.
+//! stream. The filters take a whole buffer — one voice's note, one foley
+//! one-shot — never a stream, so none runs per audio frame.
 //! Dependency-free on purpose: a consumer's wasm ships this module, and an FFT
 //! crate is a download every visitor pays.
 

@@ -20,8 +20,8 @@ use std::io::{BufWriter, Write as _};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use pixtuoid_lofi::audition::{Lane, compose};
 use pixtuoid_lofi::dsp::{NoiseStream, SAMPLE_RATE};
-use pixtuoid_lofi::{Lane, compose};
 
 use batch::{Batch, LANE_NAMES, parse_choice, render_take, soak_mix, tier_gain, usage_error};
 use loudness::gated_lufs;
