@@ -207,7 +207,7 @@ every taste axis is a data table or named const with ONE home:
    unit-draw per mood — re-weight the bands rather than adding draws).
 4. Extend the distribution property test; run the compose suite (fast — no synthesis).
 5. Render a batch (`cargo run --release --example lofi_audition -- --seeds N`;
-   `--engine v1 --solo sparkle` isolates the lane, rendered whole) → owner listens →
+   `--engine v1 --solo sparkle` isolates the lane, rendered whole) → `ab_judge.py` gates it →
    tighten or ship. A change to a shipped sound first diffs the tier gains moved here
    against pixtuoid's (no output: in step),
    ```bash
@@ -217,7 +217,20 @@ every taste axis is a data table or named const with ONE home:
    ```
    then renders the batch on `main` into `DIR/base` and on the branch into `DIR/cand`, DIR
    durable and outside the repo (`~/Desktop/lofi-listen/<change>`), each from a clean tree
-   with its `git rev-parse HEAD` in `DIR/{base,cand}/COMMIT`, and the owner blind-compares them:
+   with its `git rev-parse HEAD` in `DIR/{base,cand}/COMMIT`, and `ab_judge.py` gates them
+   (its header holds the verdict rule and each judge's blind spots) from a venv outside the
+   repo, set up once:
+   ```bash
+   J=~/.cache/lofi-judge; python3 -m venv $J
+   # transformers 4: 5's conformer reads `config._attn_implementation`, which MuQ's config lacks
+   $J/bin/pip install audiobox_aesthetics==0.0.4 torch==2.14.1 torchaudio==2.11.0 numpy==2.5.4 \
+     scipy==1.18.1 soundfile==0.14.0 requests==2.34.2 huggingface_hub==0.36.2 muq==0.1.0 \
+     peft==0.21.2 omegaconf==2.4.0 transformers==4.57.6
+   git clone https://github.com/dgtql/MuQ-Eval $J/MuQ-Eval
+   git -C $J/MuQ-Eval checkout 60a88f8ac0909ca1fd1a78af3660f1fc376977a1
+   $J/bin/python .claude/skills/procedural-lofi/scripts/ab_judge.py DIR
+   ```
+   The owner's blind listen is optional:
    `python3 .claude/skills/procedural-lofi/scripts/ab_listen.py DIR/base DIR/cand --out DIR/verdict.json`.
    A change of engine renders both on one commit, `--engine v1 --out DIR/base` and
    `--engine v2 --out DIR/cand` with the same `--mood`, `--tier` and seeds: each take keeps
