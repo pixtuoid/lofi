@@ -6,8 +6,8 @@
 //! CONSTRUCTION.
 //!
 //! Quality contract: a generator with unbounded output can't pass a per-take
-//! LISTEN gate, so its gate is STATISTICAL — the owner blind-auditions a batch
-//! of seeds (`examples/lofi_audition`) and the generator as a whole is ratified.
+//! gate, so its gate is STATISTICAL — `ab_judge.py` judges a batch of seeds
+//! (`examples/lofi_audition`), and the generator as a whole passes or regresses.
 //! The frozen takes are `#[cfg(test)]` fingerprint anchors, not a fallback.
 //!
 //! The seed fully determines the song, so generation is DETERMINISTIC — a

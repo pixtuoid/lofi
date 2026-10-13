@@ -184,8 +184,8 @@ imports `phase2_audition.py` — both are bundled. Adapt the voices to your own 
 
 Once a project graduates from frozen takes to a theory-constrained generator
 (`src/compose.rs` + `synth::render_lane` in `src/synth.rs`), the iteration loop changes
-shape: the LISTEN gate becomes **statistical** (blind-audition a batch of seeds; all
-acceptable = the GENERATOR is ratified — a dud = tighten a constraint and re-batch), and
+shape: the gate becomes **statistical** (`ab_judge.py` judges a batch of seeds, step 5;
+PASS = the GENERATOR ships — REGRESSION = tighten a constraint and re-batch), and
 every taste axis is a data table or named const with ONE home:
 
 | Want to change…            | Edit (all in `compose.rs` unless noted)                  |

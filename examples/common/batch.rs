@@ -86,9 +86,9 @@ const SONG: u64 = 0;
 /// and a base and a candidate render differ only by their change.
 const LANE_SEED: u64 = 9;
 
-/// A usage error. These tools ARE the listen gate, so an unusable argument
-/// fails instead of rendering or measuring a DIFFERENT take than the one asked
-/// for.
+/// A usage error. These tools render what the A/B gate judges, so an unusable
+/// argument fails instead of rendering or measuring a DIFFERENT take than the
+/// one asked for.
 pub(crate) fn usage_error(msg: String) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, msg)
 }

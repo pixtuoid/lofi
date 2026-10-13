@@ -1,11 +1,11 @@
 //! The procedural sound recipes. Every constant is an owner-ratified value:
-//! change it through an audition batch (`examples/lofi_audition.rs`) and the
-//! owner's LISTEN, which the commit records. All functions are PURE mono f32
-//! sample-buffer generators, whole-buffer and FFT-backed, never inside an
-//! audio callback, since callers render ahead: a voice renders one note at the
-//! rate it is given as the engine reaches it, and [`render_lane`] a whole lane
-//! at [`SAMPLE_RATE`] for lofi's own tools. The engine plays the same recipe
-//! through `stream::lanes`' causal chains.
+//! change it through an A/B batch (`examples/lofi_audition.rs`) and
+//! `ab_judge.py`'s verdict, which the commit records. All functions are PURE
+//! mono f32 sample-buffer generators, whole-buffer and FFT-backed, never
+//! inside an audio callback, since callers render ahead: a voice renders one
+//! note at the rate it is given as the engine reaches it, and [`render_lane`]
+//! a whole lane at [`SAMPLE_RATE`] for lofi's own tools. The engine plays the
+//! same recipe through `stream::lanes`' causal chains.
 
 use super::dsp::{NoiseStream, SAMPLE_RATE, bandpass, bandpass_at, highpass, lowpass};
 

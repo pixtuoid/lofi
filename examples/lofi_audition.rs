@@ -1,7 +1,7 @@
-//! The generator's STATISTICAL listen gate: render N random-seed takes to wav so
-//! the owner blind-auditions the COMPOSER, not one take. A take is the first
-//! song of a seed's run at one of pixtuoid's tiers. `--engine v2`, the default,
-//! renders it as a `Performance` plays it, so what you hear is what lofi ships;
+//! The generator's STATISTICAL gate: render N random-seed takes to wav so
+//! `ab_judge.py` judges the COMPOSER, not one take. A take is the first song of
+//! a seed's run at one of pixtuoid's tiers. `--engine v2`, the default, renders
+//! it as a `Performance` plays it, so what you hear is what lofi ships;
 //! `--engine v1` renders the same score's lanes whole and loops their mix, as
 //! pixtuoid's office played lofi before the stream. Either take is mono and a
 //! song long.

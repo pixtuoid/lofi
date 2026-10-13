@@ -1,6 +1,6 @@
 //! The listening loop's numbers: what a sound change moves in a pixtuoid
-//! tier's mix, and per lane through `--engine v1`. They steer a change; only
-//! the owner's LISTEN judges it. `--engine v2`, the default, measures a
+//! tier's mix, and per lane through `--engine v1`. They steer a change;
+//! `ab_judge.py` judges it. `--engine v2`, the default, measures a
 //! `Performance`'s song, which is what lofi ships; `--engine v1` measures the
 //! same score's lanes rendered whole and their mix looped as long, at the
 //! stage where the stream's mix meets its ceiling, so the two mixes compare.
