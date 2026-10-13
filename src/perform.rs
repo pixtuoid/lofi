@@ -514,8 +514,8 @@ mod tests {
     /// Songs may spread no wider: a non-regression, not a target.
     const WHOLE_LANE_SPREAD_LU: [(f32, f64); 2] = [(1.0, 1.516), (0.0, 0.795)];
 
-    /// `song`'s gated loudness, in LUFS: finite, or the song is silent or
-    /// plays NaN, which no spread would show.
+    /// `song`'s gated loudness, in LUFS, which must be finite: a spread's
+    /// `min` and `max` would skip a NaN.
     fn lufs(song: &[Frame]) -> f64 {
         let left: Vec<f32> = song.iter().map(|&[l, _]| l).collect();
         let lufs = crate::loudness::gated_lufs(&left, SAMPLE_RATE);
@@ -555,10 +555,8 @@ mod tests {
 
     #[test]
     fn an_hour_plays_finite_at_a_steady_level() {
-        let (seed, c) = (1, Controls::default());
         let (daylight, bound) = WHOLE_LANE_SPREAD_LU[0];
-        assert_eq!(c.daylight, daylight);
-        let mut p = Performance::new(seed, c);
+        let mut p = Performance::new(1, Controls::default().with_daylight(daylight));
         let mut songs = Vec::new();
         while p.position() < 60 * 60 * u64::from(SAMPLE_RATE) {
             let from = p.position();
