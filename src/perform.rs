@@ -505,6 +505,77 @@ mod tests {
         );
     }
 
+    /// `lofi_measure`'s default batch.
+    const SPREAD_SEEDS: std::ops::Range<u64> = 0..12;
+
+    /// How far the whole-lane mix's gated loudness spread across
+    /// [`SPREAD_SEEDS`] at pixtuoid's Moderate tier, in LU, by daylight: what
+    /// lofi played before it streamed, which the commit that set it records.
+    /// Songs may spread no wider: a non-regression, not a target.
+    const WHOLE_LANE_SPREAD_LU: [(f32, f64); 2] = [(1.0, 1.516), (0.0, 0.795)];
+
+    /// `song`'s gated loudness, in LUFS: finite, or the song is silent or
+    /// plays NaN, which no spread would show.
+    fn lufs(song: &[Frame]) -> f64 {
+        let left: Vec<f32> = song.iter().map(|&[l, _]| l).collect();
+        let lufs = crate::loudness::gated_lufs(&left, SAMPLE_RATE);
+        assert!(lufs.is_finite(), "a song reads {lufs} LUFS");
+        lufs
+    }
+
+    /// How far `lufs` spread: the loudest less the quietest.
+    fn spread(lufs: &[f64]) -> f64 {
+        let (quietest, loudest) = (lufs.iter())
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), &l| {
+                (lo.min(l), hi.max(l))
+            });
+        loudest - quietest
+    }
+
+    #[test]
+    fn songs_spread_in_loudness_no_wider_than_the_whole_lane_mix() {
+        let off: Vec<String> = (WHOLE_LANE_SPREAD_LU.iter())
+            .filter_map(|&(daylight, bound)| {
+                let c = Controls::default().with_daylight(daylight);
+                let songs: Vec<f64> = std::thread::scope(|scope| {
+                    let runs: Vec<_> = SPREAD_SEEDS
+                        .map(|seed| scope.spawn(move || lufs(&audition::song(seed, 0, c))))
+                        .collect();
+                    (runs.into_iter())
+                        .map(|run| run.join().expect("a song panicked"))
+                        .collect()
+                });
+                let spread = spread(&songs);
+                (spread > bound)
+                    .then(|| format!("daylight {daylight}: {spread:.3} LU over {bound}"))
+            })
+            .collect();
+        assert!(off.is_empty(), "songs spread wider: {off:#?}");
+    }
+
+    #[test]
+    fn an_hour_plays_finite_at_a_steady_level() {
+        let (seed, c) = (1, Controls::default());
+        let (daylight, bound) = WHOLE_LANE_SPREAD_LU[0];
+        assert_eq!(c.daylight, daylight);
+        let mut p = Performance::new(seed, c);
+        let mut songs = Vec::new();
+        while p.position() < 60 * 60 * u64::from(SAMPLE_RATE) {
+            let from = p.position();
+            let song = p.finish_song();
+            if let Some(i) = song.iter().position(|f| !f.iter().all(|v| v.is_finite())) {
+                panic!("frame {} plays {:?}", from + i as u64, song[i]);
+            }
+            songs.push(lufs(&song));
+        }
+        let spread = spread(&songs);
+        assert!(
+            spread <= bound,
+            "{} songs spread {spread:.3} LU, over the whole-lane mix's {bound}",
+            songs.len()
+        );
+    }
+
     #[test]
     fn a_seed_always_plays_the_same_and_seeds_play_apart() {
         let play = |seed| next(&mut Performance::new(seed, Controls::default()), 1 << 17);
