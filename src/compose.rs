@@ -954,7 +954,8 @@ fn keys_events(
 }
 
 /// Compose one full take from a seed — deterministic, no clock and no I/O.
-/// Synthesis lives in [`super::synth::render_lane`].
+/// A [`Performance`](crate::Performance) plays it;
+/// [`render_lane`](super::synth::render_lane) renders one lane whole.
 pub fn compose(mood: Mood, seed: u64) -> Score {
     let mut rng = NoiseStream::new(crate::dsp::splitmix64(seed ^ 0x10F1_C0DE));
 

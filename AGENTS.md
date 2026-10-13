@@ -13,9 +13,9 @@ Measurement steers a change toward a target; only the owner's LISTEN says it sou
 ## Map
 
 - `perform`: the public engine, `Performance` and its `Controls`.
-- `stream`: the engine's chunk-invariant parts: the song schedule and the lane chains' filters.
+- `stream`: the engine's chunk-invariant parts: the song schedule, the lane chains and their filters.
 - `compose`: seed → `Score`. The rng draw order is the sound.
-- `synth`: voices, the master chain, `render_lane`.
+- `synth`: voices, the lane recipe both chains read, and the whole-lane chain behind `render_lane`.
 - `dsp`: the public primitives, dependency-free on purpose.
 - `score`: test-only frozen takes that the fingerprint pins guard.
 - `audition`: lofi's own tools' access to the parts; no contract.

@@ -47,6 +47,11 @@ impl DelayLine {
             self.written += 1;
         }
     }
+
+    /// Whether it holds only zeros, so silence in plays silence out.
+    pub(crate) fn at_rest(&self) -> bool {
+        self.ring.iter().all(|&v| v == 0.0)
+    }
 }
 
 #[cfg(test)]
@@ -111,6 +116,17 @@ mod tests {
                 "delay {d} should read as {end}"
             );
         }
+    }
+
+    #[test]
+    fn a_line_rests_once_its_input_has_passed() {
+        let mut line = DelayLine::new(32.0);
+        let mut burst = crate::stream::burst_then_silence(1);
+        let (first, rest) = burst.split_at_mut(1);
+        line.process(first, |_| 32.0);
+        assert!(!line.at_rest());
+        line.process(rest, |_| 32.0);
+        assert!(line.at_rest());
     }
 
     #[test]

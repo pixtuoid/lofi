@@ -1,12 +1,14 @@
-//! A seed's songs, one after another, each note struck into its lane's ring
-//! as the render reaches its onset.
+//! A seed's songs, one after another: each note struck into its lane's ring
+//! as the render reaches its onset, and each song played through chains of
+//! its own, which ring on past its last bar until they rest.
 
 use std::collections::VecDeque;
 
+use super::lanes::Chain;
 use crate::Controls;
 use crate::compose::{Mood, Score, compose};
 use crate::dsp::{NoiseStream, splitmix_draw};
-use crate::synth::{Lane, Part, n_samples, part};
+use crate::synth::{CRACKLE_POPS_PER_SEC, Lane, Part, crackle_pop, part, samples_at};
 
 const LANES: usize = Lane::ALL.len();
 
@@ -28,26 +30,30 @@ fn song_seed(seed: u64, k: u64) -> u64 {
 /// The songs a seed composes, played one after another.
 pub(crate) struct Schedule {
     seed: u64,
+    sr: u32,
     /// The index of the next song to start.
     next_song: u64,
     /// The song playing; `None` before the first.
     song: Option<Song>,
-    /// Each lane's notes summed from the next frame on, which ring on past the
-    /// song that struck them.
-    rings: [Ring; LANES],
+    /// Songs past their last bar whose chains still sound.
+    fading: Vec<Song>,
     /// Each lane's sum over the step just played.
     sums: [Vec<f64>; LANES],
+    /// One song's lane over a step.
+    lane: Vec<f64>,
 }
 
 impl Schedule {
-    /// A schedule whose first song is song `first` of `seed`'s run.
-    pub(crate) fn new(seed: u64, first: u64) -> Self {
+    /// A schedule at `sr` whose first song is song `first` of `seed`'s run.
+    pub(crate) fn new(seed: u64, first: u64, sr: u32) -> Self {
         Self {
             seed,
+            sr,
             next_song: first,
             song: None,
-            rings: Default::default(),
+            fading: Vec::new(),
             sums: std::array::from_fn(|_| Vec::with_capacity(BLOCK)),
+            lane: Vec::with_capacity(BLOCK),
         }
     }
 
@@ -59,7 +65,8 @@ impl Schedule {
 
     /// Starts the next song, composed for `controls`.
     pub(crate) fn start_song(&mut self, controls: Controls) {
-        self.song = Some(Song::new(self.seed, self.next_song, controls));
+        let song = Song::new(self.seed, self.next_song, controls, self.sr);
+        self.fading.extend(self.song.replace(song));
         self.next_song += 1;
     }
 
@@ -67,9 +74,15 @@ impl Schedule {
     /// [`song_left`](Self::song_left), and returns each lane's sum over them.
     pub(crate) fn play(&mut self, n: usize) -> &[Vec<f64>; LANES] {
         debug_assert!(n <= BLOCK && n <= self.song_left());
-        if let Some(song) = &mut self.song {
-            song.play(&mut self.rings, &mut self.sums, n);
+        for sum in &mut self.sums {
+            sum.clear();
+            sum.resize(n, 0.0);
         }
+        for song in self.song.iter_mut().chain(&mut self.fading) {
+            song.play(&mut self.sums, &mut self.lane, n);
+        }
+        // a song at rest adds only zeros, so dropping it moves no frame
+        self.fading.retain(|song| !song.at_rest());
         &self.sums
     }
 }
@@ -77,15 +90,20 @@ impl Schedule {
 /// One song, played from its first bar.
 struct Song {
     score: Score,
+    sr: u32,
     /// Frames in the song, and played so far.
     len: usize,
     played: usize,
     /// Each lane's notes.
     cues: [Cues; LANES],
+    /// Each lane's notes summed from the next frame on.
+    rings: [Ring; LANES],
+    chains: [Chain; LANES],
+    crackle: Crackle,
 }
 
 impl Song {
-    fn new(seed: u64, k: u64, controls: Controls) -> Self {
+    fn new(seed: u64, k: u64, controls: Controls, sr: u32) -> Self {
         let seed = song_seed(seed, k);
         let mood = if controls.daylight < DUSK {
             Mood::Night
@@ -95,41 +113,68 @@ impl Song {
         let score = compose(mood, seed);
         // as long as `render_lane` renders a loop, so each note lands where it
         // always has
-        let loop_len = n_samples(score.loop_secs());
+        let loop_len = samples_at(score.loop_secs(), sr);
+        let len = LOOPS_PER_SONG * loop_len;
         let mut noise = NoiseStream::new(seed);
-        let cues = Lane::ALL.map(|lane| Cues::new(&part(&score, lane), loop_len, noise.fork()));
+        let cues = Lane::ALL.map(|lane| Cues::new(&part(&score, lane), loop_len, noise.fork(), sr));
+        // forked after every lane's, so it moves none of their draws
+        let crackle = Crackle::new(noise.fork(), sr);
+        let mut kicks: Vec<usize> = part(&score, Lane::Drums)
+            .kicks(sr)
+            .into_iter()
+            .flat_map(|at| every_loop(at, loop_len))
+            .collect();
+        kicks.sort_unstable();
+        let chains =
+            Lane::ALL.map(|lane| Chain::new(mood, lane, &part(&score, lane), len, &kicks, sr));
         Self {
             score,
-            len: LOOPS_PER_SONG * loop_len,
+            sr,
+            len,
             played: 0,
             cues,
+            rings: Default::default(),
+            chains,
+            crackle,
         }
     }
 
-    /// Strikes each note whose onset falls in the next `n` frames, then moves
-    /// those frames of each lane into `sums`.
-    fn play(&mut self, rings: &mut [Ring; LANES], sums: &mut [Vec<f64>; LANES], n: usize) {
+    /// Strikes each note whose onset falls in the next `n` frames, then adds
+    /// those frames of each lane, through its chain, into `sums`.
+    fn play(&mut self, sums: &mut [Vec<f64>; LANES], buf: &mut Vec<f64>, n: usize) {
         let end = self.played + n;
-        let lanes = Lane::ALL.into_iter().zip(&mut self.cues).zip(rings);
-        for (((lane, cues), ring), sum) in lanes.zip(sums) {
+        let lanes = (Lane::ALL.into_iter().zip(&mut self.cues))
+            .zip(self.rings.iter_mut().zip(&mut self.chains))
+            .zip(sums);
+        for (((lane, cues), (ring, chain)), sum) in lanes {
             let part = part(&self.score, lane);
-            while let Some(&(at, i)) = cues.order.get(cues.struck)
-                && at < end
-            {
-                let (snippet, gain) = part.note(i, &mut cues.noise);
-                ring.add(at - self.played, &snippet, gain);
-                cues.struck += 1;
-            }
-            sum.resize(n, 0.0);
-            ring.take(sum);
+            cues.strike(&part, self.played, end, ring, self.sr);
             if matches!(part, Part::Bed) {
-                for v in sum.iter_mut() {
-                    *v += f64::from(cues.noise.norm());
-                }
+                self.crackle
+                    .strike(self.played, end.min(self.len), ring, self.sr);
+            }
+            buf.resize(n, 0.0);
+            ring.take(buf);
+            chain.process(buf, &mut cues.noise);
+            for (s, x) in sum.iter_mut().zip(buf.iter()) {
+                *s += x;
             }
         }
         self.played = end;
     }
+
+    /// Whether the song has played out: past its last bar, every tail taken
+    /// and every chain at rest, so all it can add is silence.
+    fn at_rest(&self) -> bool {
+        self.played >= self.len
+            && self.rings.iter().all(|ring| ring.0.is_empty())
+            && self.chains.iter().all(Chain::at_rest)
+    }
+}
+
+/// `at`, a frame in the loop, in each of the song's loops.
+fn every_loop(at: usize, loop_len: usize) -> impl Iterator<Item = usize> {
+    (0..LOOPS_PER_SONG).map(move |lap| lap * loop_len + at)
 }
 
 /// A lane's notes over one song, in the order they sound: the order its
@@ -144,21 +189,60 @@ struct Cues {
 }
 
 impl Cues {
-    fn new(part: &Part<'_>, loop_len: usize, noise: NoiseStream) -> Self {
-        let onsets = part.onsets();
-        let mut order: Vec<(usize, usize)> = (0..LOOPS_PER_SONG)
-            .flat_map(|lap| {
-                onsets
-                    .iter()
-                    .enumerate()
-                    .map(move |(i, &at)| (lap * loop_len + at, i))
-            })
+    fn new(part: &Part<'_>, loop_len: usize, noise: NoiseStream, sr: u32) -> Self {
+        let mut order: Vec<(usize, usize)> = (part.onsets(sr).into_iter().enumerate())
+            .flat_map(|(i, at)| every_loop(at, loop_len).map(move |at| (at, i)))
             .collect();
         order.sort_unstable();
         Self {
             order,
             struck: 0,
             noise,
+        }
+    }
+
+    /// Strikes into `ring`, which starts at frame `from`, each note whose
+    /// onset is before `to`.
+    fn strike(&mut self, part: &Part<'_>, from: usize, to: usize, ring: &mut Ring, sr: u32) {
+        while let Some(&(at, i)) = self.order.get(self.struck)
+            && at < to
+        {
+            let (snippet, gain) = part.note(i, &mut self.noise, sr);
+            ring.add(at - from, &snippet, gain);
+            self.struck += 1;
+        }
+    }
+}
+
+/// The texture's vinyl crackle over one song: pops at Poisson times, drawn
+/// from a stream of their own, so when a step strikes a pop moves no other
+/// draw.
+struct Crackle {
+    rng: NoiseStream,
+    /// The next pop's onset in the song.
+    next: usize,
+}
+
+impl Crackle {
+    fn new(mut rng: NoiseStream, sr: u32) -> Self {
+        let next = Self::gap(&mut rng, sr);
+        Self { rng, next }
+    }
+
+    /// Frames to the next pop: exponential, the distribution of "the distance
+    /// between events in a Poisson point process", drawn by its quantile
+    /// function −ln(1 − p)/λ (<https://en.wikipedia.org/wiki/Exponential_distribution>).
+    fn gap(rng: &mut NoiseStream, sr: u32) -> usize {
+        let secs = -f64::from(1.0 - rng.unit()).ln() / f64::from(CRACKLE_POPS_PER_SEC);
+        (secs * f64::from(sr)) as usize
+    }
+
+    /// Strikes into `ring`, which starts at frame `from`, each pop before `to`.
+    fn strike(&mut self, from: usize, to: usize, ring: &mut Ring, sr: u32) {
+        while self.next < to {
+            let (pop, gain) = crackle_pop(&mut self.rng, sr);
+            ring.add(self.next - from, &pop, gain);
+            self.next += Self::gap(&mut self.rng, sr);
         }
     }
 }
@@ -194,17 +278,85 @@ impl Ring {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dsp::SAMPLE_RATE;
 
     #[test]
     fn each_song_of_a_run_is_composed_anew() {
         let day = Controls::default();
-        let scores: Vec<Score> = (0..8).map(|k| Song::new(1, k, day).score).collect();
+        let scores: Vec<Score> = (0..8)
+            .map(|k| Song::new(1, k, day, SAMPLE_RATE).score)
+            .collect();
         for (k, a) in scores.iter().enumerate() {
             assert!(!scores[k + 1..].contains(a), "song {k} recurs");
             assert!(
-                *a != Song::new(2, k as u64, day).score,
+                *a != Song::new(2, k as u64, day, SAMPLE_RATE).score,
                 "seeds 1 and 2 share song {k}"
             );
         }
+    }
+
+    #[test]
+    fn a_run_is_its_songs_each_played_alone() {
+        let (seed, c, sr) = (3, Controls::default(), SAMPLE_RATE);
+        let mut run = Schedule::new(seed, 0, sr);
+        let mut first = Song::new(seed, 0, c, sr);
+        let mut second = Song::new(seed, 1, c, sr);
+        let mut buf = Vec::new();
+        // through song 1's first loop, past every tail of song 0
+        let span = first.len + second.len / LOOPS_PER_SONG;
+        let mut at = 0;
+        while at < span {
+            if run.song_left() == 0 {
+                run.start_song(c);
+            }
+            let n = run.song_left().min(BLOCK);
+            let mut alone: [Vec<f64>; LANES] = std::array::from_fn(|_| vec![0.0; n]);
+            // as the run sums them: the playing song, then the fading one,
+            // which plays here past its rest rather than being dropped
+            if at >= first.len {
+                second.play(&mut alone, &mut buf, n);
+            }
+            first.play(&mut alone, &mut buf, n);
+            for ((lane, got), want) in Lane::ALL.iter().zip(run.play(n)).zip(&alone) {
+                let diff = got
+                    .iter()
+                    .zip(want)
+                    .position(|(g, w)| g.to_bits() != w.to_bits());
+                assert_eq!(
+                    diff.map(|i| at + i),
+                    None,
+                    "{lane:?}: the first frame that differs"
+                );
+            }
+            at += n;
+        }
+        assert!(
+            run.fading.is_empty(),
+            "song 0 never rested, so the run keeps playing its chains"
+        );
+    }
+
+    #[test]
+    fn crackle_pops_at_its_rate_at_poisson_times() {
+        let sr = SAMPLE_RATE;
+        let secs = 3600.0;
+        let mut crackle = Crackle::new(NoiseStream::new(5), sr);
+        let (mut gaps, mut last) = (Vec::new(), 0);
+        while crackle.next < samples_at(secs, sr) {
+            gaps.push((crackle.next - last) as f64 / f64::from(sr));
+            last = crackle.next;
+            crackle.strike(last, last + 1, &mut Ring::default(), sr);
+        }
+        // a Poisson count's standard deviation is the square root of its mean
+        let want = f64::from(CRACKLE_POPS_PER_SEC * secs);
+        let count = gaps.len() as f64;
+        assert!(
+            (count - want).abs() < 4.0 * want.sqrt(),
+            "{count} pops in an hour vs {want}"
+        );
+        // an exponential's standard deviation is its mean; a grid's is 0
+        let mean = gaps.iter().sum::<f64>() / count;
+        let sd = (gaps.iter().map(|g| (g - mean).powi(2)).sum::<f64>() / count).sqrt();
+        assert!((sd / mean - 1.0).abs() < 0.15, "gaps vary by {}", sd / mean);
     }
 }

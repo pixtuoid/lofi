@@ -2,20 +2,9 @@
 //! [`Performance::render`](crate::Performance::render) plays the same frames
 //! however it is chunked.
 
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the lane chains don't call these yet")
-)]
 pub(crate) mod biquad;
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the lane chains don't call these yet")
-)]
 pub(crate) mod delay;
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the lane chains don't call these yet")
-)]
+pub(crate) mod lanes;
 pub(crate) mod onepole;
 pub(crate) mod schedule;
 

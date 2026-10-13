@@ -3,9 +3,10 @@
 
 use std::fmt;
 
+use crate::dsp::SAMPLE_RATE;
 use crate::stream::schedule::{BLOCK, Schedule};
 
-/// One stereo frame, `[left, right]`, at [`SAMPLE_RATE`](crate::dsp::SAMPLE_RATE).
+/// One stereo frame, `[left, right]`, at [`SAMPLE_RATE`].
 pub type Frame = [f32; 2];
 
 /// What the listener's world asks of the music; how it sounds is lofi's call.
@@ -107,7 +108,7 @@ impl Performance {
         Self {
             asked: controls,
             position: 0,
-            schedule: Schedule::new(seed, first),
+            schedule: Schedule::new(seed, first, SAMPLE_RATE),
         }
     }
 
@@ -162,7 +163,7 @@ impl Performance {
 mod tests {
     use super::*;
     use crate::audition;
-    use crate::dsp::{NoiseStream, SAMPLE_RATE};
+    use crate::dsp::NoiseStream;
     use crate::stream::schedule::LOOPS_PER_SONG;
 
     fn night() -> Controls {

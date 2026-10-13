@@ -157,7 +157,7 @@ fn shuffle_names(count: usize, rng: &mut NoiseStream) -> Vec<String> {
 
 /// Scale the mixdown to [`TARGET_LUFS`].
 fn loudness_normalize(x: &mut [f32]) {
-    let gain = 10f64.powf((TARGET_LUFS - gated_lufs(x)) / 20.0) as f32;
+    let gain = 10f64.powf((TARGET_LUFS - gated_lufs(x, SAMPLE_RATE)) / 20.0) as f32;
     for v in x.iter_mut() {
         *v *= gain;
     }

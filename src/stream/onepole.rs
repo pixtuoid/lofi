@@ -2,8 +2,6 @@
 
 use std::f64::consts::TAU;
 
-use crate::dsp::SAMPLE_RATE;
-
 /// A one-pole high shelf, `x + lift·(x − lp(x))`, `lp` a one-pole low-pass at
 /// the corner.
 #[derive(Debug)]
@@ -14,11 +12,11 @@ pub(crate) struct Tilt {
 }
 
 impl Tilt {
-    pub(crate) fn new(corner_hz: f32, lift: f64) -> Self {
+    pub(crate) fn new(corner_hz: f32, lift: f64, sr: u32) -> Self {
         Self {
             // the analog pole at −2π·corner mapped by impulse invariance,
             // z = e^{sT} (<https://ccrma.stanford.edu/~jos/pasp/Impulse_Invariant_Method.html>)
-            pole: (-TAU * f64::from(corner_hz) / f64::from(SAMPLE_RATE)).exp(),
+            pole: (-TAU * f64::from(corner_hz) / f64::from(sr)).exp(),
             lift,
             lp: 0.0,
         }
@@ -32,11 +30,17 @@ impl Tilt {
         }
         self.lp = lp;
     }
+
+    /// Whether its state is zero, so silence in plays silence out.
+    pub(crate) fn at_rest(&self) -> bool {
+        self.lp == 0.0
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dsp::SAMPLE_RATE;
 
     #[test]
     fn a_tilt_has_its_closed_form_step_response() {
@@ -45,7 +49,7 @@ mod tests {
         let (corner, lift) = (1200.0, 0.8);
         let a = (-TAU * f64::from(corner) / f64::from(SAMPLE_RATE)).exp();
         let mut buf = vec![1.0; 2000];
-        Tilt::new(corner, lift).process(&mut buf);
+        Tilt::new(corner, lift, SAMPLE_RATE).process(&mut buf);
         for (n, &got) in buf.iter().enumerate() {
             let want = 1.0 + lift * a.powi(n as i32 + 1);
             assert!((got - want).abs() < 1e-12, "at {n}: {got} vs {want}");
@@ -54,13 +58,20 @@ mod tests {
 
     #[test]
     fn silence_settles_a_tilt_to_exact_zero() {
-        let mut tilt = Tilt::new(1200.0, 0.8);
-        tilt.process(&mut crate::stream::burst_then_silence(1));
-        assert_eq!(tilt.lp, 0.0);
+        let mut tilt = Tilt::new(1200.0, 0.8, SAMPLE_RATE);
+        let mut burst = crate::stream::burst_then_silence(1);
+        let (first, rest) = burst.split_at_mut(1);
+        tilt.process(first);
+        assert!(!tilt.at_rest());
+        tilt.process(rest);
+        assert!(tilt.at_rest());
     }
 
     #[test]
     fn a_tilt_is_chunk_invariant() {
-        crate::stream::assert_chunk_invariant(|| Tilt::new(1200.0, 0.8), Tilt::process);
+        crate::stream::assert_chunk_invariant(
+            || Tilt::new(1200.0, 0.8, SAMPLE_RATE),
+            Tilt::process,
+        );
     }
 }

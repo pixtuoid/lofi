@@ -1,10 +1,9 @@
 //! [BS.1770-5](https://www.itu.int/dms_pubrec/itu-r/rec/bs/R-REC-BS.1770-5-202311-I!!PDF-E.pdf)
 //! gated loudness of a buffer that plays on repeat: the K-filter and the gating
-//! blocks both wrap, so the reading is the endlessly looping buffer's.
+//! blocks both wrap, so the reading is the endlessly looping buffer's. It names
+//! no crate, so lofi's own tests share it too.
 
 use std::f64::consts::PI;
-
-use pixtuoid_lofi::dsp::SAMPLE_RATE;
 
 /// A second-order section, `[b0, b1, b2, a1, a2]` over `a0 = 1`.
 type Biquad = [f64; 5];
@@ -79,10 +78,10 @@ fn run_circular(x: &[f64], filter: &[Biquad]) -> Vec<f64> {
     y
 }
 
-/// `buf`'s gated loudness as a loop, in LKFS: −∞ when no block passes the
-/// absolute gate.
-pub(crate) fn gated_lufs(buf: &[f32]) -> f64 {
-    let sr = f64::from(SAMPLE_RATE);
+/// `buf`'s gated loudness as a loop at `sr`, in LKFS: −∞ when no block passes
+/// the absolute gate.
+pub(crate) fn gated_lufs(buf: &[f32], sr: u32) -> f64 {
+    let sr = f64::from(sr);
     let x: Vec<f64> = buf.iter().map(|&v| f64::from(v)).collect();
     let y = run_circular(&x, &k_filter(sr));
     let n = y.len();
@@ -114,6 +113,9 @@ pub(crate) fn gated_lufs(buf: &[f32]) -> f64 {
 mod tests {
     use super::*;
 
+    /// The rate the standard tabulates the K-filter at.
+    const SAMPLE_RATE: u32 = 48_000;
+
     /// What a full-scale 997 Hz sine reads, so a sine's amplitude sets its loudness.
     const FULL_SCALE_LKFS: f64 = -3.01;
 
@@ -132,7 +134,10 @@ mod tests {
 
     #[test]
     fn a_full_scale_997_hz_sine_reads_minus_3_01_lkfs() {
-        let l = gated_lufs(&sine_997_hz(SAMPLE_RATE as usize * 10, |_| 1.0));
+        let l = gated_lufs(
+            &sine_997_hz(SAMPLE_RATE as usize * 10, |_| 1.0),
+            SAMPLE_RATE,
+        );
         assert!((l - FULL_SCALE_LKFS).abs() <= 0.005, "{l}");
     }
 
@@ -159,7 +164,10 @@ mod tests {
     #[test]
     fn a_quiet_half_falls_under_the_relative_gate() {
         let n = SAMPLE_RATE as usize * 10;
-        let l = gated_lufs(&sine_997_hz(n, |i| if i < n / 2 { 1.0 } else { 0.1 }));
+        let l = gated_lufs(
+            &sine_997_hz(n, |i| if i < n / 2 { 1.0 } else { 0.1 }),
+            SAMPLE_RATE,
+        );
         // ungated, the half 20 dB down would pull it to about −6
         assert!((l - FULL_SCALE_LKFS).abs() < 0.5, "{l}");
     }
@@ -172,7 +180,10 @@ mod tests {
             4..8 => -38.0,
             _ => -80.0,
         };
-        let l = gated_lufs(&sine_997_hz(40 * s, |i| amplitude_for(level(i))));
+        let l = gated_lufs(
+            &sine_997_hz(40 * s, |i| amplitude_for(level(i))),
+            SAMPLE_RATE,
+        );
         // the −80 blocks would sink the relative gate under the −38 ones, which
         // would then pull the reading to about −23
         assert!((l - (-20.0)).abs() < 0.5, "{l}");
@@ -186,7 +197,10 @@ mod tests {
         // a whole number of the standard's 100 ms block steps
         let shift = SAMPLE_RATE as usize / 10 * 37;
         let mid: Vec<f32> = (0..n).map(|i| across[(i + shift) % n]).collect();
-        let (a, b) = (gated_lufs(&across), gated_lufs(&mid));
+        let (a, b) = (
+            gated_lufs(&across, SAMPLE_RATE),
+            gated_lufs(&mid, SAMPLE_RATE),
+        );
         assert!((a - b).abs() < 1e-9, "{a} vs {b}");
     }
 }

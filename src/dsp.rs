@@ -200,12 +200,13 @@ fn signal(xr: &[f32], xi: &[f32], tw: &[(f32, f32)]) -> Vec<f32> {
 }
 
 /// `buf`'s half spectrum at the next power of two, with the twiddles it was
-/// taken with (half that length) for the [`signal`] back, and the bin width.
-fn forward_spectrum(buf: &[f32]) -> (Vec<f32>, Vec<f32>, Twiddles, f32) {
+/// taken with (half that length) for the [`signal`] back, and the bin width
+/// at `sr`.
+fn forward_spectrum(buf: &[f32], sr: u32) -> (Vec<f32>, Vec<f32>, Twiddles, f32) {
     let n = buf.len().next_power_of_two().max(2);
     let tw = twiddles(n);
     let (re, im) = spectrum(buf, &tw);
-    (re, im, tw, SAMPLE_RATE as f32 / n as f32)
+    (re, im, tw, sr as f32 / n as f32)
 }
 
 /// Mirror-aware frequency of FFT bin `k` in an `n`-point spectrum: bins above
@@ -221,7 +222,12 @@ fn bin_freq(k: usize, n: usize, hz_per_bin: f32) -> f32 {
 /// power-of-two buffer filters circularly (a seamless loop stays seamless) and
 /// any other length does not.
 pub fn bandpass(buf: &[f32], lo_hz: f32, hi_hz: f32) -> Vec<f32> {
-    let (mut re, mut im, tw, hz_per_bin) = forward_spectrum(buf);
+    bandpass_at(buf, lo_hz, hi_hz, SAMPLE_RATE)
+}
+
+/// [`bandpass`] of a buffer sampled at `sr`.
+pub(crate) fn bandpass_at(buf: &[f32], lo_hz: f32, hi_hz: f32, sr: u32) -> Vec<f32> {
+    let (mut re, mut im, tw, hz_per_bin) = forward_spectrum(buf, sr);
     let n = 2 * tw.len();
     for (k, (r, i)) in re.iter_mut().zip(&mut im).enumerate() {
         let f = bin_freq(k, n, hz_per_bin);
@@ -240,8 +246,8 @@ pub fn lowpass(buf: &[f32], cutoff_hz: f32) -> Vec<f32> {
     bandpass(buf, 0.0, cutoff_hz)
 }
 
-pub(crate) fn highpass(buf: &[f32], cutoff_hz: f32) -> Vec<f32> {
-    bandpass(buf, cutoff_hz, SAMPLE_RATE as f32)
+pub(crate) fn highpass(buf: &[f32], cutoff_hz: f32, sr: u32) -> Vec<f32> {
+    bandpass_at(buf, cutoff_hz, sr as f32, sr)
 }
 
 /// Tape wow/flutter — resample `buf` along a sinusoidally warped time axis
@@ -348,7 +354,7 @@ fn moving_average(x: &[f32], window: usize) -> Vec<f32> {
 
 /// Spectral centroid of `buf` in Hz.
 pub fn centroid_hz(buf: &[f32]) -> f32 {
-    let (re, im, _, hz_per_bin) = forward_spectrum(buf);
+    let (re, im, _, hz_per_bin) = forward_spectrum(buf, SAMPLE_RATE);
     let (mut num, mut den) = (0.0f64, 0.0f64);
     for (k, (r, i)) in re.iter().zip(&im).enumerate() {
         let p = f64::from(r * r + i * i);
@@ -360,7 +366,7 @@ pub fn centroid_hz(buf: &[f32]) -> f32 {
 
 /// Fraction of `buf`'s spectral power inside `[lo_hz, hi_hz)`.
 pub fn band_energy_share(buf: &[f32], lo_hz: f32, hi_hz: f32) -> f32 {
-    let (re, im, tw, hz_per_bin) = forward_spectrum(buf);
+    let (re, im, tw, hz_per_bin) = forward_spectrum(buf, SAMPLE_RATE);
     let (mut band, mut total) = (0.0f64, 0.0f64);
     for k in 1..=tw.len() {
         let p = f64::from(re[k] * re[k] + im[k] * im[k]);

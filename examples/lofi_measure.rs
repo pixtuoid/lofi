@@ -94,7 +94,7 @@ fn run() -> std::io::Result<()> {
                 .collect();
             println!(
                 "  {name:<8} {:>6.1}{shares} {:>8.0} {:>6.2} {:>6.0}",
-                gated_lufs(bed),
+                gated_lufs(bed, SAMPLE_RATE),
                 spectrum.centroid(),
                 seam_ratio(bed),
                 took.as_secs_f64() * 1e3
@@ -107,7 +107,7 @@ fn run() -> std::io::Result<()> {
         println!(
             "  {} mix: {:.1} LUFS; below {sub} Hz {}; centroid {}; LTAS density slope {}-{} Hz {:.1} dB/oct; autocorrelation at the loop {:.4}",
             tier.name(),
-            gated_lufs(&mix),
+            gated_lufs(&mix, SAMPLE_RATE),
             rail(100.0 * spectrum.share(0.0, sub), SUB_SHARE_RAIL_PCT, "%"),
             rail(spectrum.centroid(), CENTROID_RAIL_HZ, " Hz"),
             LTAS_SPAN_HZ[0],

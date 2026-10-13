@@ -1,9 +1,8 @@
-//! Butterworth slopes for the lane chains: causal, so nothing rings before an
-//! onset. `dsp`'s public brickwalls keep their output: pixtuoid's foley hears it.
+//! The lane chains' filters, Butterworth slopes and the cookbook's band-pass:
+//! causal, so nothing rings before an onset. `dsp`'s public brickwalls keep
+//! their output: pixtuoid's foley hears it.
 
-use std::f64::consts::{PI, TAU};
-
-use crate::dsp::SAMPLE_RATE;
+use std::f64::consts::{LN_2, PI, TAU};
 
 /// One second-order section over `a0 = 1`, with its Direct Form 1 state.
 #[derive(Debug)]
@@ -19,36 +18,32 @@ struct Biquad {
     y2: f64,
 }
 
-#[derive(Clone, Copy)]
-enum Pass {
-    Low,
-    High,
-}
-
 impl Biquad {
-    /// The [RBJ cookbook](https://www.w3.org/TR/audio-eq-cookbook/)'s LPF or
-    /// HPF at `hz`: "derived from analog prototypes" and "digitized using the
-    /// Bilinear Transform", prewarped so the corner stays at `hz`.
-    fn rbj(pass: Pass, hz: f32, q: f64) -> Self {
-        let w0 = TAU * f64::from(hz) / f64::from(SAMPLE_RATE);
-        let (sin, cos) = w0.sin_cos();
-        let alpha = sin / (2.0 * q);
-        let (b0, b1) = match pass {
-            Pass::Low => ((1.0 - cos) / 2.0, 1.0 - cos),
-            Pass::High => (f64::midpoint(1.0, cos), -(1.0 + cos)),
-        };
-        let a0 = 1.0 + alpha;
+    /// A section from the [RBJ cookbook](https://www.w3.org/TR/audio-eq-cookbook/)'s
+    /// `b0 b1 b2 a0 a1 a2`, at rest. Its filters are "derived from analog
+    /// prototypes" and "digitized using the Bilinear Transform", prewarped so
+    /// the given frequency stays put.
+    fn cookbook([b0, b1, b2, a0, a1, a2]: [f64; 6]) -> Self {
         Self {
             b0: b0 / a0,
             b1: b1 / a0,
-            b2: b0 / a0,
-            a1: -2.0 * cos / a0,
-            a2: (1.0 - alpha) / a0,
+            b2: b2 / a0,
+            a1: a1 / a0,
+            a2: a2 / a0,
             x1: 0.0,
             x2: 0.0,
             y1: 0.0,
             y2: 0.0,
         }
+    }
+
+    /// The cookbook's LPF at `hz` at `sr`.
+    fn lowpass(hz: f32, q: f64, sr: u32) -> Self {
+        let w0 = TAU * f64::from(hz) / f64::from(sr);
+        let (sin, cos) = w0.sin_cos();
+        let alpha = sin / (2.0 * q);
+        let b0 = (1.0 - cos) / 2.0;
+        Self::cookbook([b0, 1.0 - cos, b0, 1.0 + alpha, -2.0 * cos, 1.0 - alpha])
     }
 
     /// The state is f64: a 60 Hz section's poles sit near enough the unit
@@ -64,6 +59,10 @@ impl Biquad {
         }
         (self.x1, self.x2, self.y1, self.y2) = (x1, x2, y1, y2);
     }
+
+    fn at_rest(&self) -> bool {
+        [self.x1, self.x2, self.y1, self.y2] == [0.0; 4]
+    }
 }
 
 /// Second-order sections run one after another.
@@ -76,91 +75,111 @@ impl Cascade {
             s.process(buf);
         }
     }
+
+    /// Whether its state is all zero, so silence in plays silence out.
+    pub(crate) fn at_rest(&self) -> bool {
+        self.0.iter().all(Biquad::at_rest)
+    }
 }
 
-/// A Butterworth slope of even `order` at `hz`: one section per quadratic
-/// factor of the normalized Butterworth polynomial,
+/// A Butterworth low-pass of even `order` at `hz` at `sr`: one section per
+/// quadratic factor of the normalized Butterworth polynomial,
 /// `s² − 2s·cos((2k + n − 1)π / 2n) + 1` for `k` in `1..=n/2`
 /// (<https://en.wikipedia.org/wiki/Butterworth_filter>).
-fn butterworth(pass: Pass, hz: f32, order: usize) -> impl Iterator<Item = Biquad> {
+pub(crate) fn butter_lowpass(hz: f32, order: usize, sr: u32) -> Cascade {
     debug_assert!(
         order.is_multiple_of(2),
         "an odd order needs a first-order section"
     );
     let n = order as f64;
-    (1..=order / 2).map(move |k| {
-        let q = -1.0 / (2.0 * ((2.0 * k as f64 + n - 1.0) * PI / (2.0 * n)).cos());
-        Biquad::rbj(pass, hz, q)
-    })
-}
-
-pub(crate) fn butter_lowpass(hz: f32, order: usize) -> Cascade {
-    Cascade(butterworth(Pass::Low, hz, order).collect())
-}
-
-/// A high-pass at `lo_hz` into a low-pass at `hi_hz`, each of `order`.
-pub(crate) fn butter_bandpass(lo_hz: f32, hi_hz: f32, order: usize) -> Cascade {
     Cascade(
-        butterworth(Pass::High, lo_hz, order)
-            .chain(butterworth(Pass::Low, hi_hz, order))
+        (1..=order / 2)
+            .map(|k| {
+                let q = -1.0 / (2.0 * ((2.0 * k as f64 + n - 1.0) * PI / (2.0 * n)).cos());
+                Biquad::lowpass(hz, q, sr)
+            })
             .collect(),
     )
+}
+
+/// The cookbook's BPF with "constant 0 dB peak gain", centered between
+/// `lo_hz` and `hi_hz` on a log scale, with "the bandwidth in octaves (between
+/// -3 dB frequencies)" between them. The bilinear image of
+/// `(s/Q) / (s² + s/Q + 1)`, whose real part is never negative, it peaks at
+/// exactly 1 and, added to its input, cancels it nowhere.
+pub(crate) fn cookbook_bandpass(lo_hz: f32, hi_hz: f32, sr: u32) -> Cascade {
+    let (lo, hi) = (f64::from(lo_hz), f64::from(hi_hz));
+    let w0 = TAU * (lo * hi).sqrt() / f64::from(sr);
+    let (sin, cos) = w0.sin_cos();
+    let alpha = sin * (LN_2 / 2.0 * (hi / lo).log2() * w0 / sin).sinh();
+    Cascade(vec![Biquad::cookbook([
+        alpha,
+        0.0,
+        -alpha,
+        1.0 + alpha,
+        -2.0 * cos,
+        1.0 - alpha,
+    ])])
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dsp::SAMPLE_RATE;
 
-    /// `|H(e^{jω})|²` of `cascade` at `hz`.
-    fn power_gain(cascade: &Cascade, hz: f64) -> f64 {
+    /// `H(e^{jω})` of `cascade` at `hz`, as `(re, im)`.
+    fn response(cascade: &Cascade, hz: f64) -> (f64, f64) {
         let w = TAU * hz / f64::from(SAMPLE_RATE);
         let (c1, s1, c2, s2) = (w.cos(), -w.sin(), (2.0 * w).cos(), -(2.0 * w).sin());
-        cascade.0.iter().fold(1.0, |g, s| {
-            let num = (s.b0 + s.b1 * c1 + s.b2 * c2).powi(2) + (s.b1 * s1 + s.b2 * s2).powi(2);
-            let den = (1.0 + s.a1 * c1 + s.a2 * c2).powi(2) + (s.a1 * s1 + s.a2 * s2).powi(2);
-            g * num / den
+        cascade.0.iter().fold((1.0, 0.0), |(re, im), s| {
+            let (nr, ni) = (s.b0 + s.b1 * c1 + s.b2 * c2, s.b1 * s1 + s.b2 * s2);
+            let (dr, di) = (1.0 + s.a1 * c1 + s.a2 * c2, s.a1 * s1 + s.a2 * s2);
+            let d = dr * dr + di * di;
+            let (hr, hi) = ((nr * dr + ni * di) / d, (ni * dr - nr * di) / d);
+            (re * hr - im * hi, re * hi + im * hr)
         })
     }
 
-    fn butter_highpass(hz: f32, order: usize) -> Cascade {
-        Cascade(butterworth(Pass::High, hz, order).collect())
+    /// `|H(e^{jω})|²` of `cascade` at `hz`.
+    fn power_gain(cascade: &Cascade, hz: f64) -> f64 {
+        let (re, im) = response(cascade, hz);
+        re * re + im * im
     }
 
     #[test]
-    fn a_cascade_has_its_butterworth_prototypes_magnitude() {
+    fn a_low_pass_has_its_butterworth_prototypes_magnitude() {
         // the bilinear transform maps the analog prototype's frequency to
         // tan(ω/2), prewarped to the corner, so the digital magnitude is the
         // analog Butterworth one in that variable
         let warped = |hz: f64| (PI * hz / f64::from(SAMPLE_RATE)).tan();
-        let (lo, hi) = (60.0, 6500.0);
+        let corner = 6500.0;
         for order in [2, 4] {
             let n = order as i32;
+            let cascade = butter_lowpass(corner as f32, order, SAMPLE_RATE);
             for hz in [20.0, 60.0, 90.0, 1000.0, 6500.0, 12000.0] {
-                let low = 1.0 / (1.0 + (warped(hz) / warped(hi)).powi(2 * n));
-                let high = 1.0 / (1.0 + (warped(lo) / warped(hz)).powi(2 * n));
-                for (name, got, want) in [
-                    (
-                        "low",
-                        power_gain(&butter_lowpass(hi as f32, order), hz),
-                        low,
-                    ),
-                    (
-                        "high",
-                        power_gain(&butter_highpass(lo as f32, order), hz),
-                        high,
-                    ),
-                    (
-                        "band",
-                        power_gain(&butter_bandpass(lo as f32, hi as f32, order), hz),
-                        low * high,
-                    ),
-                ] {
-                    assert!(
-                        (got / want - 1.0).abs() < 1e-6,
-                        "order {order} {name} at {hz} Hz: {got} vs {want}"
-                    );
-                }
+                let want = 1.0 / (1.0 + (warped(hz) / warped(corner)).powi(2 * n));
+                let got = power_gain(&cascade, hz);
+                assert!(
+                    (got / want - 1.0).abs() < 1e-6,
+                    "order {order} at {hz} Hz: {got} vs {want}"
+                );
             }
+        }
+    }
+
+    #[test]
+    fn a_band_pass_peaks_at_one_halves_at_its_edges_and_never_opposes() {
+        let (lo, hi) = (60.0, 120.0);
+        let band = cookbook_bandpass(lo as f32, hi as f32, SAMPLE_RATE);
+        let center = power_gain(&band, f64::sqrt(lo * hi));
+        assert!((center - 1.0).abs() < 1e-6, "center: {center}");
+        for edge in [lo, hi] {
+            let got = power_gain(&band, edge);
+            assert!((got - 0.5).abs() < 1e-4, "{edge} Hz: {got}");
+        }
+        for hz in (1..2200).map(|k| f64::from(k) * 10.0) {
+            let (re, _) = response(&band, hz);
+            assert!(re >= 0.0, "{hz} Hz: real part {re}");
         }
     }
 
@@ -170,10 +189,10 @@ mod tests {
         // square is exactly half its squared amplitude
         let sr = SAMPLE_RATE as usize;
         for (mut cascade, hz) in [
-            (butter_bandpass(60.0, 120.0, 4), 30.0),
-            (butter_bandpass(60.0, 120.0, 4), 90.0),
-            (butter_lowpass(6500.0, 4), 1000.0),
-            (butter_lowpass(6500.0, 4), 12000.0),
+            (cookbook_bandpass(60.0, 120.0, SAMPLE_RATE), 30.0),
+            (cookbook_bandpass(60.0, 120.0, SAMPLE_RATE), 90.0),
+            (butter_lowpass(6500.0, 4, SAMPLE_RATE), 1000.0),
+            (butter_lowpass(6500.0, 4, SAMPLE_RATE), 12000.0),
         ] {
             let want = power_gain(&cascade, hz) / 2.0;
             let mut buf: Vec<f64> = (0..2 * sr)
@@ -188,17 +207,27 @@ mod tests {
 
     #[test]
     fn silence_settles_a_cascade_to_exact_zero() {
-        // long enough for the head bump's slowest section to reach the subnormal range
-        let mut cascade = butter_bandpass(60.0, 120.0, 4);
-        cascade.process(&mut crate::stream::burst_then_silence(10));
-        for s in &cascade.0 {
-            assert_eq!([s.x1, s.x2, s.y1, s.y2], [0.0; 4]);
-        }
+        // long enough for the head bump, the chain's slowest section, to reach
+        // the subnormal range
+        let mut cascade = cookbook_bandpass(60.0, 120.0, SAMPLE_RATE);
+        let mut burst = crate::stream::burst_then_silence(10);
+        let (first, rest) = burst.split_at_mut(1);
+        cascade.process(first);
+        assert!(!cascade.at_rest());
+        cascade.process(rest);
+        assert!(cascade.at_rest());
     }
 
     #[test]
     fn a_cascade_is_chunk_invariant() {
-        // the slowest sections in the chain, the head bump's
-        crate::stream::assert_chunk_invariant(|| butter_bandpass(60.0, 120.0, 4), Cascade::process);
+        // the chain's slowest section, the head bump, and its steepest slope
+        crate::stream::assert_chunk_invariant(
+            || cookbook_bandpass(60.0, 120.0, SAMPLE_RATE),
+            Cascade::process,
+        );
+        crate::stream::assert_chunk_invariant(
+            || butter_lowpass(6500.0, 4, SAMPLE_RATE),
+            Cascade::process,
+        );
     }
 }
