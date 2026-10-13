@@ -207,16 +207,36 @@ every taste axis is a data table or named const with ONE home:
    unit-draw per mood — re-weight the bands rather than adding draws).
 4. Extend the distribution property test; run the compose suite (fast — no synthesis).
 5. Render a batch (`cargo run --release --example lofi_audition -- --seeds N`;
-   `--solo sparkle` isolates the lane) → owner listens → tighten or ship. A change to a
+   `--solo sparkle` isolates the lane) → `ab_judge.py` gates it → tighten or ship. A change to a
    shipped sound first diffs the copied tier gains against pixtuoid's (no output: in step),
    ```bash
    diff <(gh api repos/pixtuoid/pixtuoid/contents/crates/pixtuoid-scene/src/audio/mod.rs --jq .content | base64 -d |
             sed -nE 's/^const (PAD|SPARKLE|KEYS|DRUMS|TEXTURE|BASS)_GAIN: TierGain = TierGain::new\((.*)\);$/\1 \2/p' | tr '[:upper:]' '[:lower:]') \
         <(sed -nE 's/^ *Lane::([A-Za-z]+) => (\[.*\]),$/\1 \2/p' examples/common/batch.rs | tr '[:upper:]' '[:lower:]')
    ```
-   then renders the batch on `main` and on the branch into two `--out` dirs, and the owner
-   blind-compares them:
-   `python3 .claude/skills/procedural-lofi/scripts/ab_listen.py BASE CAND --out verdict.json`.
+   then renders the batch on `main` into `DIR/base` and on the branch into `DIR/cand`, and
+   `ab_judge.py` gates them (its header holds the verdict rule and each measure's blind
+   spots) against REFS, the private reference corpus (`audio/` and its `manifest.json` of
+   sha256s, never committed), from a venv outside the repo, set up once:
+   ```bash
+   # Python 3.12: fadtk 1.1.0 pins numpy<2
+   # (https://github.com/microsoft/fadtk/blob/6f815282007288a7165d037a95dacd6d783b6f32/pyproject.toml#L9),
+   # and numpy's last 1.x, 1.26.4, has wheels up to cp312 (https://pypi.org/pypi/numpy/1.26.4/json)
+   J=~/.cache/lofi-judge; uv venv --python 3.12 $J
+   # transformers 4: 5's conformer reads `config._attn_implementation`
+   # (https://github.com/huggingface/transformers/blob/v5.19.0/src/transformers/masking_utils.py#L822),
+   # which MuQ's EasyDict config lacks
+   # (https://github.com/tencent-ailab/MuQ/blob/28847ea50cd31ac4b8b6a7dacc051ad7d1c7606a/src/muq/muq/models/muq_model.py#L134)
+   uv pip install --python $J/bin/python audiobox_aesthetics==0.0.4 torch==2.14.1 \
+     torchaudio==2.11.0 numpy==1.26.4 scipy==1.17.1 soundfile==0.14.0 requests==2.34.2 \
+     huggingface_hub==0.36.2 muq==0.1.0 peft==0.21.2 omegaconf==2.4.0 transformers==4.57.6 \
+     fadtk==1.1.0 pyloudnorm==0.2.0
+   git clone https://github.com/dgtql/MuQ-Eval $J/MuQ-Eval
+   git -C $J/MuQ-Eval checkout 60a88f8ac0909ca1fd1a78af3660f1fc376977a1
+   $J/bin/python .claude/skills/procedural-lofi/scripts/ab_judge.py DIR --refs REFS
+   ```
+   The owner's blind listen is optional and, when given, overrides the judge:
+   `python3 .claude/skills/procedural-lofi/scripts/ab_listen.py DIR/base DIR/cand --out DIR/verdict.json`.
 
 Mix LANES stay instrument-blind (a consumer's mixer sees lanes, never voices) — a
 lane is a busy-ness ROLE, an instrument is a timbre WITHIN it. That split is what keeps
