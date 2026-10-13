@@ -218,19 +218,22 @@ every taste axis is a data table or named const with ONE home:
    then renders the batch on `main` into `DIR/base` and on the branch into `DIR/cand`, DIR
    durable and outside the repo (`~/Desktop/lofi-listen/<change>`), each from a clean tree
    with its `git rev-parse HEAD` in `DIR/{base,cand}/COMMIT`, and `ab_judge.py` gates them
-   (its header holds the verdict rule and each judge's blind spots) from a venv outside the
-   repo, set up once:
+   (its header holds the verdict rule and each measure's blind spots) against REFS, the
+   private reference corpus (`audio/` and its `manifest.json` of sha256s, never committed),
+   from a venv outside the repo, set up once:
    ```bash
-   J=~/.cache/lofi-judge; python3 -m venv $J
+   # Python 3.12: fadtk pins numpy<2, whose last wheels are cp312
+   J=~/.cache/lofi-judge; uv venv --python 3.12 $J
    # transformers 4: 5's conformer reads `config._attn_implementation`, which MuQ's config lacks
-   $J/bin/pip install audiobox_aesthetics==0.0.4 torch==2.14.1 torchaudio==2.11.0 numpy==2.5.4 \
-     scipy==1.18.1 soundfile==0.14.0 requests==2.34.2 huggingface_hub==0.36.2 muq==0.1.0 \
-     peft==0.21.2 omegaconf==2.4.0 transformers==4.57.6
+   uv pip install --python $J/bin/python audiobox_aesthetics==0.0.4 torch==2.14.1 \
+     torchaudio==2.11.0 numpy==1.26.4 scipy==1.17.1 soundfile==0.14.0 requests==2.34.2 \
+     huggingface_hub==0.36.2 muq==0.1.0 peft==0.21.2 omegaconf==2.4.0 transformers==4.57.6 \
+     fadtk==1.1.0 pyloudnorm==0.2.0
    git clone https://github.com/dgtql/MuQ-Eval $J/MuQ-Eval
    git -C $J/MuQ-Eval checkout 60a88f8ac0909ca1fd1a78af3660f1fc376977a1
-   $J/bin/python .claude/skills/procedural-lofi/scripts/ab_judge.py DIR
+   $J/bin/python .claude/skills/procedural-lofi/scripts/ab_judge.py DIR --refs REFS
    ```
-   The owner's blind listen is optional:
+   The owner's blind listen is optional and, when given, overrides the judge:
    `python3 .claude/skills/procedural-lofi/scripts/ab_listen.py DIR/base DIR/cand --out DIR/verdict.json`.
    A change of engine renders both on one commit, `--engine v1 --out DIR/base` and
    `--engine v2 --out DIR/cand` with the same `--mood`, `--tier` and seeds: each take keeps

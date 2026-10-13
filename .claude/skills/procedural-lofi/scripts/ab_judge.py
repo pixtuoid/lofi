@@ -2,22 +2,24 @@
 """Judges an A/B batch of a sound change by measurement. Pairs the takes a
 baseline batch and a candidate batch share by name (rendered as SKILL.md's
 GENERATOR loop step 5 says, which also sets up the venv this runs in),
-scores both sides with two learned judges, describes each pair, and writes
-the verdict.
+scores both sides with two learned judges and their distance from real lofi,
+describes each pair, and writes the verdict.
 
-Usage: $J/bin/python ab_judge.py DIR
+Usage: $J/bin/python ab_judge.py DIR --refs REFS
   DIR holds base/ and cand/; writes DIR/judge.json and prints a table.
+  REFS is the reference corpus: audio/ and its manifest.json of sha256s.
 
 The verdict is the controller's proposal (opinion): per mood and over every
-take, an exact one-sided sign test that cand scores LOWER than base, ties
-dropped, on each judge's headline score. Either judge significant at ALPHA
-is REGRESSION; anything else is PASS. Every third-octave band whose
-difference passes TO_EXPLAIN_DB is listed TO-EXPLAIN: a PR names its cause,
-but it fails nothing.
+take, an exact one-sided sign test, ties dropped, that cand scores LOWER than
+base on each judge's headline score, or sits FARTHER from the corpus by
+per-song FAD. Any test significant at ALPHA is REGRESSION; anything else is
+PASS. The owner's blind listen, when given, overrides this verdict. Every
+third-octave band whose difference passes TO_EXPLAIN_DB is listed
+TO-EXPLAIN: a PR names its cause, but it fails nothing.
 
 A score is a guard against regression between two engines or two commits,
 never an objective to maximize: lofi's character (hiss, crackle, roll-off) is
-held by the descriptors and LOFI-BIBLE.md. Each judge's blind spots:
+held by the descriptors and LOFI-BIBLE.md. Each measure's blind spots:
 
 Audiobox Aesthetics (https://arxiv.org/abs/2502.05139):
 - It hears 16 kHz mono ("we re-sample all input waveform to 16kHz and
@@ -39,20 +41,39 @@ MuQ-Eval (https://arxiv.org/abs/2603.22677):
   chance 0.50 (Table V, measured on its A3b variant, not the A1 scored
   here), so it can miss a subtle change; the descriptors and Audiobox cover
   that.
+
+Per-song FAD over fadtk (https://github.com/microsoft/fadtk, MIT):
+- FAD measures "distributional distance but weakly correlate[s] with
+  aesthetic perception" (§1 of https://arxiv.org/abs/2601.07237).
+- The corpus is 88 of 100 tracks from one netlabel, Dusted Wax Kingdom (its
+  manifest), so it guards against drifting away from real lofi and is never
+  a target to chase.
+- FAD is biased by its sample size (§3.3 of
+  https://arxiv.org/abs/2311.01616); both takes of a pair are one score's
+  length, so the sign test compares equal frame counts.
+
+The weights' licences: MuQ-310M CC-BY-NC 4.0
+(https://github.com/tencent-ailab/MuQ/blob/28847ea50cd31ac4b8b6a7dacc051ad7d1c7606a/README.md#license),
+MuQ-Eval A1 MIT, Audiobox Aesthetics CC-BY 4.0 and LAION-CLAP CC0 1.0 (each
+Hugging Face card at the revision pinned below).
 """
 
 import argparse
+import hashlib
 import json
 import sys
 from importlib.metadata import version
 from pathlib import Path
 
+import fadtk.model_loader
 import numpy as np
+import pyloudnorm
 import soundfile as sf
 import torch
 import torch.nn.functional as F
 import torchaudio
 from audiobox_aesthetics.infer import initialize_predictor
+from fadtk.fad import calc_embd_statistics, calc_frechet_distance
 from huggingface_hub import hf_hub_download, snapshot_download
 from omegaconf import OmegaConf
 from scipy import signal
@@ -73,6 +94,31 @@ from src.model import MusicQualityModel
 AUDIOBOX = ("facebook/audiobox-aesthetics", "9b1dd8e5df9af7216e836a98974fe3b82c56ded6")
 MUQ_EVAL_A1 = ("zhudi2825/MuQ-Eval-A1", "b082e238827df51d99ac66bdd1b6f0d2406bc90e")
 MUQ_310M = ("OpenMuQ/MuQ-large-msd-iter", "0562a57814f6f8bbd9fdea0a25921a2fce1a841a")
+LAION_CLAP = (
+    "lukewys/laion_clap",
+    "b3708341862f581175dba5c356a4ebf74a9b6651",
+    "music_audioset_epoch_15_esc_90.14.pt",
+)
+
+# fadtk's LAION-CLAP music embedding ("L-CLAP mus"): "CLAP and L-CLAP
+# outperform other embeddings for AQ and MQ MOS prediction" (§4.4 of
+# https://arxiv.org/abs/2311.01616)
+FAD_EMBEDDING = "music"
+# reference tracks left out of the statistics, so their own per-song FAD
+# shows what real lofi scores (the controller's proposal)
+HOLDOUT = 12
+# fadtk's own resampler to a model's rate, `load_audio` in its fad.py
+RESAMPLE = {
+    "lowpass_filter_width": 64,
+    "rolloff": 0.9475937167399596,
+    "resampling_method": "sinc_interp_kaiser",
+    "beta": 14.769656459379492,
+}
+
+# the floor every take gets before anything scores it, in dBFS RMS: over both
+# engines' numerical floors, which a learned judge scores and a listener
+# can't hear (inaudible is opinion)
+NOISE_FLOOR_DBFS = -70.0
 
 # Audiobox's own window, `make_inference_batch(wavs, 10, 10, ...)` in its
 # infer.py: both judges score a take as consecutive windows this long
@@ -88,7 +134,7 @@ TO_EXPLAIN_DB = 3.0
 BANDS_HZ = [1000 * 2 ** (k / 3) for k in range(-17, 13)]
 # so the 20 Hz band, under 5 Hz wide, holds several bins
 WELCH_NPERSEG = 1 << 15
-FLOOR = 1e-30
+POWER_EPS = 1e-30
 
 # the hat band's flux, frame to frame (the controller's analysis, opinion)
 HAT_HZ = (6000, 12000)
@@ -109,13 +155,32 @@ def channels(x):
     return (x, x) if x.ndim == 1 else (x[:, 0], x[:, 1])
 
 
+def mono(x):
+    left, right = channels(x)
+    return (left + right) / 2
+
+
+def floored(x, side, name):
+    """`x` over `NOISE_FLOOR_DBFS` of white noise, the same in each channel
+    and its own for each side and take, seeded by their names."""
+    seed = int.from_bytes(hashlib.sha256(f"{side}/{name}".encode()).digest()[:8], "little")
+    noise = np.random.default_rng(seed).standard_normal(len(x)).astype(np.float32)
+    noise *= np.float32(10 ** (NOISE_FLOOR_DBFS / 20))
+    return x + (noise if x.ndim == 1 else noise[:, None])
+
+
+def mono_lufs(x, sr):
+    """The integrated loudness of the mono the embeddings hear."""
+    return pyloudnorm.Meter(sr).integrated_loudness(mono(x).astype(np.float64))
+
+
 def describe(x, sr):
     left, right = channels(x)
     mid = (left + right) / 2
     f, psd = signal.welch(mid, sr, nperseg=WELCH_NPERSEG)
     df = f[1] - f[0]
     bands = [
-        10 * np.log10(psd[(f >= c * 2 ** (-1 / 6)) & (f < c * 2 ** (1 / 6))].sum() * df + FLOOR)
+        10 * np.log10(psd[(f >= c * 2 ** (-1 / 6)) & (f < c * 2 ** (1 / 6))].sum() * df + POWER_EPS)
         for c in BANDS_HZ
     ]
     rms = np.sqrt(np.mean(mid**2))
@@ -170,10 +235,9 @@ class MuqEval:
     def score(self, x, sr):
         """The take's windows' MI, averaged as Audiobox averages its own:
         the last window zero-padded and weighted by the share it fills."""
-        left, right = channels(x)
-        mono = torch.from_numpy(np.ascontiguousarray((left + right) / 2, dtype=np.float32))
+        heard = torch.from_numpy(np.ascontiguousarray(mono(x), dtype=np.float32))
         # as MuQ-Eval's `AudioProcessor.process` resamples
-        wav = torchaudio.functional.resample(mono, sr, self.sr)
+        wav = torchaudio.functional.resample(heard, sr, self.sr)
         clip = WINDOW_S * self.sr
         windows = [wav[i : i + clip] for i in range(0, wav.shape[-1], clip)]
         weights = torch.tensor([w.shape[-1] / clip for w in windows])
@@ -188,18 +252,83 @@ class MuqEval:
         return float((mi * weights).sum() / weights.sum())
 
 
-def sign_test(deltas):
-    """Whether cand scores lower than base more often than chance allows."""
-    wins = sum(d > 0 for d in deltas)
-    losses = sum(d < 0 for d in deltas)
+class Fad:
+    """Per-song FAD from a take to the reference corpus, over fadtk's
+    LAION-CLAP embedding: the Fréchet distance between the corpus's frame
+    statistics and the take's, as fadtk's `score_individual` takes it."""
+
+    def __init__(self, refs, takes_lufs):
+        manifest = (refs / "manifest.json").read_bytes()
+        tracks = json.loads(manifest)["tracks"]
+        for t in tracks:
+            digest = hashlib.sha256((refs / "audio" / t["file"]).read_bytes()).hexdigest()
+            if digest != t["sha256"]:
+                sys.exit(f"{t['file']} doesn't match its manifest sha256; refusing the corpus")
+        # fadtk downloads a missing checkpoint from the repo's head, so it
+        # finds the pinned one where it looks first
+        repo, rev, file = LAION_CLAP
+        seeded = Path(fadtk.model_loader.__file__).parent / ".model-checkpoints" / file
+        if not seeded.exists():
+            seeded.parent.mkdir(parents=True, exist_ok=True)
+            seeded.symlink_to(hf_hub_download(repo, file, revision=rev))
+        self.model = fadtk.model_loader.CLAPLaionModel(FAD_EMBEDDING)
+        self.model.load_model()
+        key = f"{hashlib.sha256(manifest).hexdigest()}-{self.model.name}-{takes_lufs:.1f}"
+        cache = Path(sys.prefix) / "fad-cache" / f"{key}.npz"
+        if cache.exists():
+            with np.load(cache) as stats:
+                self.lufs = float(stats["lufs"])
+                self.mu, self.cov = stats["mu"], stats["cov"]
+                self.calibration = dict(zip(stats["held"].tolist(), stats["held_fad"].tolist()))
+            return
+        # one level for every input, the takes' unless a reference is
+        # quieter, so no reference is ever raised and clipped
+        quietest = min(mono_lufs(*self.read(refs, t)) for t in tracks)
+        self.lufs = min(takes_lufs, quietest)
+        # the lowest sha256s, a choice no file order moves
+        held = {t["file"] for t in sorted(tracks, key=lambda t: t["sha256"])[:HOLDOUT]}
+        frames = np.concatenate([self.embed(*self.read(refs, t)) for t in tracks if t["file"] not in held])
+        self.mu, self.cov = calc_embd_statistics(frames)
+        self.calibration = {f: self.score(*self.read(refs, {"file": f})) for f in sorted(held)}
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        np.savez(
+            cache,
+            lufs=self.lufs,
+            mu=self.mu,
+            cov=self.cov,
+            held=np.array(list(self.calibration)),
+            held_fad=np.array(list(self.calibration.values())),
+        )
+
+    @staticmethod
+    def read(refs, track):
+        return sf.read(refs / "audio" / track["file"], dtype="float32")
+
+    def embed(self, x, sr):
+        """`x`'s frames of the embedding, at the one level every input shares."""
+        heard = mono(x).astype(np.float64)
+        heard *= 10 ** ((self.lufs - mono_lufs(x, sr)) / 20)
+        wav = torch.from_numpy(heard.astype(np.float32))[None]
+        wav = torchaudio.transforms.Resample(sr, self.model.sr, **RESAMPLE)(wav)[0]
+        return self.model.get_embedding(wav.numpy())
+
+    def score(self, x, sr):
+        mu, cov = calc_embd_statistics(self.embed(x, sr))
+        return float(calc_frechet_distance(self.mu, self.cov, mu, cov))
+
+
+def sign_test(gains):
+    """Whether cand does worse than base more often than chance allows,
+    `gains` each pair's improvement from base to cand."""
+    wins = sum(g > 0 for g in gains)
+    losses = sum(g < 0 for g in gains)
     # https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.binomtest.html:
     # losses as successes out of the untied pairs, H1 a success rate over 1/2
     p = binomtest(losses, wins + losses, 0.5, alternative="greater").pvalue if wins + losses else 1.0
     return {
         "wins": wins,
         "losses": losses,
-        "ties": len(deltas) - wins - losses,
-        "mean_delta": float(np.mean(deltas)),
+        "ties": len(gains) - wins - losses,
         "p": float(p),
         "significant": bool(p < ALPHA),
     }
@@ -234,6 +363,7 @@ def read_commit(side):
 def main():
     ap = argparse.ArgumentParser(description="Judge an A/B batch by measurement.")
     ap.add_argument("dir", type=Path, help="the batch: base/ and cand/ of same-named takes")
+    ap.add_argument("--refs", type=Path, required=True, help="the reference corpus: audio/ and manifest.json")
     args = ap.parse_args()
     base_dir, cand_dir = args.dir / "base", args.dir / "cand"
 
@@ -254,16 +384,22 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
     audiobox = initialize_predictor(hf_hub_download(AUDIOBOX[0], "checkpoint.pt", revision=AUDIOBOX[1]))
     muq = MuqEval(device)
+    sides = (("base", base_dir), ("cand", cand_dir))
+    takes_lufs = float(np.median([mono_lufs(*sf.read(d / n, dtype="float32")) for n in names for _, d in sides]))
+    fad = Fad(args.refs, takes_lufs)
 
     pairs = []
     for name in names:
         row = {"take": name.removesuffix(".wav"), "mood": NAME.fullmatch(name)["mood"]}
         takes = {}
-        for side, d in (("base", base_dir), ("cand", cand_dir)):
+        for side, d in sides:
             x, sr = sf.read(d / name, dtype="float32")
-            takes[side] = (x, sr)
+            # the descriptors measure the take as rendered, the judges hear it floored
             row[side] = describe(x, sr)
+            x = floored(x, side, name)
+            takes[side] = (x, sr)
             row[side]["muq_mi"] = muq.score(x, sr)
+            row[side]["fad"] = fad.score(x, sr)
         # Audiobox's `torchaudio.load` path needs torchcodec, so it gets tensors
         scores = audiobox.forward(
             [{"path": torch.from_numpy(np.atleast_2d(x.T).copy()), "sample_rate": sr} for x, sr in takes.values()]
@@ -278,16 +414,22 @@ def main():
     groups["all"] = pairs
     verdict = {}
     for group, members in groups.items():
-        ce = sign_test([p["cand"]["audiobox"]["CE"] - p["base"]["audiobox"]["CE"] for p in members])
-        mi = sign_test([p["cand"]["muq_mi"] - p["base"]["muq_mi"] for p in members])
+        ce = [p["cand"]["audiobox"]["CE"] - p["base"]["audiobox"]["CE"] for p in members]
+        mi = [p["cand"]["muq_mi"] - p["base"]["muq_mi"] for p in members]
+        fd = [p["cand"]["fad"] - p["base"]["fad"] for p in members]
+        tests = {
+            "audiobox_ce": {**sign_test(ce), "mean_delta": float(np.mean(ce))},
+            "muq_eval_mi": {**sign_test(mi), "mean_delta": float(np.mean(mi))},
+            # nearer the corpus is better, so a gain is a fall in FAD
+            "fad": {**sign_test([-d for d in fd]), "mean_delta": float(np.mean(fd))},
+        }
         verdict[group] = {
             "pairs": len(members),
-            "audiobox_ce": ce,
+            **tests,
             "audiobox_mean_delta_pq": float(
                 np.mean([p["cand"]["audiobox"]["PQ"] - p["base"]["audiobox"]["PQ"] for p in members])
             ),
-            "muq_eval_mi": mi,
-            "verdict": "REGRESSION" if ce["significant"] or mi["significant"] else "PASS",
+            "verdict": "REGRESSION" if any(t["significant"] for t in tests.values()) else "PASS",
             "to_explain": to_explain(members),
         }
     overall = "REGRESSION" if any(v["verdict"] == "REGRESSION" for v in verdict.values()) else "PASS"
@@ -298,9 +440,18 @@ def main():
         "judges": {
             "audiobox": {"package": version("audiobox_aesthetics"), "checkpoint": AUDIOBOX},
             "muq_eval": {"code": str(MUQ_EVAL), "checkpoint": MUQ_EVAL_A1, "encoder": MUQ_310M},
+            "fad": {
+                "package": version("fadtk"),
+                "embedding": fad.model.name,
+                "checkpoint": LAION_CLAP,
+                "refs": str(args.refs.resolve()),
+                "lufs": fad.lufs,
+            },
             "torch": version("torch"),
             "device": str(device),
         },
+        "noise_floor_dbfs": NOISE_FLOOR_DBFS,
+        "fad_calibration": fad.calibration,
         "alpha": ALPHA,
         "bands_hz": BANDS_HZ,
         "pairs": pairs,
@@ -309,7 +460,7 @@ def main():
     }
     (args.dir / "judge.json").write_text(json.dumps(record, indent=1) + "\n")
 
-    print(f"\n{'take':<24} {'dCE':>6} {'dPQ':>6} {'dMI':>6} {'max|dB|':>8} {'@Hz':>6}"
+    print(f"\n{'take':<24} {'dCE':>6} {'dPQ':>6} {'dMI':>6} {'dFAD':>6} {'max|dB|':>8} {'@Hz':>6}"
           f" {'centroid b/c':>13} {'crest b/c':>11} {'LR b/c':>11} {'clk/min b/c':>11} {'hat b/c':>11}")
     for p in pairs:
         b, c = p["base"], p["cand"]
@@ -319,6 +470,7 @@ def main():
             f" {c['audiobox']['CE'] - b['audiobox']['CE']:+6.2f}"
             f" {c['audiobox']['PQ'] - b['audiobox']['PQ']:+6.2f}"
             f" {c['muq_mi'] - b['muq_mi']:+6.2f}"
+            f" {c['fad'] - b['fad']:+6.2f}"
             f" {p['bands_delta_db'][worst]:+8.1f} {round(BANDS_HZ[worst]):>6}"
             f" {b['centroid_hz']:6.0f}/{c['centroid_hz']:<6.0f}"
             f" {b['crest_db']:5.1f}/{c['crest_db']:<5.1f}"
@@ -327,14 +479,21 @@ def main():
             f" {b['hat_flux_p95_over_median']:5.2f}/{c['hat_flux_p95_over_median']:<5.2f}"
         )
     print(f"\n{'group':<6} {'pairs':>5}  {'Audiobox CE w/l/t':>17} {'p':>7} {'mean dCE':>8} {'mean dPQ':>8}"
-          f"  {'MuQ-Eval MI w/l/t':>17} {'p':>7} {'mean dMI':>8}  verdict")
+          f"  {'MuQ-Eval MI w/l/t':>17} {'p':>7} {'mean dMI':>8}  {'FAD w/l/t':>9} {'p':>7} {'mean dFAD':>9}  verdict")
     for group, v in verdict.items():
-        ce, mi = v["audiobox_ce"], v["muq_eval_mi"]
+        ce, mi, fd = v["audiobox_ce"], v["muq_eval_mi"], v["fad"]
         print(
             f"{group:<6} {v['pairs']:>5}  {ce['wins']:>7}/{ce['losses']}/{ce['ties']:<5} {ce['p']:7.4f}"
             f" {ce['mean_delta']:+8.3f} {v['audiobox_mean_delta_pq']:+8.3f}"
-            f"  {mi['wins']:>7}/{mi['losses']}/{mi['ties']:<5} {mi['p']:7.4f} {mi['mean_delta']:+8.3f}  {v['verdict']}"
+            f"  {mi['wins']:>7}/{mi['losses']}/{mi['ties']:<5} {mi['p']:7.4f} {mi['mean_delta']:+8.3f}"
+            f"  {fd['wins']:>3}/{fd['losses']}/{fd['ties']:<3} {fd['p']:7.4f} {fd['mean_delta']:+9.3f}  {v['verdict']}"
         )
+    held = np.array(list(fad.calibration.values()))
+    print(
+        f"\nFAD calibration, {len(held)} held-out references: median {np.median(held):.3f}"
+        f" ({held.min():.3f}..{held.max():.3f}); takes: base median"
+        f" {np.median([p['base']['fad'] for p in pairs]):.3f}, cand median {np.median([p['cand']['fad'] for p in pairs]):.3f}"
+    )
     for group, v in verdict.items():
         for t in v["to_explain"]:
             print(
