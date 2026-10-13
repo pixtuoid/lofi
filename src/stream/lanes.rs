@@ -328,7 +328,7 @@ mod tests {
     use crate::Controls;
     use crate::compose::DrumKind;
     use crate::dsp::{SAMPLE_RATE, band_energy_share};
-    use crate::stream::schedule::{LOOPS_PER_SONG, Schedule};
+    use crate::stream::schedule::{LOOPS_PER_SONG, Schedule, UNITY};
     use crate::synth::WOW;
 
     fn controls(mood: Mood) -> Controls {
@@ -462,7 +462,7 @@ mod tests {
         let mut played = 0;
         while played < samples_at(600.0, sr) {
             if run.song_left() == 0 {
-                run.start_song(controls(moods.next().unwrap()));
+                run.start_song(controls(moods.next().unwrap()), UNITY);
             }
             let n = run.song_left().min(BLOCK);
             for ((lane, sum), peak) in Lane::ALL.iter().zip(run.play(n)).zip(&mut peaks) {
@@ -497,7 +497,7 @@ mod tests {
             let mut lufs = vec![Vec::new(); Lane::ALL.len()];
             for seed in 0..6 {
                 let mut run = Schedule::new(seed, 0, sr);
-                run.start_song(controls(mood));
+                run.start_song(controls(mood), UNITY);
                 let loop_len = run.song_left() / LOOPS_PER_SONG;
                 // the second loop, which the first's tails ring into as every
                 // later one does

@@ -2,6 +2,7 @@
 //! solo, mute and measure. Not a contract: any release may change it.
 
 pub use crate::compose::{Mood, Score, compose};
+pub use crate::stream::master::{TIER_INTENSITIES, lane_gain};
 pub use crate::synth::{Lane, render_lane};
 
 use crate::{Controls, Frame, Performance};

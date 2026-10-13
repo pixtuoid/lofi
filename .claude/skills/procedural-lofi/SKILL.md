@@ -208,11 +208,11 @@ every taste axis is a data table or named const with ONE home:
 4. Extend the distribution property test; run the compose suite (fast — no synthesis).
 5. Render a batch (`cargo run --release --example lofi_audition -- --seeds N`;
    `--solo sparkle` isolates the lane) → owner listens → tighten or ship. A change to a
-   shipped sound first diffs the copied tier gains against pixtuoid's (no output: in step),
+   shipped sound first diffs the tier gains moved here against pixtuoid's (no output: in step),
    ```bash
    diff <(gh api repos/pixtuoid/pixtuoid/contents/crates/pixtuoid-scene/src/audio/mod.rs --jq .content | base64 -d |
             sed -nE 's/^const (PAD|SPARKLE|KEYS|DRUMS|TEXTURE|BASS)_GAIN: TierGain = TierGain::new\((.*)\);$/\1 \2/p' | tr '[:upper:]' '[:lower:]') \
-        <(sed -nE 's/^ *Lane::([A-Za-z]+) => (\[.*\]),$/\1 \2/p' examples/common/batch.rs | tr '[:upper:]' '[:lower:]')
+        <(sed -nE 's/^ *Lane::([A-Za-z]+) => (\[.*\]),$/\1 \2/p' src/stream/master.rs | tr '[:upper:]' '[:lower:]')
    ```
    then renders the batch on `main` and on the branch into two `--out` dirs, and the owner
    blind-compares them:

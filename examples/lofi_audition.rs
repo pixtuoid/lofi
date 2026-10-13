@@ -23,7 +23,7 @@ use std::process::ExitCode;
 use pixtuoid_lofi::audition::{Lane, compose};
 use pixtuoid_lofi::dsp::{NoiseStream, SAMPLE_RATE};
 
-use batch::{Batch, LANE_NAMES, parse_choice, render_take, soak_mix, tier_gain, usage_error};
+use batch::{Batch, LANE_NAMES, parse_choice, render_take, soak_mix, usage_error};
 use loudness::gated_lufs;
 
 /// Every take renders at ONE gated loudness, so a blind A/B compares takes, not
@@ -82,7 +82,7 @@ fn run() -> std::io::Result<()> {
         }
         None => {
             let tier = batch.tier();
-            (tier.name(), Lane::ALL.map(|lane| tier_gain(lane, tier)))
+            (tier.name(), tier.lane_gains())
         }
     };
     let seeds: Vec<u64> = batch.seeds().collect();

@@ -5,7 +5,7 @@ use std::io;
 use std::ops::Range;
 use std::time::{Duration, Instant};
 
-use pixtuoid_lofi::audition::{Lane, Mood, Score, render_lane};
+use pixtuoid_lofi::audition::{Lane, Mood, Score, TIER_INTENSITIES, lane_gain, render_lane};
 use pixtuoid_lofi::dsp::{NoiseStream, SAMPLE_RATE};
 
 /// The `--mood` vocabulary paired with its [`Mood`], so the parse and the error
@@ -17,7 +17,7 @@ const MOODS: [(&str, Mood); 2] = [("day", Mood::Day), ("night", Mood::Night)];
 pub(crate) const LANE_NAMES: [&str; Lane::ALL.len()] =
     ["pad", "sparkle", "keys", "drums", "texture", "bass"];
 
-/// How busy pixtuoid's office is, which picks each lane's [`tier_gain`].
+/// How busy pixtuoid's office is, which picks each lane's gain.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) enum Tier {
     Empty,
@@ -38,26 +38,17 @@ impl Tier {
             Tier::Busy => "busy",
         }
     }
-}
 
-/// `lane`'s gain at `tier`: pixtuoid's `TierGain`s
-/// (<https://github.com/pixtuoid/pixtuoid/blob/9338cc3841f6d50f99d478a3b2290e2ac96feeec/crates/pixtuoid-scene/src/audio/mod.rs#L98-L107>),
-/// copied across repos where no test can pin them, so a LISTEN first diffs
-/// pixtuoid's `main` against these with the `procedural-lofi` skill's GENERATOR
-/// step 5, which reads each row as `Lane::X => [empty, moderate, busy],`.
-pub(crate) fn tier_gain(lane: Lane, tier: Tier) -> f32 {
-    let [empty, moderate, busy] = match lane {
-        Lane::Pad => [0.75, 0.70, 0.65],
-        Lane::Sparkle => [0.70, 0.0, 0.0],
-        Lane::Keys => [0.0, 0.60, 0.70],
-        Lane::Drums => [0.0, 0.35, 0.60],
-        Lane::Texture => [0.78, 0.84, 0.78],
-        Lane::Bass => [0.60, 0.70, 0.75],
-    };
-    match tier {
-        Tier::Empty => empty,
-        Tier::Moderate => moderate,
-        Tier::Busy => busy,
+    /// Each lane's gain in the tier's mix, in [`Lane::ALL`] order: lofi's, at
+    /// the tier's intensity.
+    pub(crate) fn lane_gains(self) -> [f32; Lane::ALL.len()] {
+        let [empty, moderate, busy] = TIER_INTENSITIES;
+        let intensity = match self {
+            Tier::Empty => empty,
+            Tier::Moderate => moderate,
+            Tier::Busy => busy,
+        };
+        Lane::ALL.map(|lane| lane_gain(lane, intensity))
     }
 }
 

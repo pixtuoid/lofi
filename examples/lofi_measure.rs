@@ -13,10 +13,10 @@ mod loudness;
 
 use std::process::ExitCode;
 
-use pixtuoid_lofi::audition::{Lane, compose};
+use pixtuoid_lofi::audition::compose;
 use pixtuoid_lofi::dsp::SAMPLE_RATE;
 
-use batch::{Batch, LANE_NAMES, render_take, soak_mix, tier_gain, usage_error};
+use batch::{Batch, LANE_NAMES, render_take, soak_mix, usage_error};
 use loudness::gated_lufs;
 
 const SR: f64 = SAMPLE_RATE as f64;
@@ -101,7 +101,7 @@ fn run() -> std::io::Result<()> {
             );
         }
         let beds = take.map(|(bed, _)| bed);
-        let mix = soak_mix(&beds, &Lane::ALL.map(|lane| tier_gain(lane, tier)));
+        let mix = soak_mix(&beds, &tier.lane_gains());
         let spectrum = Spectrum::of(&mix);
         let sub = BAND_EDGES_HZ[0];
         println!(

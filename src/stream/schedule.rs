@@ -63,15 +63,17 @@ impl Schedule {
         self.song.as_ref().map_or(0, |song| song.len - song.played)
     }
 
-    /// Starts the next song, composed for `controls`.
-    pub(crate) fn start_song(&mut self, controls: Controls) {
-        let song = Song::new(self.seed, self.next_song, controls, self.sr);
+    /// Starts the next song, composed for `controls`, each lane mixed in at
+    /// its gain in `levels`.
+    pub(crate) fn start_song(&mut self, controls: Controls, levels: [f64; LANES]) {
+        let song = Song::new(self.seed, self.next_song, controls, levels, self.sr);
         self.fading.extend(self.song.replace(song));
         self.next_song += 1;
     }
 
     /// Plays the next `n` frames, at most [`BLOCK`] and
-    /// [`song_left`](Self::song_left), and returns each lane's sum over them.
+    /// [`song_left`](Self::song_left), and returns each lane's sum over them,
+    /// each song's at its level.
     pub(crate) fn play(&mut self, n: usize) -> &[Vec<f64>; LANES] {
         debug_assert!(n <= BLOCK && n <= self.song_left());
         for sum in &mut self.sums {
@@ -100,10 +102,13 @@ struct Song {
     rings: [Ring; LANES],
     chains: [Chain; LANES],
     crackle: Crackle,
+    /// Each lane's gain into the mix: the song's own, which its tails keep
+    /// past the next song's first bar.
+    levels: [f64; LANES],
 }
 
 impl Song {
-    fn new(seed: u64, k: u64, controls: Controls, sr: u32) -> Self {
+    fn new(seed: u64, k: u64, controls: Controls, levels: [f64; LANES], sr: u32) -> Self {
         let seed = song_seed(seed, k);
         let mood = if controls.daylight < DUSK {
             Mood::Night
@@ -135,17 +140,19 @@ impl Song {
             rings: Default::default(),
             chains,
             crackle,
+            levels,
         }
     }
 
     /// Strikes each note whose onset falls in the next `n` frames, then adds
-    /// those frames of each lane, through its chain, into `sums`.
+    /// those frames of each lane, through its chain and at its level, into
+    /// `sums`.
     fn play(&mut self, sums: &mut [Vec<f64>; LANES], buf: &mut Vec<f64>, n: usize) {
         let end = self.played + n;
         let lanes = (Lane::ALL.into_iter().zip(&mut self.cues))
             .zip(self.rings.iter_mut().zip(&mut self.chains))
-            .zip(sums);
-        for (((lane, cues), (ring, chain)), sum) in lanes {
+            .zip(sums.iter_mut().zip(self.levels));
+        for (((lane, cues), (ring, chain)), (sum, level)) in lanes {
             let part = part(&self.score, lane);
             cues.strike(&part, self.played, end, ring, self.sr);
             if matches!(part, Part::Bed) {
@@ -156,7 +163,7 @@ impl Song {
             ring.take(buf);
             chain.process(buf, &mut cues.noise);
             for (s, x) in sum.iter_mut().zip(buf.iter()) {
-                *s += x;
+                *s += level * x;
             }
         }
         self.played = end;
@@ -274,6 +281,10 @@ impl Ring {
     }
 }
 
+/// Every lane at full level, as `render_lane` renders it.
+#[cfg(test)]
+pub(crate) const UNITY: [f64; LANES] = [1.0; LANES];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -283,12 +294,12 @@ mod tests {
     fn each_song_of_a_run_is_composed_anew() {
         let day = Controls::default();
         let scores: Vec<Score> = (0..8)
-            .map(|k| Song::new(1, k, day, SAMPLE_RATE).score)
+            .map(|k| Song::new(1, k, day, UNITY, SAMPLE_RATE).score)
             .collect();
         for (k, a) in scores.iter().enumerate() {
             assert!(!scores[k + 1..].contains(a), "song {k} recurs");
             assert!(
-                *a != Song::new(2, k as u64, day, SAMPLE_RATE).score,
+                *a != Song::new(2, k as u64, day, UNITY, SAMPLE_RATE).score,
                 "seeds 1 and 2 share song {k}"
             );
         }
@@ -298,15 +309,15 @@ mod tests {
     fn a_run_is_its_songs_each_played_alone() {
         let (seed, c, sr) = (3, Controls::default(), SAMPLE_RATE);
         let mut run = Schedule::new(seed, 0, sr);
-        let mut first = Song::new(seed, 0, c, sr);
-        let mut second = Song::new(seed, 1, c, sr);
+        let mut first = Song::new(seed, 0, c, UNITY, sr);
+        let mut second = Song::new(seed, 1, c, UNITY, sr);
         let mut buf = Vec::new();
         // through song 1's first loop, past every tail of song 0
         let span = first.len + second.len / LOOPS_PER_SONG;
         let mut at = 0;
         while at < span {
             if run.song_left() == 0 {
-                run.start_song(c);
+                run.start_song(c, UNITY);
             }
             let n = run.song_left().min(BLOCK);
             let mut alone: [Vec<f64>; LANES] = std::array::from_fn(|_| vec![0.0; n]);
@@ -338,7 +349,8 @@ mod tests {
     #[test]
     fn a_night_bed_ducks_after_each_kick() {
         let sr = SAMPLE_RATE;
-        let mut song = Song::new(4, 0, Controls::default().with_daylight(0.0), sr);
+        let night = Controls::default().with_daylight(0.0);
+        let mut song = Song::new(4, 0, night, UNITY, sr);
         let loop_len = song.len / LOOPS_PER_SONG;
         let texture = Lane::ALL.iter().position(|&l| l == Lane::Texture).unwrap();
         let (mut bed, mut buf) = (Vec::with_capacity(loop_len), Vec::new());

@@ -4,7 +4,9 @@
 use std::fmt;
 
 use crate::dsp::SAMPLE_RATE;
+use crate::stream::master::{Ceiling, TIER_INTENSITIES, lane_gain};
 use crate::stream::schedule::{BLOCK, Schedule};
+use crate::synth::Lane;
 
 /// One stereo frame, `[left, right]`, at [`SAMPLE_RATE`].
 pub type Frame = [f32; 2];
@@ -23,11 +25,12 @@ pub struct Controls {
 }
 
 impl Default for Controls {
-    /// Full day, a moderately busy room, no rain.
+    /// Full day, pixtuoid's Moderate office (its taste anchor), no rain.
     fn default() -> Self {
+        let [_, moderate, _] = TIER_INTENSITIES;
         Self {
             daylight: 1.0,
-            intensity: 0.5,
+            intensity: moderate,
             rain: 0.0,
         }
     }
@@ -78,6 +81,9 @@ pub struct Performance {
     asked: Controls,
     position: u64,
     schedule: Schedule,
+    /// The lanes' mix over a step.
+    mix: Vec<f64>,
+    ceiling: Ceiling,
 }
 
 // Losing `Send` is silent here and breaks only a consumer that renders off-thread.
@@ -109,6 +115,8 @@ impl Performance {
             asked: controls,
             position: 0,
             schedule: Schedule::new(seed, first, SAMPLE_RATE),
+            mix: Vec::with_capacity(BLOCK),
+            ceiling: Ceiling::new(SAMPLE_RATE),
         }
     }
 
@@ -124,16 +132,30 @@ impl Performance {
     pub fn render(&mut self, out: &mut [Frame]) {
         let mut done = 0;
         while done < out.len() {
-            self.start_due_song();
-            let n = (out.len() - done).min(BLOCK).min(self.schedule.song_left());
-            let lanes = self.schedule.play(n);
-            for (i, frame) in out[done..done + n].iter_mut().enumerate() {
-                let mix: f64 = lanes.iter().map(|lane| lane[i]).sum();
-                *frame = [mix as f32; 2];
+            self.mix_next(out.len() - done);
+            self.ceiling.limit(&mut self.mix);
+            for (frame, &x) in out[done..].iter_mut().zip(&self.mix) {
+                *frame = [self.ceiling.clamp(x); 2];
             }
-            done += n;
+            done += self.mix.len();
         }
         self.position += out.len() as u64;
+    }
+
+    /// Mixes the lanes' next frames into `mix`: at most `max`, [`BLOCK`] and
+    /// the rest of the playing song.
+    fn mix_next(&mut self, max: usize) {
+        self.start_due_song();
+        let n = max.min(BLOCK).min(self.schedule.song_left());
+        let lanes = self.schedule.play(n);
+        self.mix.clear();
+        // at unity: pixtuoid's mixer scales each lane by its tier gain, now
+        // applied here, then by its bus trim and the listener's volume
+        // (<https://github.com/pixtuoid/pixtuoid/blob/a63f1782f477c357666e71a9c1147090b47fe17d/crates/pixtuoid-scene/src/audio/mixer.rs#L123>),
+        // which it goes on applying to `render`'s frames, so its bus hears
+        // today's level
+        self.mix
+            .extend((0..n).map(|i| lanes.iter().map(|lane| lane[i]).sum::<f64>()));
     }
 
     /// Frames rendered so far.
@@ -145,7 +167,9 @@ impl Performance {
     /// under the controls asked for last.
     fn start_due_song(&mut self) {
         if self.schedule.song_left() == 0 {
-            self.schedule.start_song(self.asked.clamped());
+            let controls = self.asked.clamped();
+            let levels = Lane::ALL.map(|lane| f64::from(lane_gain(lane, controls.intensity)));
+            self.schedule.start_song(controls, levels);
         }
     }
 
@@ -164,7 +188,7 @@ mod tests {
     use super::*;
     use crate::audition;
     use crate::dsp::NoiseStream;
-    use crate::stream::schedule::LOOPS_PER_SONG;
+    use crate::stream::schedule::{LOOPS_PER_SONG, UNITY};
 
     fn night() -> Controls {
         Controls::default().with_daylight(0.0)
@@ -193,6 +217,144 @@ mod tests {
 
     fn audible(frames: &[Frame]) -> bool {
         frames.iter().any(|&[l, _]| l != 0.0)
+    }
+
+    /// `p`'s next `frames` frames of the lanes' mix, before the ceiling.
+    fn mixed(p: &mut Performance, frames: usize) -> Vec<f64> {
+        let mut out = Vec::with_capacity(frames);
+        while out.len() < frames {
+            p.mix_next(frames - out.len());
+            out.extend_from_slice(&p.mix);
+        }
+        out
+    }
+
+    #[test]
+    fn the_intensity_anchors_play_pixtuoids_tiers_lane_for_lane() {
+        // pixtuoid's `TierGain`s (crates/pixtuoid-scene/src/audio/mod.rs at
+        // a63f178), each tier's lanes in `Lane::ALL` order
+        let tiers: [(f32, [f32; Lane::ALL.len()]); 3] = [
+            (0.0, [0.75, 0.70, 0.0, 0.0, 0.78, 0.60]),
+            (0.5, [0.70, 0.0, 0.60, 0.35, 0.84, 0.70]),
+            (1.0, [0.65, 0.0, 0.70, 0.60, 0.78, 0.75]),
+        ];
+        let seed = 2;
+        let mut whole = Schedule::new(seed, 0, SAMPLE_RATE);
+        whole.start_song(Controls::default(), UNITY);
+        // the first loop, before any song but the first plays
+        let frames = whole.song_left() / LOOPS_PER_SONG;
+        let mut unity = vec![Vec::with_capacity(frames); Lane::ALL.len()];
+        while unity[0].len() < frames {
+            let n = BLOCK.min(frames - unity[0].len());
+            for (lane, sum) in unity.iter_mut().zip(whole.play(n)) {
+                lane.extend_from_slice(sum);
+            }
+        }
+        for (intensity, gains) in tiers {
+            assert_eq!(
+                Lane::ALL.map(|lane| audition::lane_gain(lane, intensity)),
+                gains,
+                "intensity {intensity}"
+            );
+            let c = Controls::default().with_intensity(intensity);
+            let got = mixed(&mut Performance::new(seed, c), frames);
+            let first_diff = (0..frames).position(|i| {
+                let want: f64 = (unity.iter().zip(gains))
+                    .map(|(lane, gain)| f64::from(gain) * lane[i])
+                    .sum();
+                got[i] != want
+            });
+            assert_eq!(
+                first_diff, None,
+                "intensity {intensity}: lanes off their gains"
+            );
+        }
+    }
+
+    /// The amplitude the ceiling holds, as its clamp reads it.
+    fn ceiling_amplitude() -> f64 {
+        f64::from(Ceiling::new(SAMPLE_RATE).clamp(f64::INFINITY))
+    }
+
+    #[test]
+    fn every_corner_plays_under_the_ceiling_across_a_song_boundary() {
+        let corners: Vec<Controls> = (0..8u8)
+            .map(|bits| {
+                let on = |bit: u8| f32::from((bits >> bit) & 1);
+                Controls::default()
+                    .with_daylight(on(0))
+                    .with_intensity(on(1))
+                    .with_rain(on(2))
+            })
+            .collect();
+        // each corner's song into the opposite corner's, whose first loop the
+        // first one's tails ring over
+        let runs: Vec<(u64, Controls, Controls)> = (0..2)
+            .flat_map(|seed| {
+                (corners.iter().zip(corners.iter().rev())).map(move |(&a, &b)| (seed, a, b))
+            })
+            .collect();
+        // each run's loudest mixed sample, and how many samples the clamp
+        // caught after the limiter, of how many played
+        let heard: Vec<(f64, usize, usize)> = std::thread::scope(|scope| {
+            let runs: Vec<_> = (runs.iter())
+                .map(|&(seed, a, b)| {
+                    scope.spawn(move || {
+                        let span = song_len(seed, 0, a) + song_len(seed, 1, b) / LOOPS_PER_SONG;
+                        let mut p = Performance::new(seed, a);
+                        p.set_controls(b);
+                        let mut ceiling = Ceiling::new(SAMPLE_RATE);
+                        let (mut loudest, mut caught, mut played) = (0.0f64, 0, 0);
+                        while played < span {
+                            p.mix_next(span - played);
+                            loudest = p.mix.iter().fold(loudest, |m, x| m.max(x.abs()));
+                            ceiling.limit(&mut p.mix);
+                            caught += (p.mix.iter())
+                                .filter(|&&x| ceiling.clamp(x) != x as f32)
+                                .count();
+                            played += p.mix.len();
+                        }
+                        (loudest, caught, played)
+                    })
+                })
+                .collect();
+            runs.into_iter()
+                .map(|run| run.join().expect("a run panicked"))
+                .collect()
+        });
+        assert!(
+            heard
+                .iter()
+                .any(|&(loudest, ..)| loudest > ceiling_amplitude()),
+            "no run overloads the ceiling, so holding it proves nothing"
+        );
+        // the bound: the limiter alone holds the ceiling, so the clamp after
+        // it catches no sample
+        let caught: Vec<String> = (runs.iter().zip(&heard))
+            .filter(|(_, (_, caught, _))| *caught > 0)
+            .map(|((seed, a, b), (_, caught, played))| {
+                format!("seed {seed}, {a:?} into {b:?}: {caught} of {played}")
+            })
+            .collect();
+        assert!(caught.is_empty(), "the clamp caught samples: {caught:#?}");
+    }
+
+    #[test]
+    fn render_plays_the_mix_limited_clamped_and_alike_in_both_channels() {
+        let (seed, c) = (8, Controls::default().with_intensity(1.0));
+        let frames = 10 * SAMPLE_RATE as usize;
+        let got = next(&mut Performance::new(seed, c), frames);
+        let mut mix = mixed(&mut Performance::new(seed, c), frames);
+        assert!(
+            mix.iter().any(|x| x.abs() > ceiling_amplitude()),
+            "the mix never overloads the ceiling here, so this proves nothing"
+        );
+        let mut ceiling = Ceiling::new(SAMPLE_RATE);
+        ceiling.limit(&mut mix);
+        let first_diff = (got.iter().zip(&mix)).position(|(&[l, r], &x)| {
+            l.to_bits() != ceiling.clamp(x).to_bits() || l.to_bits() != r.to_bits()
+        });
+        assert_eq!(first_diff, None);
     }
 
     #[test]
