@@ -264,6 +264,14 @@ mod tests {
                 "intensity {intensity}: lanes off their gains"
             );
         }
+        for ((below, low), (above, high)) in tiers.iter().zip(&tiers[1..]) {
+            let between = f32::midpoint(*below, *above);
+            assert_eq!(
+                Lane::ALL.map(|lane| audition::lane_gain(lane, between)),
+                std::array::from_fn(|i| f32::midpoint(low[i], high[i])),
+                "intensity {between} isn't halfway between its anchors' gains"
+            );
+        }
     }
 
     #[test]

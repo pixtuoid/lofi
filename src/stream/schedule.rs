@@ -308,16 +308,20 @@ mod tests {
     #[test]
     fn a_run_is_its_songs_each_played_alone() {
         let (seed, c, sr) = (3, Controls::default(), SAMPLE_RATE);
+        // levels that differ in every lane, so a tail heard at the next
+        // song's levels shows
+        let levels = [UNITY, [0.5; LANES]];
         let mut run = Schedule::new(seed, 0, sr);
-        let mut first = Song::new(seed, 0, c, UNITY, sr);
-        let mut second = Song::new(seed, 1, c, UNITY, sr);
+        let mut first = Song::new(seed, 0, c, levels[0], sr);
+        let mut second = Song::new(seed, 1, c, levels[1], sr);
         let mut buf = Vec::new();
         // through song 1's first loop, past every tail of song 0
         let span = first.len + second.len / LOOPS_PER_SONG;
         let mut at = 0;
+        let mut levels = levels.into_iter();
         while at < span {
             if run.song_left() == 0 {
-                run.start_song(c, UNITY);
+                run.start_song(c, levels.next().expect("two songs start"));
             }
             let n = run.song_left().min(BLOCK);
             let mut alone: [Vec<f64>; LANES] = std::array::from_fn(|_| vec![0.0; n]);
