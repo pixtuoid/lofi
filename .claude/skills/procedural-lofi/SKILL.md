@@ -222,9 +222,14 @@ every taste axis is a data table or named const with ONE home:
    private reference corpus (`audio/` and its `manifest.json` of sha256s, never committed),
    from a venv outside the repo, set up once:
    ```bash
-   # Python 3.12: fadtk pins numpy<2, whose last wheels are cp312
+   # Python 3.12: fadtk 1.1.0 pins numpy<2
+   # (https://github.com/microsoft/fadtk/blob/6f815282007288a7165d037a95dacd6d783b6f32/pyproject.toml#L9),
+   # and numpy's last 1.x, 1.26.4, has wheels up to cp312 (https://pypi.org/pypi/numpy/1.26.4/json)
    J=~/.cache/lofi-judge; uv venv --python 3.12 $J
-   # transformers 4: 5's conformer reads `config._attn_implementation`, which MuQ's config lacks
+   # transformers 4: 5's conformer reads `config._attn_implementation`
+   # (https://github.com/huggingface/transformers/blob/v5.19.0/src/transformers/masking_utils.py#L822),
+   # which MuQ's EasyDict config lacks
+   # (https://github.com/tencent-ailab/MuQ/blob/28847ea50cd31ac4b8b6a7dacc051ad7d1c7606a/src/muq/muq/models/muq_model.py#L134)
    uv pip install --python $J/bin/python audiobox_aesthetics==0.0.4 torch==2.14.1 \
      torchaudio==2.11.0 numpy==1.26.4 scipy==1.17.1 soundfile==0.14.0 requests==2.34.2 \
      huggingface_hub==0.36.2 muq==0.1.0 peft==0.21.2 omegaconf==2.4.0 transformers==4.57.6 \

@@ -24,7 +24,7 @@ Measurement steers a change toward a target; `ab_judge.py` says whether it sound
 
 - **The score is bit-identical everywhere; rendered audio is not.** `+ - * /` are exact ([RFC 3514](https://rust-lang.github.io/rfcs/3514-float-semantics.html)) but `sin`/`exp` [are not](https://doc.rust-lang.org/std/primitive.f32.html#method.sin), so tests pin fingerprints, never sample values.
 - **Output is a pure function of the seed and the `(position, Controls)` timeline**: no `render` chunking changes it, and song k's noise comes from `(seed, k)`, never from render history (the chunk-invariance and no-history tests).
-- **The public API is what `src/lib.rs` exports, `audition` aside**: every other `pub` is a semver promise; `audition` serves lofi's own tools and promises nothing.
+- **The public API is what `src/lib.rs` exports, `#[doc(hidden)]` items aside** ([they promise nothing](https://predr.ag/blog/checking-semver-for-doc-hidden-items/)): every other `pub` is a semver promise.
 - **No audio file is ever committed** (`.gitignore`, CI): the references are copyrighted.
 
 ## Workflow

@@ -6,18 +6,22 @@ scores both sides with two learned judges and their distance from real lofi,
 describes each pair, and writes the verdict.
 
 Usage: $J/bin/python ab_judge.py DIR --refs REFS
-  DIR holds base/ and cand/; writes DIR/judge.json and prints a table.
+  DIR holds base/ and cand/, each with the COMMIT it rendered at; writes
+  DIR/judge.json and prints a table.
   REFS is the reference corpus: audio/ and its manifest.json of sha256s.
 
 The verdict is the controller's proposal (opinion): per mood and over every
 take, an exact one-sided sign test, ties dropped, that cand scores LOWER than
 base on each judge's headline score, or sits FARTHER from the corpus by
-per-song FAD. Any test significant at ALPHA is REGRESSION; anything else is
-PASS. The owner's blind listen, when given, overrides this verdict. Every
-third-octave band whose difference passes TO_EXPLAIN_DB is listed
-TO-EXPLAIN: a PR names its cause, but it fails nothing.
+per-song FAD. Any test significant at ALPHA is REGRESSION; a group with too
+few untied pairs for a test to ever reach ALPHA is INSUFFICIENT; anything else
+is PASS. The batch takes its worst group's verdict, a detected regression
+first, and exits non-zero unless it PASSes. The owner's blind listen, when
+given, overrides this verdict. Every third-octave band whose difference
+passes TO_EXPLAIN_DB is listed TO-EXPLAIN: a PR names its cause, but it fails
+nothing.
 
-A score is a guard against regression between two engines or two commits,
+A score is a guard against regression from a base batch to a candidate,
 never an objective to maximize: lofi's character (hiss, crackle, roll-off) is
 held by the descriptors and LOFI-BIBLE.md. Each measure's blind spots:
 
@@ -49,8 +53,8 @@ Per-song FAD over fadtk (https://github.com/microsoft/fadtk, MIT):
   manifest), so it guards against drifting away from real lofi and is never
   a target to chase.
 - FAD is biased by its sample size (§3.3 of
-  https://arxiv.org/abs/2311.01616); both takes of a pair are one score's
-  length, so the sign test compares equal frame counts.
+  https://arxiv.org/abs/2311.01616), so both takes of a pair are scored on
+  equally many frames.
 
 The weights' licences: MuQ-310M CC-BY-NC 4.0
 (https://github.com/tencent-ailab/MuQ/blob/28847ea50cd31ac4b8b6a7dacc051ad7d1c7606a/README.md#license),
@@ -77,12 +81,12 @@ from fadtk.fad import calc_embd_statistics, calc_frechet_distance
 from huggingface_hub import hf_hub_download, snapshot_download
 from omegaconf import OmegaConf
 from scipy import signal
-from scipy.stats import binomtest
 
 # no __pycache__ beside it, since the next batch renders from a clean tree
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ab_listen import NAME
+from verdict import ALPHA, MIN_UNTIED, batch_verdict, exit_message, group_verdict, sign_test
 
 # the clone of https://github.com/dgtql/MuQ-Eval that SKILL.md's setup puts
 # in the venv: its model code is no package
@@ -126,8 +130,7 @@ WINDOW_S = 10
 # windows per forward pass, which bounds its device memory (opinion)
 MUQ_BATCH = 6
 
-# the verdict's significance and the TO-EXPLAIN threshold (opinion)
-ALPHA = 0.05
+# the TO-EXPLAIN threshold (opinion)
 TO_EXPLAIN_DB = 3.0
 
 # third octaves on base-2 centres, 1000·2^(k/3) Hz: 20 Hz to 16 kHz
@@ -140,8 +143,11 @@ POWER_EPS = 1e-30
 HAT_HZ = (6000, 12000)
 FLUX_NFFT = 4096
 FLUX_HOP = 1024
+# the flux's peak, as this percentile of its frames over their median
+HAT_FLUX_PERCENTILE = 95
+HAT_FLUX_KEY = f"hat_flux_p{HAT_FLUX_PERCENTILE}_over_median"
 
-# a click: the 4 kHz high band standing CLICK_MADS median absolute
+# a click: the CLICK_HZ high band standing CLICK_MADS median absolute
 # deviations out of its own floor, events closer than CLICK_GAP_S one click
 # (the controller's analysis, opinion)
 CLICK_HZ = 4000
@@ -160,10 +166,11 @@ def mono(x):
     return (left + right) / 2
 
 
-def floored(x, side, name):
-    """`x` over `NOISE_FLOOR_DBFS` of white noise, the same in each channel
-    and its own for each side and take, seeded by their names."""
-    seed = int.from_bytes(hashlib.sha256(f"{side}/{name}".encode()).digest()[:8], "little")
+def floored(x, name):
+    """`x` over `NOISE_FLOOR_DBFS` of white noise, the same in each channel,
+    seeded by the take's name: both sides of a pair share it, so two identical
+    takes still tie and the floor adds no variance to the pair's difference."""
+    seed = int.from_bytes(hashlib.sha256(name.encode()).digest()[:8], "little")
     noise = np.random.default_rng(seed).standard_normal(len(x)).astype(np.float32)
     noise *= np.float32(10 ** (NOISE_FLOOR_DBFS / 20))
     return x + (noise if x.ndim == 1 else noise[:, None])
@@ -193,7 +200,7 @@ def describe(x, sr):
         "crest_db": float(20 * np.log10(np.abs(mid).max() / rms)),
         "lr_corr": float(np.corrcoef(left, right)[0, 1]),
         "clicks_per_min": clicks_per_min(mid, sr),
-        "hat_flux_p95_over_median": float(np.percentile(flux, 95) / np.median(flux)),
+        HAT_FLUX_KEY: float(np.percentile(flux, HAT_FLUX_PERCENTILE) / np.median(flux)),
     }
 
 
@@ -264,9 +271,10 @@ class Fad:
             digest = hashlib.sha256((refs / "audio" / t["file"]).read_bytes()).hexdigest()
             if digest != t["sha256"]:
                 sys.exit(f"{t['file']} doesn't match its manifest sha256; refusing the corpus")
-        # fadtk loads whatever sits where it looks first and downloads a
-        # missing checkpoint from the repo's head, so only a link to the
-        # pinned one may sit there
+        # fadtk loads whatever sits at its checkpoint path and downloads a
+        # missing one from the repo's head
+        # (https://github.com/microsoft/fadtk/blob/6f815282007288a7165d037a95dacd6d783b6f32/fadtk/model_loader.py#L303-L310),
+        # so only a link to the pinned one may sit there
         repo, rev, file = LAION_CLAP
         pinned = Path(hf_hub_download(repo, file, revision=rev))
         seeded = Path(fadtk.model_loader.__file__).parent / ".model-checkpoints" / file
@@ -289,9 +297,10 @@ class Fad:
         # one level for every input, the takes' unless a reference is
         # quieter, so no reference is ever raised and clipped
         self.lufs = min(takes_lufs, quietest)
-        # keyed by the level it holds, which any batch louder than the
-        # quietest reference shares
-        cache = caches / f"{manifest_sha}-{self.model.name}-{self.lufs:.2f}.npz"
+        # keyed by everything the statistics are built from; the level is one
+        # any batch louder than the quietest reference shares
+        built = json.dumps([LAION_CLAP, FAD_EMBEDDING, HOLDOUT, RESAMPLE])
+        cache = caches / f"{manifest_sha}-{hashlib.sha256(built.encode()).hexdigest()[:16]}-{self.lufs:.2f}.npz"
         if cache.exists():
             with np.load(cache) as stats:
                 self.mu, self.cov = stats["mu"], stats["cov"]
@@ -323,26 +332,19 @@ class Fad:
         wav = torchaudio.transforms.Resample(sr, self.model.sr, **RESAMPLE)(wav)[0]
         return self.model.get_embedding(wav.numpy())
 
-    def score(self, x, sr):
-        mu, cov = calc_embd_statistics(self.embed(x, sr))
+    def distance(self, frames):
+        mu, cov = calc_embd_statistics(frames)
         return float(calc_frechet_distance(self.mu, self.cov, mu, cov))
 
+    def score(self, x, sr):
+        return self.distance(self.embed(x, sr))
 
-def sign_test(gains):
-    """Whether cand does worse than base more often than chance allows,
-    `gains` each pair's improvement from base to cand."""
-    wins = sum(g > 0 for g in gains)
-    losses = sum(g < 0 for g in gains)
-    # https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.binomtest.html:
-    # losses as successes out of the untied pairs, H1 a success rate over 1/2
-    p = binomtest(losses, wins + losses, 0.5, alternative="greater").pvalue if wins + losses else 1.0
-    return {
-        "wins": wins,
-        "losses": losses,
-        "ties": len(gains) - wins - losses,
-        "p": float(p),
-        "significant": bool(p < ALPHA),
-    }
+    def score_pair(self, base, cand):
+        """Both takes' FAD on equally many embedding frames, the longer's
+        thinned evenly across its length."""
+        frames = [self.embed(*take) for take in (base, cand)]
+        n = min(len(f) for f in frames)
+        return [self.distance(f[np.linspace(0, len(f) - 1, n).round().astype(int)]) for f in frames]
 
 
 def to_explain(pairs):
@@ -367,8 +369,11 @@ def to_explain(pairs):
 
 
 def read_commit(side):
+    """The commit `side` rendered at, as SKILL.md's step 5 records it."""
     commit = side / "COMMIT"
-    return commit.read_text().strip() if commit.exists() else None
+    if not commit.exists():
+        sys.exit(f"{commit} is missing, and a verdict names the commits it compared")
+    return commit.read_text().strip()
 
 
 def main():
@@ -390,6 +395,7 @@ def main():
     names = sorted(base & cand)
     if not names:
         sys.exit("no .wav name is in both directories")
+    commits = {"base": read_commit(base_dir), "cand": read_commit(cand_dir)}
 
     # the device Audiobox's own `setup_model` picks
     device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
@@ -407,11 +413,15 @@ def main():
             x, sr = sf.read(d / name, dtype="float32")
             # the descriptors measure the take as rendered, the judges hear it floored
             row[side] = describe(x, sr)
-            x = floored(x, side, name)
+            x = floored(x, name)
             takes[side] = (x, sr)
             row[side]["muq_mi"] = muq.score(x, sr)
-            row[side]["fad"] = fad.score(x, sr)
-        # Audiobox's `torchaudio.load` path needs torchcodec, so it gets tensors
+        row["base"]["fad"], row["cand"]["fad"] = fad.score_pair(takes["base"], takes["cand"])
+        # Audiobox reads a path with `torchaudio.load`
+        # (https://github.com/facebookresearch/audiobox-aesthetics/blob/2618e9d451b456e9328b39495b5e6234678aa550/src/audiobox_aesthetics/infer.py#L32-L45),
+        # which "relies on TorchCodec" since TorchAudio 2.9
+        # (https://docs.pytorch.org/audio/2.11.0/generated/torchaudio.load.html),
+        # so it gets tensors
         scores = audiobox.forward(
             [{"path": torch.from_numpy(np.atleast_2d(x.T).copy()), "sample_rate": sr} for x, sr in takes.values()]
         )
@@ -440,14 +450,14 @@ def main():
             "audiobox_mean_delta_pq": float(
                 np.mean([p["cand"]["audiobox"]["PQ"] - p["base"]["audiobox"]["PQ"] for p in members])
             ),
-            "verdict": "REGRESSION" if any(t["significant"] for t in tests.values()) else "PASS",
+            "verdict": group_verdict(tests),
             "to_explain": to_explain(members),
         }
-    overall = "REGRESSION" if any(v["verdict"] == "REGRESSION" for v in verdict.values()) else "PASS"
+    overall = batch_verdict([v["verdict"] for v in verdict.values()])
 
     record = {
         "dir": str(args.dir.resolve()),
-        "commits": {"base": read_commit(base_dir), "cand": read_commit(cand_dir)},
+        "commits": commits,
         "judges": {
             "audiobox": {"package": version("audiobox_aesthetics"), "checkpoint": AUDIOBOX},
             "muq_eval": {"code": str(MUQ_EVAL), "checkpoint": MUQ_EVAL_A1, "encoder": MUQ_310M},
@@ -464,6 +474,7 @@ def main():
         "noise_floor_dbfs": NOISE_FLOOR_DBFS,
         "fad_calibration": fad.calibration,
         "alpha": ALPHA,
+        "min_untied": MIN_UNTIED,
         "bands_hz": BANDS_HZ,
         "pairs": pairs,
         "verdict": verdict,
@@ -487,7 +498,7 @@ def main():
             f" {b['crest_db']:5.1f}/{c['crest_db']:<5.1f}"
             f" {b['lr_corr']:5.2f}/{c['lr_corr']:<5.2f}"
             f" {b['clicks_per_min']:5.0f}/{c['clicks_per_min']:<5.0f}"
-            f" {b['hat_flux_p95_over_median']:5.2f}/{c['hat_flux_p95_over_median']:<5.2f}"
+            f" {b[HAT_FLUX_KEY]:5.2f}/{c[HAT_FLUX_KEY]:<5.2f}"
         )
     print(f"\n{'group':<6} {'pairs':>5}  {'Audiobox CE w/l/t':>17} {'p':>7} {'mean dCE':>8} {'mean dPQ':>8}"
           f"  {'MuQ-Eval MI w/l/t':>17} {'p':>7} {'mean dMI':>8}  {'FAD w/l/t':>9} {'p':>7} {'mean dFAD':>9}  verdict")
@@ -512,6 +523,8 @@ def main():
                 f" ±{TO_EXPLAIN_DB:g} dB, median {t['median_db']:+.1f} ({t['min_db']:+.1f}..{t['max_db']:+.1f})"
             )
     print(f"\nverdict: {overall}  ({args.dir / 'judge.json'})")
+    if failure := exit_message(overall):
+        sys.exit(failure)
 
 
 if __name__ == "__main__":
