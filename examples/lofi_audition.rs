@@ -18,6 +18,7 @@ mod batch;
 #[path = "common/loudness.rs"]
 mod loudness;
 
+use std::f64::consts::PI;
 use std::fs::File;
 use std::hash::{BuildHasher as _, RandomState};
 use std::io::{self, BufWriter, Write as _};
@@ -33,6 +34,12 @@ use loudness::gated_lufs;
 /// Every take renders at ONE gated loudness, so a blind A/B compares takes, not
 /// gain.
 const TARGET_LUFS: f64 = -18.0;
+
+/// How long, in seconds, a take fades in and out under a raised cosine: cut
+/// from a stream or a loop, it starts and ends mid-waveform, and the click
+/// there differs by engine, so it could tell a blind A/B's sides apart. The
+/// length is opinion.
+const EDGE_FADE_S: f64 = 0.01;
 
 fn main() -> ExitCode {
     match run() {
@@ -173,6 +180,7 @@ impl Args {
             }
             Engine::V2 => self.batch.perform(seed)?,
         };
+        fade_edges(&mut take);
         let gain = 10f64.powf((TARGET_LUFS - gated_lufs(&take, SAMPLE_RATE)) / 20.0) as f32;
         for v in &mut take {
             *v *= gain;
@@ -183,6 +191,17 @@ impl Args {
             )));
         }
         Ok(take)
+    }
+}
+
+/// `take` faded in from silence and out to it over [`EDGE_FADE_S`].
+fn fade_edges(take: &mut [f32]) {
+    let n = (EDGE_FADE_S * f64::from(SAMPLE_RATE)) as usize;
+    let last = take.len() - 1;
+    for i in 0..n {
+        let w = (0.5 * (1.0 - (PI * i as f64 / n as f64).cos())) as f32;
+        take[i] *= w;
+        take[last - i] *= w;
     }
 }
 
@@ -290,5 +309,14 @@ mod tests {
             written.len()
         });
         assert_eq!(v1, v2, "the engines' takes last apart");
+    }
+
+    #[test]
+    fn both_engines_write_a_take_from_silence_to_silence() {
+        for engine in ["v1", "v2"] {
+            let take = parsed(&["--engine", engine]).render(2);
+            let edges = take.map(|t| [t[0], t[t.len() - 1]].map(pcm)).ok();
+            assert_eq!(edges, Some([0, 0]), "{engine}'s first and last samples");
+        }
     }
 }
