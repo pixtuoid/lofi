@@ -309,7 +309,7 @@ mod tests {
     use super::*;
     use crate::Controls;
     use crate::compose::DrumKind;
-    use crate::dsp::SAMPLE_RATE;
+    use crate::dsp::{SAMPLE_RATE, band_energy_share};
     use crate::stream::schedule::{LOOPS_PER_SONG, Schedule};
 
     fn controls(mood: Mood) -> Controls {
@@ -362,6 +362,51 @@ mod tests {
             }
         }
         assert!(echoes.is_empty(), "kick pre-echoes: {echoes:?}");
+    }
+
+    #[test]
+    fn a_tape_saturates_bumps_rolls_off_and_tilts() {
+        let sr = SAMPLE_RATE;
+        // the drums' tone, the brightest, so the roll-off is what shapes the top
+        let (cutoff, drive, _) = lane_recipe(Mood::Day, Lane::Drums);
+        let play = |input: &[f32]| -> Vec<f32> {
+            let mut tape = Tape::new(cutoff, None, drive, [1.0, 1.0], sr);
+            let mut buf: Vec<f64> = input.iter().map(|&v| f64::from(v)).collect();
+            tape.process(&mut buf);
+            buf.iter().map(|&v| v as f32).collect()
+        };
+        let n = samples_at(2.0, sr);
+        let tau = std::f32::consts::TAU;
+        let tone: Vec<f32> = (0..n)
+            .map(|i| (tau * 440.0 * i as f32 / sr as f32).sin() * 0.8)
+            .collect();
+        let third = band_energy_share(&play(&tone), 1200.0, 1450.0);
+        assert!(
+            third > 0.005,
+            "tanh drive must write a 3rd harmonic: {third:.4}"
+        );
+        let mut rng = NoiseStream::new(21);
+        let noise: Vec<f32> = (0..n).map(|_| rng.norm() * 0.3).collect();
+        let out = play(&noise);
+        // a ratio, not a share: the tilt lifts most of the spectrum, so a
+        // share's total moves too
+        let lift = |hi: (f32, f32), lo: (f32, f32)| {
+            let ratio =
+                |b: &[f32]| band_energy_share(b, hi.0, hi.1) / band_energy_share(b, lo.0, lo.1);
+            10.0 * (ratio(&out) / ratio(&noise)).log10()
+        };
+        let bump = lift((60.0, 120.0), (300.0, 500.0));
+        assert!(
+            bump > 0.6,
+            "the head bump must lift 60-120 Hz: {bump:.2} dB"
+        );
+        let top = lift((8000.0, 12000.0), (1000.0, 2000.0));
+        assert!(
+            top < -18.0,
+            "the top must roll off past the corner: {top:.2} dB"
+        );
+        let tilt = lift((2000.0, 4000.0), (300.0, 500.0));
+        assert!(tilt > 1.5, "the tilt must lift the top: {tilt:.2} dB");
     }
 
     #[test]
