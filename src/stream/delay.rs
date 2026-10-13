@@ -5,6 +5,7 @@
 pub(crate) struct DelayLine {
     /// The latest input, a power of two long so a position masks into it.
     ring: Vec<f64>,
+    max_delay: f64,
     /// Every sample taken so far: the read head's timeline, which no loop wraps.
     written: u64,
 }
@@ -16,23 +17,23 @@ impl DelayLine {
         let len = (max_delay.ceil() as usize + 2).next_power_of_two();
         Self {
             ring: vec![0.0; len],
+            max_delay,
             written: 0,
         }
     }
 
     /// Replaces each sample with the input `delay(n)` samples before it, `n`
     /// counting every sample this line has taken; before the first, it reads
-    /// silence.
+    /// silence. A delay out of range reads at the nearer end and NaN at 0,
+    /// since a panic on the render path costs more than a misread delay.
     pub(crate) fn process(&mut self, buf: &mut [f64], mut delay: impl FnMut(u64) -> f64) {
         let mask = self.ring.len() - 1;
         for x in buf {
             let n = self.written;
             self.ring[n as usize & mask] = *x;
-            let d = delay(n);
-            debug_assert!(
-                (0.0..=(mask - 1) as f64).contains(&d),
-                "delay {d} reads past the ring"
-            );
+            // `max` returns the non-NaN operand
+            // (<https://doc.rust-lang.org/std/primitive.f64.html#method.max>)
+            let d = delay(n).max(0.0).min(self.max_delay);
             // the whole part comes off the integer count, so the fraction keeps
             // its precision however long the line runs
             let whole = d.floor();
@@ -83,6 +84,32 @@ mod tests {
         line.process(&mut buf, delay);
         for (n, &got) in buf.iter().enumerate().skip(4) {
             assert_eq!(got, n as f64 - delay(n as u64), "at {n}");
+        }
+    }
+
+    #[test]
+    fn an_out_of_range_delay_reads_at_the_nearest_end() {
+        let max = 32.0;
+        let input = crate::stream::burst_then_silence(0);
+        let read = |d: f64| {
+            let mut buf = input.clone();
+            DelayLine::new(max).process(&mut buf, |_| d);
+            buf
+        };
+        for (d, end) in [
+            (-5.0, 0.0),
+            (f64::NEG_INFINITY, 0.0),
+            (f64::NAN, 0.0),
+            (max + 0.5, max),
+            (f64::INFINITY, max),
+        ] {
+            assert!(
+                read(d)
+                    .iter()
+                    .zip(read(end))
+                    .all(|(g, w)| g.to_bits() == w.to_bits()),
+                "delay {d} should read as {end}"
+            );
         }
     }
 
