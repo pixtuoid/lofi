@@ -4,11 +4,11 @@ Instructions for any AI coding agent in this repo. A rule that governs one item 
 
 ## The goal
 
-Lofi that sounds better without leaving the genre. The owner's LISTEN holds the genre; [`LOFI-BIBLE.md`](.claude/skills/procedural-lofi/reference/LOFI-BIBLE.md)'s MEASURED tempo and spectral targets are guard rails `lofi_measure` prints on every sound change, and a change that leaves them says so beside the owner's verdict. The first listener is [pixtuoid](https://github.com/pixtuoid/pixtuoid)'s office, which loops these lanes for as long as it runs, so a take must not fatigue on repeat.
+Lofi that sounds better without leaving the genre. The A/B judge holds the genre; [`LOFI-BIBLE.md`](.claude/skills/procedural-lofi/reference/LOFI-BIBLE.md)'s MEASURED tempo and spectral targets are guard rails `lofi_measure` prints on every sound change, and a change that leaves them says so beside the judge's verdict. The first listener is [pixtuoid](https://github.com/pixtuoid/pixtuoid)'s office, which loops these lanes for as long as it runs, so a take must not fatigue on repeat.
 
 ## Changing the sound
 
-Measurement steers a change toward a target; only the owner's LISTEN says it sounds good. A music change ends in an audition batch the owner blind-listens (`cargo run --release --example lofi_audition -- --seeds N`), and its commit records the verdict. Where each taste axis lives and how to add an instrument: the `procedural-lofi` skill's "GENERATOR loop". The taste anchor is in [`docs/phase0-ratification.md`](docs/phase0-ratification.md).
+Measurement steers a change toward a target; `ab_judge.py` says whether it sounds worse, and the owner's blind listen, when given, overrides it. A music change ends in an A/B batch the judge scores (the `procedural-lofi` skill's "GENERATOR loop" step 5), and its commit records the verdict. Where each taste axis lives and how to add an instrument: the `procedural-lofi` skill's "GENERATOR loop". The taste anchor is in [`docs/phase0-ratification.md`](docs/phase0-ratification.md).
 
 ## Map
 
@@ -21,7 +21,7 @@ Measurement steers a change toward a target; only the owner's LISTEN says it sou
 
 - **The score is bit-identical everywhere; rendered audio is not.** `+ - * /` are exact ([RFC 3514](https://rust-lang.github.io/rfcs/3514-float-semantics.html)) but `sin`/`exp` [are not](https://doc.rust-lang.org/std/primitive.f32.html#method.sin), so tests pin fingerprints, never sample values.
 - **A musical lane is a whole number of loops long**, counted in samples, so stems loop in phase (`generated_beds_are_finite_phase_locked_and_in_the_sound_world`).
-- **The public API is what `src/lib.rs` exports**: every `pub` is a semver promise.
+- **The public API is what `src/lib.rs` exports, `#[doc(hidden)]` items aside** ([they promise nothing](https://predr.ag/blog/checking-semver-for-doc-hidden-items/)): every other `pub` is a semver promise.
 - **No audio file is ever committed** (`.gitignore`, CI): the references are copyrighted.
 
 ## Workflow

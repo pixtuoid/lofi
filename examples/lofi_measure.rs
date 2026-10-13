@@ -1,6 +1,6 @@
 //! The listening loop's numbers: what a sound change moves, per lane and in a
-//! pixtuoid tier's mix. They steer a change; only the owner's LISTEN judges it.
-//! Renders through the REAL `render_lane` chain, so it measures what ships.
+//! pixtuoid tier's mix. They steer a change; `ab_judge.py` judges it. Renders
+//! through the REAL `render_lane` chain, so it measures what ships.
 //!
 //! Usage:
 //!   cargo run --release --example lofi_measure -- \

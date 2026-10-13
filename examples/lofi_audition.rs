@@ -1,5 +1,5 @@
-//! The generator's STATISTICAL listen gate: render N random-seed takes to wav so
-//! the owner blind-auditions the COMPOSER, not one take. Renders through the REAL
+//! The generator's STATISTICAL gate: render N random-seed takes to wav so
+//! `ab_judge.py` judges the COMPOSER, not one take. Renders through the REAL
 //! `render_lane` chain and mixes it at one of pixtuoid's tiers, so what you hear
 //! is what ships.
 //!
