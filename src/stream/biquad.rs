@@ -127,9 +127,13 @@ mod tests {
     use super::*;
     use crate::dsp::SAMPLE_RATE;
 
-    /// `H(e^{jω})` of `cascade` at `hz`, as `(re, im)`.
-    fn response(cascade: &Cascade, hz: f64) -> (f64, f64) {
-        let w = TAU * hz / f64::from(SAMPLE_RATE);
+    /// The rate lofi renders at, and another, so a filter that reads
+    /// [`SAMPLE_RATE`] instead of its own rate misses one of them.
+    const RATES: [u32; 2] = [SAMPLE_RATE, 48_000];
+
+    /// `H(e^{jω})` of `cascade`, run at `sr`, at `hz`, as `(re, im)`.
+    fn response(cascade: &Cascade, hz: f64, sr: u32) -> (f64, f64) {
+        let w = TAU * hz / f64::from(sr);
         let (c1, s1, c2, s2) = (w.cos(), -w.sin(), (2.0 * w).cos(), -(2.0 * w).sin());
         cascade.0.iter().fold((1.0, 0.0), |(re, im), s| {
             let (nr, ni) = (s.b0 + s.b1 * c1 + s.b2 * c2, s.b1 * s1 + s.b2 * s2);
@@ -140,9 +144,9 @@ mod tests {
         })
     }
 
-    /// `|H(e^{jω})|²` of `cascade` at `hz`.
-    fn power_gain(cascade: &Cascade, hz: f64) -> f64 {
-        let (re, im) = response(cascade, hz);
+    /// `|H(e^{jω})|²` of `cascade`, run at `sr`, at `hz`.
+    fn power_gain(cascade: &Cascade, hz: f64, sr: u32) -> f64 {
+        let (re, im) = response(cascade, hz, sr);
         re * re + im * im
     }
 
@@ -151,17 +155,17 @@ mod tests {
         // the bilinear transform maps the analog prototype's frequency to
         // tan(ω/2), prewarped to the corner, so the digital magnitude is the
         // analog Butterworth one in that variable
-        let warped = |hz: f64| (PI * hz / f64::from(SAMPLE_RATE)).tan();
         let corner = 6500.0;
-        for order in [2, 4] {
+        for (sr, order) in RATES.into_iter().flat_map(|sr| [(sr, 2), (sr, 4)]) {
+            let warped = |hz: f64| (PI * hz / f64::from(sr)).tan();
             let n = order as i32;
-            let cascade = butter_lowpass(corner as f32, order, SAMPLE_RATE);
+            let cascade = butter_lowpass(corner as f32, order, sr);
             for hz in [20.0, 60.0, 90.0, 1000.0, 6500.0, 12000.0] {
                 let want = 1.0 / (1.0 + (warped(hz) / warped(corner)).powi(2 * n));
-                let got = power_gain(&cascade, hz);
+                let got = power_gain(&cascade, hz, sr);
                 assert!(
                     (got / want - 1.0).abs() < 1e-6,
-                    "order {order} at {hz} Hz: {got} vs {want}"
+                    "order {order} at {sr}, {hz} Hz: {got} vs {want}"
                 );
             }
         }
@@ -170,16 +174,18 @@ mod tests {
     #[test]
     fn a_band_pass_peaks_at_one_halves_at_its_edges_and_never_opposes() {
         let (lo, hi) = (60.0, 120.0);
-        let band = cookbook_bandpass(lo as f32, hi as f32, SAMPLE_RATE);
-        let center = power_gain(&band, f64::sqrt(lo * hi));
-        assert!((center - 1.0).abs() < 1e-6, "center: {center}");
-        for edge in [lo, hi] {
-            let got = power_gain(&band, edge);
-            assert!((got - 0.5).abs() < 1e-4, "{edge} Hz: {got}");
-        }
-        for hz in (1..2200).map(|k| f64::from(k) * 10.0) {
-            let (re, _) = response(&band, hz);
-            assert!(re >= 0.0, "{hz} Hz: real part {re}");
+        for sr in RATES {
+            let band = cookbook_bandpass(lo as f32, hi as f32, sr);
+            let center = power_gain(&band, f64::sqrt(lo * hi), sr);
+            assert!((center - 1.0).abs() < 1e-6, "{sr} center: {center}");
+            for edge in [lo, hi] {
+                let got = power_gain(&band, edge, sr);
+                assert!((got - 0.5).abs() < 1e-4, "{sr}, {edge} Hz: {got}");
+            }
+            for hz in (1..2200).map(|k| f64::from(k) * 10.0) {
+                let (re, _) = response(&band, hz, sr);
+                assert!(re >= 0.0, "{sr}, {hz} Hz: real part {re}");
+            }
         }
     }
 
@@ -194,7 +200,7 @@ mod tests {
             (butter_lowpass(6500.0, 4, SAMPLE_RATE), 1000.0),
             (butter_lowpass(6500.0, 4, SAMPLE_RATE), 12000.0),
         ] {
-            let want = power_gain(&cascade, hz) / 2.0;
+            let want = power_gain(&cascade, hz, SAMPLE_RATE) / 2.0;
             let mut buf: Vec<f64> = (0..2 * sr)
                 .map(|i| (TAU * hz * i as f64 / f64::from(SAMPLE_RATE)).sin())
                 .collect();

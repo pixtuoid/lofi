@@ -443,6 +443,17 @@ mod tests {
         let rms = |v: &[f32]| (v.iter().map(|x| x * x).sum::<f32>() / v.len() as f32).sqrt();
         assert!(rms(&kept) > 0.5, "in-band tone survives");
         assert!(rms(&killed) < 0.01, "out-of-band tone dies");
+        // a bin's own frequency at 48 kHz, so none leaks into the band below,
+        // which holds where that bin falls at `SAMPLE_RATE`
+        let (sr, n) = (48_000, 8192);
+        let hz = 85.0 * sr as f32 / n as f32;
+        let t: Vec<f32> = (0..n)
+            .map(|i| (2.0 * std::f32::consts::PI * hz * i as f32 / sr as f32).sin())
+            .collect();
+        let kept = bandpass_at(&t, hz - 20.0, hz + 20.0, sr);
+        let killed = bandpass_at(&t, hz - 200.0, hz - 20.0, sr);
+        assert!(rms(&kept) > 0.5, "in-band tone survives at {sr}");
+        assert!(rms(&killed) < 0.01, "out-of-band tone dies at {sr}");
     }
 
     #[test]

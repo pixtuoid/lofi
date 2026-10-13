@@ -47,12 +47,16 @@ mod tests {
         // its low-pass settles a unit step as 1 − aⁿ⁺¹, so the shelf's output
         // is 1 + lift·aⁿ⁺¹
         let (corner, lift) = (1200.0, 0.8);
-        let a = (-TAU * f64::from(corner) / f64::from(SAMPLE_RATE)).exp();
-        let mut buf = vec![1.0; 2000];
-        Tilt::new(corner, lift, SAMPLE_RATE).process(&mut buf);
-        for (n, &got) in buf.iter().enumerate() {
-            let want = 1.0 + lift * a.powi(n as i32 + 1);
-            assert!((got - want).abs() < 1e-12, "at {n}: {got} vs {want}");
+        // a second rate, so a tilt that reads `SAMPLE_RATE` instead of its
+        // own misses one
+        for sr in [SAMPLE_RATE, 48_000] {
+            let a = (-TAU * f64::from(corner) / f64::from(sr)).exp();
+            let mut buf = vec![1.0; 2000];
+            Tilt::new(corner, lift, sr).process(&mut buf);
+            for (n, &got) in buf.iter().enumerate() {
+                let want = 1.0 + lift * a.powi(n as i32 + 1);
+                assert!((got - want).abs() < 1e-12, "{sr} at {n}: {got} vs {want}");
+            }
         }
     }
 
