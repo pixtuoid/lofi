@@ -29,18 +29,26 @@ pub const WHOLE_LANE_SEEDS: Range<u64> = 0..24;
 /// How much the whole-lane mix's gated loudness varied across
 /// [`WHOLE_LANE_SEEDS`], as [`lufs_sd`] reads it, at an intensity and a
 /// daylight: `(intensity, daylight, LU)`. What lofi played before it
-/// streamed, which the commit that set it records; a run's songs may vary up
-/// to [`LUFS_SD_TOLERANCE`] times as much, a non-regression, not a target.
+/// streamed, on the songs a `Performance` plays: `lofi_measure --engine v1`
+/// prints it over those seeds at the row's `--tier` and `--mood`. A run's
+/// songs may vary up to [`lufs_sd_bound`], a non-regression, not a target.
 pub const WHOLE_LANE_LUFS_SD: [(f32, f32, f64); 4] = [
-    (TIER_INTENSITIES[1], 1.0, 0.4471),
-    (TIER_INTENSITIES[1], 0.0, 0.2791),
-    (TIER_INTENSITIES[0], 1.0, 0.4655),
-    (TIER_INTENSITIES[2], 1.0, 0.4571),
+    (TIER_INTENSITIES[1], 1.0, 0.3336),
+    (TIER_INTENSITIES[1], 0.0, 0.2277),
+    (TIER_INTENSITIES[0], 1.0, 0.3795),
+    (TIER_INTENSITIES[2], 1.0, 0.3427),
 ];
 
-/// How many times [`WHOLE_LANE_LUFS_SD`] a run's songs may vary: room for
-/// sampling, which is opinion.
-pub const LUFS_SD_TOLERANCE: f64 = 1.1;
+/// The most a run's songs may vary against `whole_lane`, a
+/// [`WHOLE_LANE_LUFS_SD`] row: two standard errors over it, a sample
+/// standard deviation's standard error over [`WHOLE_LANE_SEEDS`] being about
+/// σ/√(2(n−1)) when the sample is normal (eq. 3 of
+/// <https://web.eecs.umich.edu/~fessler/papers/files/tr/stderr.pdf>).
+/// That the songs' loudness is normal is assumed, not measured.
+pub fn lufs_sd_bound(whole_lane: f64) -> f64 {
+    let n = (WHOLE_LANE_SEEDS.end - WHOLE_LANE_SEEDS.start) as f64;
+    whole_lane * (1.0 + 2.0 / (2.0 * (n - 1.0)).sqrt())
+}
 
 /// How much `lufs` vary: their sample standard deviation, in LU.
 pub fn lufs_sd(lufs: &[f64]) -> f64 {

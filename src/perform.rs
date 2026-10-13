@@ -542,7 +542,7 @@ mod tests {
                 });
                 let (sd, bound) = (
                     audition::lufs_sd(&songs),
-                    whole_lane * audition::LUFS_SD_TOLERANCE,
+                    audition::lufs_sd_bound(whole_lane),
                 );
                 (sd > bound).then(|| format!("daylight {daylight}: {sd:.4} LU over {bound:.4}"))
             })

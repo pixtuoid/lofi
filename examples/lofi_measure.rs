@@ -17,7 +17,7 @@ mod loudness;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
-use pixtuoid_lofi::audition::LOOPS_PER_SONG;
+use pixtuoid_lofi::audition::{self, LOOPS_PER_SONG};
 use pixtuoid_lofi::dsp::SAMPLE_RATE;
 
 use batch::{Batch, Engine, LANE_NAMES, render_take, soak_mix, usage_error};
@@ -68,19 +68,19 @@ fn run() -> std::io::Result<()> {
     let bands = bands();
     let header: Vec<String> = bands.iter().map(|&b| band_label(b)).collect();
     let row = |name: &str, buf: &[f32], seam: String, took: Duration| {
-        let spectrum = Spectrum::of(buf);
+        let (lufs, spectrum) = (gated_lufs(buf, SAMPLE_RATE), Spectrum::of(buf));
         let shares: String = bands
             .iter()
             .map(|&(lo, hi)| format!(" {:>6.1}%", 100.0 * spectrum.share(lo, hi)))
             .collect();
         println!(
-            "  {name:<8} {:>6.1}{shares} {:>8.0} {seam:>6} {:>6.0}",
-            gated_lufs(buf, SAMPLE_RATE),
+            "  {name:<8} {lufs:>6.1}{shares} {:>8.0} {seam:>6} {:>6.0}",
             spectrum.centroid(),
             took.as_secs_f64() * 1e3
         );
-        spectrum
+        (lufs, spectrum)
     };
+    let mut mix_lufs = Vec::new();
     for seed in batch.seeds() {
         let score = batch.score(seed);
         // v1 renders each lane's loop once, then plays it again
@@ -123,7 +123,8 @@ fn run() -> std::io::Result<()> {
                 row(name, bed, format!("{:.2}", seam_ratio(bed)), *took);
             }
         }
-        let spectrum = row("mix", &mix, "-".into(), took);
+        let (lufs, spectrum) = row("mix", &mix, "-".into(), took);
+        mix_lufs.push(lufs);
         let sub = BAND_EDGES_HZ[0];
         println!(
             "  {} mix through {}: below {sub} Hz {}; centroid {}; LTAS density slope {}-{} Hz {:.1} dB/oct; autocorrelation at the loop {:.4}; rendered at {:.4} of real time",
@@ -136,6 +137,17 @@ fn run() -> std::io::Result<()> {
             spectrum.ltas_slope(),
             loop_autocorrelation(&mix, loop_len),
             took.as_secs_f64() / (rendered as f64 / SR)
+        );
+    }
+    // one seed's sample sd divides by zero
+    if mix_lufs.len() > 1 {
+        println!(
+            "{} {} mix through {}, seeds {:?}: gated loudness sd {:.4} LU",
+            batch.mood_name(),
+            tier.name(),
+            batch.engine.name(),
+            batch.seeds(),
+            audition::lufs_sd(&mix_lufs)
         );
     }
     Ok(())

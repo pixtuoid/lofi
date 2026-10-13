@@ -17,7 +17,7 @@ use std::hint::black_box;
 use std::ops::Range;
 use std::process::ExitCode;
 
-use pixtuoid_lofi::audition::{self, LUFS_SD_TOLERANCE, TIER_INTENSITIES, WHOLE_LANE_LUFS_SD};
+use pixtuoid_lofi::audition::{self, TIER_INTENSITIES, WHOLE_LANE_LUFS_SD};
 use pixtuoid_lofi::dsp::SAMPLE_RATE;
 use pixtuoid_lofi::{Controls, Frame, Performance};
 
@@ -107,9 +107,8 @@ fn slowest_chunk(buf: &mut [Frame]) -> (f64, u64, u64) {
 
 /// Plays [`ROOM_S`] of `room` under `controls` in `buf`-long chunks, and
 /// says whether it passed its gates: the mean real-time factor within
-/// [`MEAN_RTF`], every frame finite, and its songs' gated loudness varying no
-/// more than the whole-lane mix's did at its controls, give or take
-/// [`LUFS_SD_TOLERANCE`].
+/// [`MEAN_RTF`], every frame finite, and its songs' gated loudness varying
+/// within [`audition::lufs_sd_bound`] of the whole-lane mix's at its controls.
 fn play_room(buf: &mut [Frame], room: &str, controls: Controls) -> bool {
     let Some(&(.., whole_lane)) = (WHOLE_LANE_LUFS_SD.iter())
         .find(|&&(i, d, _)| i == controls.intensity && d == controls.daylight)
@@ -144,7 +143,10 @@ fn play_room(buf: &mut [Frame], room: &str, controls: Controls) -> bool {
     }
     let played = music.position() as f64 / f64::from(SAMPLE_RATE);
     let rtf = took / played;
-    let (sd, bound) = (audition::lufs_sd(&songs), whole_lane * LUFS_SD_TOLERANCE);
+    let (sd, bound) = (
+        audition::lufs_sd(&songs),
+        audition::lufs_sd_bound(whole_lane),
+    );
     say(&format!(
         "{room} room, {:.1} min: mean real-time factor {rtf:.4} (gate {MEAN_RTF}); {} songs, every frame finite, gated loudness sd {sd:.4} LU (gate {bound:.4})",
         played / 60.0,
