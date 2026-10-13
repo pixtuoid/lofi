@@ -397,10 +397,11 @@ mod tests {
         let (beds, _) = render_take(&batch.score(seed));
         let v1 = gated_lufs(&soak_mix(&beds, &batch.lane_gains()), SAMPLE_RATE);
         let v2 = gated_lufs(&batch.perform(seed).expect("v2 plays"), SAMPLE_RATE);
-        // where v1's mix would read without the master's staging
-        let unstaged = v2 - 20.0 * MASTER_GAIN.log10();
+        // half the staging in dB, which a mix staged once less or once more
+        // reads past
+        let bound = -10.0 * MASTER_GAIN.log10();
         assert!(
-            (v1 - v2).abs() < (v1 - unstaged).abs(),
+            (v1 - v2).abs() < bound,
             "v1's mix reads {v1:.2} LUFS, v2's {v2:.2}"
         );
     }
