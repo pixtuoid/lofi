@@ -214,7 +214,8 @@ every taste axis is a data table or named const with ONE home:
             sed -nE 's/^const (PAD|SPARKLE|KEYS|DRUMS|TEXTURE|BASS)_GAIN: TierGain = TierGain::new\((.*)\);$/\1 \2/p' | tr '[:upper:]' '[:lower:]') \
         <(sed -nE 's/^ *Lane::([A-Za-z]+) => (\[.*\]),$/\1 \2/p' examples/common/batch.rs | tr '[:upper:]' '[:lower:]')
    ```
-   then renders the batch on `main` into `DIR/base` and on the branch into `DIR/cand`, and
+   then renders the batch on `main` into `DIR/base` and on the branch into `DIR/cand`, each
+   from a clean tree with its `git rev-parse HEAD` in `DIR/{base,cand}/COMMIT`, and
    `ab_judge.py` gates them (its header holds the verdict rule and each measure's blind
    spots) against REFS, the private reference corpus (`audio/` and its `manifest.json` of
    sha256s, never committed), from a venv outside the repo, set up once:
