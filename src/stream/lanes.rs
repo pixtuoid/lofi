@@ -337,28 +337,25 @@ mod tests {
     #[test]
     fn a_kick_never_pre_echoes() {
         let sr = SAMPLE_RATE;
-        let onset = samples_at(0.5, sr);
+        // a quarter of the wow's cycle in, where the warp lags least, within
+        // the flutter's swing of a frame: a stage sounding even one frame
+        // early sounds before the kick
+        let onset = samples_at(0.25 / WARPS[0].0, sr);
         let hits = [(0.0, DrumKind::Kick, 1.0)];
         let part = Part::Hits(&hits);
         let (kick, gain) = part.note(0, &mut NoiseStream::new(9), sr);
         let mut echoes = Vec::new();
         for mood in [Mood::Day, Mood::Night] {
-            let mut drums = vec![0.0; 2 * onset];
+            let mut drums = vec![0.0; onset + kick.len()];
             for (slot, &s) in drums[onset..].iter_mut().zip(&kick) {
                 *slot = f64::from(s * gain);
             }
             let mut chain = Chain::new(mood, Lane::Drums, &part, drums.len(), &[], sr);
             chain.process(&mut drums, &mut NoiseStream::new(0));
-            let at = |s: f32| (onset as f32 + s * sr as f32) as usize;
-            let energy = |from_s, to_s| {
-                drums[at(from_s)..at(to_s)]
-                    .iter()
-                    .map(|v| v * v)
-                    .sum::<f64>()
-            };
-            let pre_db = 10.0 * (energy(-0.040, -0.005) / energy(0.0, 0.035)).log10();
-            if pre_db.is_nan() || pre_db > -60.0 {
-                echoes.push(format!("{mood:?}: {pre_db:.1} dB"));
+            // from rest, a causal chain is exactly silent until its input
+            let first = drums.iter().position(|&v| v != 0.0);
+            if first.is_none_or(|f| f < onset) {
+                echoes.push(format!("{mood:?}: first sound at {first:?}, onset {onset}"));
             }
         }
         assert!(echoes.is_empty(), "kick pre-echoes: {echoes:?}");
