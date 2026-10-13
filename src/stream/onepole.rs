@@ -27,7 +27,7 @@ impl Tilt {
     pub(crate) fn process(&mut self, buf: &mut [f64]) {
         let mut lp = self.lp;
         for x in buf {
-            lp = self.pole * lp + (1.0 - self.pole) * *x;
+            lp = super::flush(self.pole * lp + (1.0 - self.pole) * *x);
             *x += self.lift * (*x - lp);
         }
         self.lp = lp;
@@ -50,6 +50,13 @@ mod tests {
             let want = 1.0 + lift * a.powi(n as i32 + 1);
             assert!((got - want).abs() < 1e-12, "at {n}: {got} vs {want}");
         }
+    }
+
+    #[test]
+    fn silence_settles_a_tilt_to_exact_zero() {
+        let mut tilt = Tilt::new(1200.0, 0.8);
+        tilt.process(&mut crate::stream::burst_then_silence(1));
+        assert_eq!(tilt.lp, 0.0);
     }
 
     #[test]

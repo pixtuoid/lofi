@@ -57,7 +57,9 @@ impl Biquad {
         let (mut x1, mut x2, mut y1, mut y2) = (self.x1, self.x2, self.y1, self.y2);
         for v in buf {
             let x0 = *v;
-            *v = self.b0 * x0 + self.b1 * x1 + self.b2 * x2 - self.a1 * y1 - self.a2 * y2;
+            *v = super::flush(
+                self.b0 * x0 + self.b1 * x1 + self.b2 * x2 - self.a1 * y1 - self.a2 * y2,
+            );
             (x2, x1, y2, y1) = (x1, x0, y1, *v);
         }
         (self.x1, self.x2, self.y1, self.y2) = (x1, x2, y1, y2);
@@ -181,6 +183,16 @@ mod tests {
             // the first second settles the transient
             let got = buf[sr..].iter().map(|v| v * v).sum::<f64>() / sr as f64;
             assert!((got / want - 1.0).abs() < 1e-6, "{hz} Hz: {got} vs {want}");
+        }
+    }
+
+    #[test]
+    fn silence_settles_a_cascade_to_exact_zero() {
+        // past the 4.8 s it takes the head bump to reach the subnormal range
+        let mut cascade = butter_bandpass(60.0, 120.0, 4);
+        cascade.process(&mut crate::stream::burst_then_silence(10));
+        for s in &cascade.0 {
+            assert_eq!([s.x1, s.x2, s.y1, s.y2], [0.0; 4]);
         }
     }
 
