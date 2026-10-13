@@ -1,5 +1,6 @@
 //! Score access and per-lane renders for lofi's own tools (`examples/`) to
-//! solo, mute and measure. Not a contract: any release may change it.
+//! solo, mute and measure, and the loudness bounds lofi's gates share. Not a
+//! contract: any release may change it.
 
 use std::ops::Range;
 
