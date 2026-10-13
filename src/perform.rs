@@ -294,11 +294,17 @@ mod tests {
                         let span = audition::song_len(seed, 0, a)
                             + audition::song_len(seed, 1, b) / LOOPS_PER_SONG;
                         let mut p = Performance::new(seed, a);
-                        p.set_controls(b);
                         let mut ceiling = Ceiling::new(SAMPLE_RATE);
                         let mut heard = Heard::default();
                         while heard.played < span {
                             p.mix_next(span - heard.played);
+                            if heard.played == 0 {
+                                heard.first = p.schedule.playing().cloned();
+                                // a song latches the controls asked for
+                                // before its first frame, so the opposite
+                                // corner is asked for once this one plays
+                                p.set_controls(b);
+                            }
                             // a frame at a time, which plays the same frames,
                             // to read the gain each one plays at
                             for i in 0..p.mix.len() {
@@ -307,6 +313,7 @@ mod tests {
                                 heard.hear(ceiling.gain(), ceiling.clamp(p.mix[i]), p.mix[i]);
                             }
                         }
+                        heard.second = p.schedule.playing().cloned();
                         heard
                     })
                 })
@@ -318,6 +325,17 @@ mod tests {
         assert!(
             heard.iter().all(|h| h.loudest > 0.0),
             "a run plays silence, which no ceiling limits"
+        );
+        let unpaired: Vec<String> = (runs.iter().zip(&heard))
+            .filter(|((seed, a, b), h)| {
+                h.first.as_ref() != Some(&audition::song_score(*seed, 0, *a))
+                    || h.second.as_ref() != Some(&audition::song_score(*seed, 1, *b))
+            })
+            .map(|((seed, a, b), _)| format!("seed {seed}, {a:?} into {b:?}"))
+            .collect();
+        assert!(
+            unpaired.is_empty(),
+            "runs that didn't play their corner, then the opposite one: {unpaired:#?}"
         );
         let off: Vec<String> = (runs.iter().zip(&heard))
             .filter(|(_, h)| {
@@ -344,6 +362,9 @@ mod tests {
         least_gain: Option<f64>,
         /// Samples the clamp changed after the limiter.
         caught: usize,
+        /// The first song's score, and the second's.
+        first: Option<audition::Score>,
+        second: Option<audition::Score>,
     }
 
     impl Heard {

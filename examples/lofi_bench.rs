@@ -51,7 +51,13 @@ fn main() -> ExitCode {
     say(&format!("machine: {}", machine()));
     let chunk = (CHUNK_S * f64::from(SAMPLE_RATE)) as usize;
     let mut buf = vec![Frame::default(); chunk];
-    let (worst, seed, at) = slowest_chunk(&mut buf);
+    let (worst, seed, at) = match slowest_chunk(&mut buf) {
+        Ok(worst) => worst,
+        Err(e) => {
+            say(&format!("lofi_bench: {e}"));
+            return ExitCode::FAILURE;
+        }
+    };
     let share = worst / CHUNK_S;
     say(&format!(
         "slowest {CHUNK_S} s chunk over two songs and their transition, at intensity 1: {:.2} ms, {:.1} % of the chunk (gate {:.0} %), seed {seed} at {:.1} s",
@@ -79,15 +85,16 @@ fn main() -> ExitCode {
 /// The longest one `render` of a `buf`-long chunk took, in seconds, over each
 /// of [`SEEDS`]' first two songs: a busy day's, then a night's, whose
 /// first bars the day's tails ring over. With it, the seed and the frame the
-/// chunk started at, which tell a cold start from a transition.
-fn slowest_chunk(buf: &mut [Frame]) -> (f64, u64, u64) {
+/// chunk started at, which tell a cold start from a transition. Errs unless
+/// the run played those two songs.
+fn slowest_chunk(buf: &mut [Frame]) -> Result<(f64, u64, u64), String> {
     let day = Controls::default().with_intensity(1.0);
     let night = day.with_daylight(0.0);
     let mut worst = (0.0, SEEDS.start, 0);
     for seed in SEEDS {
         let span = audition::song_len(seed, 0, day) + audition::song_len(seed, 1, night);
         let mut music = Performance::new(seed, day);
-        music.set_controls(night);
+        let (mut opening, mut last) = (Vec::new(), 0);
         while music.position() < span as u64 {
             let (at, n) = (
                 music.position(),
@@ -100,9 +107,25 @@ fn slowest_chunk(buf: &mut [Frame]) -> (f64, u64, u64) {
             if took > worst.0 {
                 worst = (took, seed, at);
             }
+            if at == 0 {
+                opening = buf[..n].to_vec();
+                // a song latches the controls asked for before its first
+                // frame, so the night is asked for once the day's plays
+                music.set_controls(night);
+            }
+            last = n;
+        }
+        let mut day_alone = vec![Frame::default(); opening.len()];
+        Performance::new(seed, day).render(&mut day_alone);
+        // past its first loop, song 1 plays as it does alone
+        let night_alone = audition::song(seed, 1, night);
+        if day_alone != opening || night_alone[night_alone.len() - last..] != buf[..last] {
+            return Err(format!(
+                "seed {seed} didn't play a day's song, then a night's"
+            ));
         }
     }
-    worst
+    Ok(worst)
 }
 
 /// Plays [`ROOM_S`] of `room` under `controls` in `buf`-long chunks, and

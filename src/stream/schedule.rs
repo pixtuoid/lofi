@@ -73,6 +73,12 @@ impl Schedule {
         self.song.as_ref().map_or(0, |song| song.len - song.played)
     }
 
+    /// The score of the song playing.
+    #[cfg(test)]
+    pub(crate) fn playing(&self) -> Option<&Score> {
+        self.song.as_ref().map(|song| &song.score)
+    }
+
     /// Starts the next song, composed for `controls`, each lane mixed in at
     /// its gain in `levels`.
     pub(crate) fn start_song(&mut self, controls: Controls, levels: [f64; LANES]) {
