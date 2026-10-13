@@ -54,7 +54,7 @@ fn main() -> ExitCode {
     let (worst, seed, at) = slowest_chunk(&mut buf);
     let share = worst / CHUNK_S;
     say(&format!(
-        "slowest {CHUNK_S} s chunk over two songs and their transition, at intensity 1 and rain 1: {:.2} ms, {:.1} % of the chunk (gate {:.0} %), seed {seed} at {:.1} s",
+        "slowest {CHUNK_S} s chunk over two songs and their transition, at intensity 1: {:.2} ms, {:.1} % of the chunk (gate {:.0} %), seed {seed} at {:.1} s",
         worst * 1e3,
         share * 1e2,
         WORST_CHUNK_SHARE * 1e2,
@@ -77,11 +77,11 @@ fn main() -> ExitCode {
 }
 
 /// The longest one `render` of a `buf`-long chunk took, in seconds, over each
-/// of [`SEEDS`]' first two songs: a busy, rainy day's, then a night's, whose
+/// of [`SEEDS`]' first two songs: a busy day's, then a night's, whose
 /// first bars the day's tails ring over. With it, the seed and the frame the
 /// chunk started at, which tell a cold start from a transition.
 fn slowest_chunk(buf: &mut [Frame]) -> (f64, u64, u64) {
-    let day = Controls::default().with_intensity(1.0).with_rain(1.0);
+    let day = Controls::default().with_intensity(1.0);
     let night = day.with_daylight(0.0);
     let mut worst = (0.0, SEEDS.start, 0);
     for seed in SEEDS {

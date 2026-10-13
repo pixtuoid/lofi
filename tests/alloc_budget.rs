@@ -42,9 +42,9 @@ static COUNTING: Counting = Counting;
 
 #[test]
 fn a_performance_plays_two_songs_and_a_transition_within_its_heap_budget() {
-    // a night song after a busy, rainy day's, the heaviest pair the sweep that
+    // a night song after a busy day's, the heaviest pair the sweep that
     // set the budget found
-    let (seed, day) = (6, Controls::default().with_intensity(1.0).with_rain(1.0));
+    let (seed, day) = (6, Controls::default().with_intensity(1.0));
     let night = day.with_daylight(0.0);
     let span = audition::song_len(seed, 0, day) + audition::song_len(seed, 1, night);
     // a chunk as a player renders ahead, allocated before the count starts

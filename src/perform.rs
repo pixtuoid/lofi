@@ -20,18 +20,15 @@ pub struct Controls {
     pub daylight: f32,
     /// 0 = an empty room … 1 = a busy one.
     pub intensity: f32,
-    /// 0 = dry … 1 = a storm.
-    pub rain: f32,
 }
 
 impl Default for Controls {
-    /// Full day, pixtuoid's Moderate office (its taste anchor), no rain.
+    /// Full day, pixtuoid's Moderate office (its taste anchor).
     fn default() -> Self {
         let [_, moderate, _] = TIER_INTENSITIES;
         Self {
             daylight: 1.0,
             intensity: moderate,
-            rain: 0.0,
         }
     }
 }
@@ -49,12 +46,6 @@ impl Controls {
         Self { intensity, ..self }
     }
 
-    /// These controls with `rain` replaced.
-    #[must_use]
-    pub const fn with_rain(self, rain: f32) -> Self {
-        Self { rain, ..self }
-    }
-
     fn clamped(self) -> Self {
         let default = Self::default();
         let unit = |v: f32, default: f32| {
@@ -67,7 +58,6 @@ impl Controls {
         Self {
             daylight: unit(self.daylight, default.daylight),
             intensity: unit(self.intensity, default.intensity),
-            rain: unit(self.rain, default.rain),
         }
     }
 }
@@ -282,13 +272,12 @@ mod tests {
         // has been, so the limiter turns down few frames, and not far
         const MOST_LIMITED_SHARE: f64 = 0.001;
         const DEEPEST_REDUCTION_DB: f64 = 1.0;
-        let corners: Vec<Controls> = (0..8u8)
+        let corners: Vec<Controls> = (0..4u8)
             .map(|bits| {
                 let on = |bit: u8| f32::from((bits >> bit) & 1);
                 Controls::default()
                     .with_daylight(on(0))
                     .with_intensity(on(1))
-                    .with_rain(on(2))
             })
             .collect();
         // each corner's song into the opposite corner's, whose first loop the
@@ -427,7 +416,7 @@ mod tests {
     #[test]
     fn render_plays_the_same_frames_however_the_calls_chunk_them() {
         let seed = 3;
-        let busy = Controls::default().with_intensity(1.0).with_rain(1.0);
+        let busy = Controls::default().with_intensity(1.0);
         let order = [Controls::default(), night(), busy];
         let lens = [0, 1, 2].map(|k| audition::song_len(seed, k, order[k as usize]));
         let bounds = [lens[0], lens[0] + lens[1]];
@@ -487,7 +476,7 @@ mod tests {
         // songs before it at other controls, which it must not remember
         let mut playing = Performance::new(seed, night().with_intensity(0.0));
         playing.finish_song();
-        playing.set_controls(c.with_intensity(1.0).with_rain(1.0));
+        playing.set_controls(c.with_intensity(1.0));
         playing.finish_song();
         playing.set_controls(c);
         let reached = playing.finish_song();
@@ -557,7 +546,7 @@ mod tests {
         let asks = [
             Controls::default(),
             night().with_intensity(0.0),
-            Controls::default().with_intensity(1.0).with_rain(1.0),
+            Controls::default().with_intensity(1.0),
         ];
         let mut p = Performance::new(7, asks[0]);
         let mut songs = 0;
@@ -594,27 +583,23 @@ mod tests {
         let wild = Controls {
             daylight: f32::NAN,
             intensity: 7.0,
-            rain: f32::NEG_INFINITY,
         };
         assert_eq!(
             wild.clamped(),
             Controls {
                 daylight: 1.0,
                 intensity: 1.0,
-                rain: 0.0,
             }
         );
         let wild = Controls {
             daylight: -0.5,
             intensity: f32::NAN,
-            rain: f32::INFINITY,
         };
         assert_eq!(
             wild.clamped(),
             Controls {
                 daylight: 0.0,
                 intensity: 0.5,
-                rain: 1.0,
             }
         );
     }
@@ -625,8 +610,7 @@ mod tests {
         let day = play(Controls::default());
         let nan = Controls::default()
             .with_daylight(f32::NAN)
-            .with_intensity(f32::NAN)
-            .with_rain(f32::NAN);
+            .with_intensity(f32::NAN);
         assert_eq!(first_diff(&play(nan), &day), None);
         assert!(first_diff(&play(night()), &day).is_some());
     }
