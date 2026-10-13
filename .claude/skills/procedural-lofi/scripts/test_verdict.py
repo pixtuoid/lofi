@@ -29,6 +29,10 @@ class SignTest(unittest.TestCase):
     def test_ties_are_dropped(self):
         t = sign_test([0.0, 0.0, 1.0, -1.0])
         self.assertEqual((t["wins"], t["losses"], t["ties"]), (1, 1, 2))
+        # five losses out of five untied pairs, however many tie
+        t = sign_test([0.0] * 7 + losses(5))
+        self.assertEqual(t["p"], 0.03125)
+        self.assertTrue(t["significant"])
 
     def test_min_untied_is_the_fewest_pairs_that_can_reject(self):
         self.assertFalse(sign_test(losses(MIN_UNTIED - 1))["p"] < ALPHA)
@@ -45,6 +49,8 @@ class Verdicts(unittest.TestCase):
 
     def test_one_rejecting_test_regresses_the_group(self):
         tests = {"a": sign_test([1.0] * 12), "b": sign_test(losses(12))}
+        self.assertEqual(group_verdict(tests), "REGRESSION")
+        tests = {"a": sign_test(losses(MIN_UNTIED)), "b": sign_test(losses(MIN_UNTIED - 1))}
         self.assertEqual(group_verdict(tests), "REGRESSION")
 
     def test_a_detected_regression_outranks_too_few_pairs(self):
