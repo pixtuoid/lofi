@@ -13,8 +13,9 @@ use super::schedule::BLOCK;
 use crate::compose::Mood;
 use crate::dsp::NoiseStream;
 use crate::synth::{
-    DRIVE, DUCK_DB, DUCK_RELEASE_S, HEAD_BUMP_HZ, HEAD_BUMP_MIX, HISS_HZ, HISS_LEVEL, Lane,
-    PadTone, Part, ROLLOFF_HZ, TILT_HZ, TILT_LIFT, WARPS, lane_recipe, room_tone, samples_at,
+    DRIVE, DUCK_DB, DUCK_RELEASE_S, HEAD_BUMP_HZ, HEAD_BUMP_MIX, HISS_HZ, HISS_LEVEL, HUM_HZ,
+    HUM_SWELL_HZ, Lane, PadTone, Part, ROLLOFF_HZ, TILT_HZ, TILT_LIFT, WARPS, lane_recipe,
+    room_tone, samples_at,
 };
 
 /// The order of each slope that stands in for a whole-lane brickwall.
@@ -24,6 +25,14 @@ const ORDER: usize = 4;
 /// one sine that each song starts at its own phase, doesn't jump. The length
 /// is opinion: no measurement or LISTEN set it.
 const BED_CROSSFADE_S: f32 = 0.03;
+
+/// The phase in radians, within one cycle, of a sine at `hz` `n` frames into a
+/// song at `sr`: counted in f64 and reduced before it narrows, since `n` passes
+/// f32's exact integers within minutes at a high rate.
+fn phase(hz: f32, n: usize, sr: u32) -> f32 {
+    let cycles = f64::from(hz) * n as f64 / f64::from(sr);
+    (TAU * cycles.fract()) as f32
+}
 
 /// Each lane's fixed gains `[in, out]`, standing in for the whole-lane render's
 /// peak normalizations: `in` for its first `normalize`, which sets the level
@@ -153,8 +162,7 @@ impl Tape {
         let [gain_in, gain_out] = self.gains;
         self.tone.process(buf);
         for (n, x) in (self.frame..).zip(buf.iter_mut()) {
-            let swell = self.pad.map_or(1.0, |pad| f64::from(pad.swell(n, self.sr)));
-            *x *= swell * gain_in;
+            *x *= self.swell(n) * gain_in;
         }
         let (warps, reach) = (self.warps, self.reach);
         self.warp.process(buf, |n| {
@@ -178,6 +186,13 @@ impl Tape {
             *x *= gain_out;
         }
         self.frame += buf.len();
+    }
+
+    /// The pad's swell on frame `n`; 1 on every other lane.
+    fn swell(&self, n: usize) -> f64 {
+        self.pad.map_or(1.0, |pad| {
+            f64::from(pad.swell(phase(pad.swell_hz, n, self.sr)))
+        })
     }
 
     fn at_rest(&self) -> bool {
@@ -250,8 +265,7 @@ impl Room {
         self.hiss.process(&mut self.hissed);
         for (i, n) in (self.frame..self.frame + buf.len()).enumerate() {
             buf[i] = if n < end {
-                let room = f64::from(room_tone(n as f32 / self.sr as f32));
-                let sum = self.hissed[i] * f64::from(HISS_LEVEL) + room + buf[i];
+                let sum = self.hissed[i] * f64::from(HISS_LEVEL) + self.hum(n) + buf[i];
                 sum * self.crossfade_gain(n) * gain_in * self.duck(n)
             } else {
                 0.0
@@ -262,6 +276,12 @@ impl Room {
             *x *= gain_out;
         }
         self.frame += buf.len();
+    }
+
+    /// The room tone on frame `n`.
+    fn hum(&self, n: usize) -> f64 {
+        let (hum, swell) = (phase(HUM_HZ, n, self.sr), phase(HUM_SWELL_HZ, n, self.sr));
+        f64::from(room_tone(hum, swell))
     }
 
     /// The bed's gain on frame `n`: an equal-power fade in from the song's
@@ -402,6 +422,34 @@ mod tests {
         );
         let tilt = lift((2000.0, 4000.0), (300.0, 500.0));
         assert!(tilt > 1.5, "the tilt must lift the top: {tilt:.2} dB");
+    }
+
+    #[test]
+    fn the_song_clock_keeps_its_precision_past_2_24_frames() {
+        // 2²⁴ frames is f32's last exact integer, under three minutes at 96 kHz
+        let sr = 96_000;
+        let exact = |hz: f32, n: usize| {
+            (TAU * f64::from(hz) * n as f64 / f64::from(sr)).rem_euclid(TAU) as f32
+        };
+        let room = Room::new(0, &[], [1.0, 1.0], sr);
+        let pad = PadTone::of(Mood::Day);
+        let tape = Tape::new(pad.cutoff_hz, Some(pad), DRIVE, [1.0, 1.0], sr);
+        let mut off = Vec::new();
+        for n in [(1 << 24) + 1, (1 << 24) + 3, (1 << 26) + 5, (1 << 27) + 7] {
+            let hum = f64::from(room_tone(exact(HUM_HZ, n), exact(HUM_SWELL_HZ, n)));
+            let swell = f64::from(pad.swell(exact(pad.swell_hz, n)));
+            for (name, got, want, tolerance) in [
+                ("hum", room.hum(n), hum, 1e-8),
+                // a step and a half of f32 near 1, so a phase that rounds
+                // the other way still passes
+                ("swell", tape.swell(n), swell, 1.5 * f64::from(f32::EPSILON)),
+            ] {
+                if (got - want).abs() >= tolerance {
+                    off.push(format!("{name} at {n}: {:e} off", (got - want).abs()));
+                }
+            }
+        }
+        assert!(off.is_empty(), "the song clock slipped: {off:#?}");
     }
 
     #[test]

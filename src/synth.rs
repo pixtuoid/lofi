@@ -75,10 +75,21 @@ pub(crate) const CRACKLE_POPS_PER_SEC: f32 = 0.18;
 pub(crate) const HISS_HZ: f32 = 3800.0;
 pub(crate) const HISS_LEVEL: f32 = 0.010;
 
-/// The faint warm room hum under the hiss, `t` seconds in.
-pub(crate) fn room_tone(t: f32) -> f32 {
+/// The room hum's pitch, and the rate its level swells at.
+pub(crate) const HUM_HZ: f32 = 90.0;
+pub(crate) const HUM_SWELL_HZ: f32 = 0.4;
+
+/// The faint warm room hum under the hiss, at the hum's and its swell's
+/// phases in radians: the caller keeps the clock, since the whole-lane beds'
+/// f32 clock is ratified and a song's outruns f32.
+pub(crate) fn room_tone(hum: f32, swell: f32) -> f32 {
+    hum.sin() * (1.0 + 0.2 * swell.sin()) * 0.006
+}
+
+/// [`room_tone`] `t` seconds into a whole-lane bed.
+fn bed_room_tone(t: f32) -> f32 {
     let tau = std::f32::consts::TAU;
-    (tau * 90.0 * t).sin() * (1.0 + 0.2 * (tau * 0.4 * t).sin()) * 0.006
+    room_tone(tau * HUM_HZ * t, tau * HUM_SWELL_HZ * t)
 }
 
 /// One vinyl-crackle pop at `sr`, and the gain it mixes in at.
@@ -100,7 +111,7 @@ pub(crate) fn texture_bed(rng: &mut NoiseStream) -> Vec<f32> {
     let mut buf: Vec<f32> = hiss
         .iter()
         .enumerate()
-        .map(|(i, hiss)| hiss * HISS_LEVEL + room_tone(i as f32 / SR))
+        .map(|(i, hiss)| hiss * HISS_LEVEL + bed_room_tone(i as f32 / SR))
         .collect();
     let n_pops = (n as f32 / SR * CRACKLE_POPS_PER_SEC) as usize;
     for _ in 0..n_pops {
@@ -525,7 +536,7 @@ fn night_pad_core(
     let tone = PadTone::of(Mood::Night);
     let mut buf = lowpass(&buf, tone.cutoff_hz);
     for (i, v) in buf.iter_mut().enumerate() {
-        *v *= tone.swell(i, SAMPLE_RATE);
+        *v *= tone.bed_swell(i);
     }
     normalize(&mut buf, 0.75);
     master(&buf, DRIVE, 0.75)
@@ -648,7 +659,7 @@ fn night_texture_core(loop_secs: f32, kick_times: &[f32], rng: &mut NoiseStream)
     let mut buf: Vec<f32> = hiss
         .iter()
         .enumerate()
-        .map(|(i, hiss)| hiss * HISS_LEVEL + room_tone(i as f32 / SR))
+        .map(|(i, hiss)| hiss * HISS_LEVEL + bed_room_tone(i as f32 / SR))
         .collect();
     let n_pops = (n as f32 / SR * CRACKLE_POPS_PER_SEC) as usize;
     for _ in 0..n_pops {
@@ -714,8 +725,8 @@ fn day_chord(chord: &[u8; 4], bar_s: f32, sr: u32) -> Vec<f32> {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PadTone {
     pub(crate) cutoff_hz: f32,
-    /// `(rate_hz, depth)`.
-    swell: (f32, f32),
+    pub(crate) swell_hz: f32,
+    swell_depth: f32,
 }
 
 impl PadTone {
@@ -723,19 +734,26 @@ impl PadTone {
         match mood {
             Mood::Day => Self {
                 cutoff_hz: 2600.0,
-                swell: (0.22, 0.05),
+                swell_hz: 0.22,
+                swell_depth: 0.05,
             },
             Mood::Night => Self {
                 cutoff_hz: 2200.0,
-                swell: (0.15, 0.04),
+                swell_hz: 0.15,
+                swell_depth: 0.04,
             },
         }
     }
 
-    /// The swell's gain on sample `i` at `sr`.
-    pub(crate) fn swell(self, i: usize, sr: u32) -> f32 {
-        let (hz, depth) = self.swell;
-        1.0 + depth * (std::f32::consts::TAU * hz * i as f32 / sr as f32).sin()
+    /// The swell's gain at its phase in radians, which the caller's clock
+    /// keeps as [`room_tone`]'s does.
+    pub(crate) fn swell(self, phase: f32) -> f32 {
+        1.0 + self.swell_depth * phase.sin()
+    }
+
+    /// The swell's gain on sample `i` of a whole-lane pad.
+    fn bed_swell(self, i: usize) -> f32 {
+        self.swell(std::f32::consts::TAU * self.swell_hz * i as f32 / SR)
     }
 }
 
@@ -752,7 +770,7 @@ fn day_pad_core(chords: &[[u8; 4]], bar_s: f32, loop_bars: usize, voice: ChordVo
     let tone = PadTone::of(Mood::Day);
     let mut buf = lowpass(&buf, tone.cutoff_hz);
     for (i, v) in buf.iter_mut().enumerate() {
-        *v *= tone.swell(i, SAMPLE_RATE);
+        *v *= tone.bed_swell(i);
     }
     normalize(&mut buf, 0.7);
     master(&buf, DRIVE, 0.7)
