@@ -119,10 +119,9 @@ impl Song {
         let cues = Lane::ALL.map(|lane| Cues::new(&part(&score, lane), loop_len, noise.fork(), sr));
         // forked after every lane's, so it moves none of their draws
         let crackle = Crackle::new(noise.fork(), sr);
-        let mut kicks: Vec<usize> = part(&score, Lane::Drums)
-            .kicks(sr)
-            .into_iter()
-            .flat_map(|at| every_loop(at, loop_len))
+        // where the whole-lane night texture ducks, rounded as it rounds them
+        let mut kicks: Vec<usize> = (score.kick_times.iter())
+            .flat_map(|&at| every_loop(samples_at(at, sr), loop_len))
             .collect();
         kicks.sort_unstable();
         let chains =
@@ -334,6 +333,32 @@ mod tests {
             run.fading.is_empty(),
             "song 0 never rested, so the run keeps playing its chains"
         );
+    }
+
+    #[test]
+    fn a_night_bed_ducks_after_each_kick() {
+        let sr = SAMPLE_RATE;
+        let mut song = Song::new(4, 0, Controls::default().with_daylight(0.0), sr);
+        let loop_len = song.len / LOOPS_PER_SONG;
+        let texture = Lane::ALL.iter().position(|&l| l == Lane::Texture).unwrap();
+        let (mut bed, mut buf) = (Vec::with_capacity(loop_len), Vec::new());
+        while bed.len() < loop_len {
+            let n = BLOCK.min(loop_len - bed.len());
+            let mut sums: [Vec<f64>; LANES] = std::array::from_fn(|_| vec![0.0; n]);
+            song.play(&mut sums, &mut buf, n);
+            bed.extend_from_slice(&sums[texture]);
+        }
+        let window = samples_at(0.05, sr);
+        let energy = |from: usize| bed[from..from + window].iter().map(|v| v * v).sum::<f64>();
+        let kicks: Vec<usize> = (song.score.kick_times.iter())
+            .map(|&at| samples_at(at, sr))
+            .filter(|&k| k >= window)
+            .collect();
+        assert!(!kicks.is_empty());
+        let before: f64 = kicks.iter().map(|&k| energy(k - window)).sum();
+        let after: f64 = kicks.iter().map(|&k| energy(k)).sum();
+        let ratio = (after / before).sqrt();
+        assert!(ratio < 0.85, "the bed must dip after the kicks: {ratio:.3}");
     }
 
     #[test]

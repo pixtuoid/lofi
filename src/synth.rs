@@ -933,18 +933,6 @@ impl Part<'_> {
         }
     }
 
-    /// The onsets at `sr` of the kicks among the hits, in event order.
-    pub(crate) fn kicks(&self, sr: u32) -> Vec<usize> {
-        match *self {
-            Part::Hits(hits) => hits
-                .iter()
-                .filter(|&&(_, kind, _)| kind == DrumKind::Kick)
-                .map(|&(at, ..)| onset(at, sr))
-                .collect(),
-            Part::Chords { .. } | Part::Notes { .. } | Part::Bed => Vec::new(),
-        }
-    }
-
     /// Note `i` of [`onsets`](Self::onsets) at `sr`, and the gain it mixes in
     /// at; a hit draws its noise from `rng`.
     pub(crate) fn note(&self, i: usize, rng: &mut NoiseStream, sr: u32) -> (Vec<f32>, f32) {

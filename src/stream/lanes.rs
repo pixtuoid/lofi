@@ -56,7 +56,7 @@ pub(crate) enum Chain {
 impl Chain {
     /// `lane`'s chain in a `mood` song `len` frames long at `sr`, picked by
     /// its `part` as `render_lane` picks its whole-lane core; the texture
-    /// ducks under `kicks`, the song's kick onsets.
+    /// ducks under each onset in `kicks`.
     pub(crate) fn new(
         mood: Mood,
         lane: Lane,
@@ -74,7 +74,7 @@ impl Chain {
             }
             Part::Notes { .. } => Self::Tape(Tape::new(r1, None, DRIVE, gains, sr)),
             Part::Hits(_) => Self::Tape(Tape::new(r0, None, r1, gains, sr)),
-            Part::Bed => Self::Room(Room::new(mood, len, kicks, gains, sr)),
+            Part::Bed => Self::Room(Room::new(len, kicks, gains, sr)),
         }
     }
 
@@ -197,7 +197,7 @@ pub(crate) struct Room {
     /// The hiss over a step.
     hissed: Vec<f64>,
     gains: [f64; 2],
-    /// The kick onsets the bed ducks under, in order; none by day.
+    /// The kick onsets the bed ducks under, in order.
     kicks: Vec<usize>,
     /// The first of `kicks` whose duck still releases.
     ducking: usize,
@@ -214,15 +214,12 @@ pub(crate) struct Room {
 }
 
 impl Room {
-    fn new(mood: Mood, len: usize, kicks: &[usize], gains: [f64; 2], sr: u32) -> Self {
+    fn new(len: usize, kicks: &[usize], gains: [f64; 2], sr: u32) -> Self {
         Self {
             hiss: butter_lowpass(HISS_HZ, ORDER, sr),
             hissed: Vec::with_capacity(BLOCK),
             gains,
-            kicks: match mood {
-                Mood::Day => Vec::new(),
-                Mood::Night => kicks.to_vec(),
-            },
+            kicks: kicks.to_vec(),
             ducking: 0,
             floor: 10f64.powf(f64::from(DUCK_DB) / 20.0),
             release: samples_at(DUCK_RELEASE_S, sr),

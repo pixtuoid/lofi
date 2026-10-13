@@ -71,7 +71,7 @@ pub struct Score {
     /// day pickup dips one step under); this lane owns the register the night
     /// pad no longer bakes.
     pub(super) bass: Vec<(f32, u8, f32)>,
-    /// Night only: kick timestamps for the texture's baked duck (empty for day).
+    /// Night only: kick timestamps the texture ducks under (empty for day).
     pub(super) kick_times: Vec<f32>,
     /// Which instrument sings the lead.
     pub(super) lead_voice: LeadVoice,
