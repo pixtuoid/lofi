@@ -89,7 +89,7 @@ const _: fn() = || {
 impl fmt::Debug for Performance {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Performance")
-            .field("controls", &self.asked)
+            .field("asked", &self.asked)
             .field("position", &self.position)
             .finish_non_exhaustive()
     }
@@ -198,7 +198,7 @@ mod tests {
     fn render_plays_the_same_frames_however_the_calls_chunk_them() {
         let (seed, c) = (3, Controls::default());
         let boundary = song_len(seed, 0, c);
-        // into song 1's second loop, past every tail of song 0
+        // through song 1's first loop, past every tail of song 0
         let span = boundary + song_len(seed, 1, c) / LOOPS_PER_SONG;
         let whole = next(&mut Performance::new(seed, c), span);
         assert!(
@@ -299,13 +299,14 @@ mod tests {
     }
 
     #[test]
-    fn a_performance_hears_a_nan_daylight_as_the_default() {
+    fn a_performance_hears_nan_controls_as_the_default() {
         let play = |c| next(&mut Performance::new(4, c), SAMPLE_RATE as usize);
         let day = play(Controls::default());
-        assert_eq!(
-            first_diff(&play(Controls::default().with_daylight(f32::NAN)), &day),
-            None
-        );
+        let nan = Controls::default()
+            .with_daylight(f32::NAN)
+            .with_intensity(f32::NAN)
+            .with_rain(f32::NAN);
+        assert_eq!(first_diff(&play(nan), &day), None);
         assert!(first_diff(&play(night()), &day).is_some());
     }
 

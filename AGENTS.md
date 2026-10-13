@@ -13,6 +13,7 @@ Measurement steers a change toward a target; only the owner's LISTEN says it sou
 ## Map
 
 - `perform`: the public engine, `Performance` and its `Controls`.
+- `stream`: the engine's chunk-invariant parts: the song schedule and the lane chains' filters.
 - `compose`: seed → `Score`. The rng draw order is the sound.
 - `synth`: voices, the master chain, `render_lane`.
 - `dsp`: the public primitives, dependency-free on purpose.
