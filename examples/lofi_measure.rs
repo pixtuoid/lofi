@@ -331,6 +331,7 @@ fn fft(re: &mut [f64], im: &mut [f64]) {
 
 #[cfg(test)]
 mod tests {
+    use pixtuoid_lofi::audition::MASTER_GAIN;
     use pixtuoid_lofi::dsp::NoiseStream;
 
     use super::*;
@@ -388,6 +389,20 @@ mod tests {
             .collect();
         let slope = Spectrum::of(&brown).ltas_slope();
         assert!((slope - (-6.0)).abs() < 0.5, "{slope}");
+    }
+
+    #[test]
+    fn v1s_mix_reads_at_the_stage_v2s_does() {
+        let (batch, seed) = (Batch::default(), 0);
+        let (beds, _) = render_take(&batch.score(seed));
+        let v1 = gated_lufs(&soak_mix(&beds, &batch.lane_gains()), SAMPLE_RATE);
+        let v2 = gated_lufs(&batch.perform(seed).expect("v2 plays"), SAMPLE_RATE);
+        // where v1's mix would read without the master's staging
+        let unstaged = v2 - 20.0 * MASTER_GAIN.log10();
+        assert!(
+            (v1 - v2).abs() < (v1 - unstaged).abs(),
+            "v1's mix reads {v1:.2} LUFS, v2's {v2:.2}"
+        );
     }
 
     #[test]
