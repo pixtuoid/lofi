@@ -188,7 +188,7 @@ mod tests {
 
     #[test]
     fn silence_settles_a_cascade_to_exact_zero() {
-        // past the 4.8 s it takes the head bump to reach the subnormal range
+        // long enough for the head bump's slowest section to reach the subnormal range
         let mut cascade = butter_bandpass(60.0, 120.0, 4);
         cascade.process(&mut crate::stream::burst_then_silence(10));
         for s in &cascade.0 {
