@@ -20,8 +20,9 @@ use crate::synth::{
 /// The order of each slope that stands in for a whole-lane brickwall.
 const ORDER: usize = 4;
 
-/// How long a song's texture bed crossfades into the next song's: their hums
-/// meet at unrelated phases.
+/// How long a song's texture bed crossfades into the next song's, so the hum,
+/// one sine that each song starts at its own phase, doesn't jump. The length
+/// is opinion: no measurement or LISTEN set it.
 const BED_CROSSFADE_S: f32 = 0.03;
 
 /// Each lane's fixed gains `[in, out]`, standing in for the whole-lane render's
@@ -264,8 +265,8 @@ impl Room {
     }
 
     /// The bed's gain on frame `n`: an equal-power fade in from the song's
-    /// start and out past its end, since two songs' beds are uncorrelated and
-    /// their powers add.
+    /// start and out past its end, since two songs' hiss is uncorrelated and
+    /// its powers add.
     fn crossfade_gain(&self, n: usize) -> f64 {
         let (fade, len) = (self.crossfade as f64, self.len);
         let x = if n < self.crossfade {
