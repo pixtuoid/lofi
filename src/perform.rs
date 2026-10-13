@@ -128,7 +128,9 @@ impl Performance {
     }
 
     /// Fills `out` with the next frames, identical however the calls chunk it.
-    /// May allocate, so callers render ahead, off the real-time thread.
+    /// The stream is mastered as a background bed, under lofi's own ceiling:
+    /// play it at the listener's volume, with no further trim. May allocate,
+    /// so callers render ahead, off the real-time thread.
     pub fn render(&mut self, out: &mut [Frame]) {
         let mut done = 0;
         while done < out.len() {

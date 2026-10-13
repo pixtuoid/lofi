@@ -38,13 +38,11 @@ pub fn lane_gain(lane: Lane, intensity: f32) -> f32 {
     gains[k] * (1.0 - t) + gains[k + 1] * t
 }
 
-/// The mix's gain into the ceiling, which sets lofi's output level: pixtuoid's
-/// bus trim, the level its office has played the lanes at
+/// The mix's gain into the ceiling: lofi's mastering level for a background
+/// bed, the level pixtuoid's office has played the lanes at
 /// (<https://github.com/pixtuoid/pixtuoid/blob/a63f1782f477c357666e71a9c1147090b47fe17d/crates/pixtuoid-scene/src/audio/mixer.rs#L63-L65>),
-/// moved here, where it leaves the ceiling a rare backstop. pixtuoid is to
-/// play [`render`](crate::Performance::render)'s frames at the listener's
-/// volume alone, without that trim: the level is lofi's to set, and no value
-/// is copied between the repos.
+/// which leaves the ceiling a rare backstop. How a caller plays it:
+/// [`render`](crate::Performance::render).
 pub(crate) const MASTER_GAIN: f64 = 0.35;
 
 /// The peak no sample of [`render`](crate::Performance::render) passes, after
