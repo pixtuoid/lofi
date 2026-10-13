@@ -13,8 +13,20 @@ use crate::dsp::{NoiseStream, Twiddles, fft, twiddles};
 /// which the hiss test holds against v1's brickwall.
 const STOPBAND_DB: f64 = 80.0;
 const TRANSITION_HZ: f64 = 200.0;
-// `kernel` takes `kaiser_beta`'s branch for a stopband over 50 dB alone
-const _: () = assert!(STOPBAND_DB > 50.0);
+
+/// Kaiser's attenuation for an order, `a = SLOPE·(N − 1)·π·width + OFFSET`
+/// with the width a fraction of Nyquist, as SciPy's `kaiser_atten` gives it
+/// (<https://github.com/scipy/scipy/blob/v1.18.0/scipy/signal/_fir_filter_design.py#L76-L116>).
+const KAISER_ORDER_SLOPE: f64 = 2.285;
+const KAISER_ORDER_OFFSET_DB: f64 = 7.95;
+/// Kaiser's β for a stopband over [`KAISER_BETA_HIGH_DB`],
+/// `β = SLOPE·(a − OFFSET)`, the branch of SciPy's `kaiser_beta` that
+/// [`kernel`] takes
+/// (<https://github.com/scipy/scipy/blob/v1.18.0/scipy/signal/_fir_filter_design.py#L38-L73>).
+const KAISER_BETA_SLOPE: f64 = 0.1102;
+const KAISER_BETA_OFFSET_DB: f64 = 8.7;
+const KAISER_BETA_HIGH_DB: f64 = 50.0;
+const _: () = assert!(STOPBAND_DB > KAISER_BETA_HIGH_DB);
 
 /// A transform is at least this many kernels long, so most of it is output
 /// rather than the kernel's memory (opinion).
@@ -42,16 +54,15 @@ fn bessel_i0(x: f64) -> f64 {
 /// (<https://www.dspguide.com/ch16.htm>), under the Kaiser window
 /// (<https://ccrma.stanford.edu/~jos/sasp/Kaiser_Window.html>) in place of
 /// its Blackman one. The taps sum to 1, unity gain at DC, which absorbs the
-/// window's `1/I₀(β)`. The order is Kaiser's formula as SciPy's
-/// `kaiser_atten` gives it, solved for the order, and β its `kaiser_beta`
-/// (<https://github.com/scipy/scipy/blob/v1.18.0/scipy/signal/_fir_filter_design.py#L38-L116>),
-/// the order rounded up to even so the kernel has a centre tap.
+/// window's `1/I₀(β)`. The order solves [`KAISER_ORDER_SLOPE`]'s formula
+/// for [`STOPBAND_DB`], rounded up to even so the kernel has a centre tap.
 pub(crate) fn kernel(corner_hz: f32, sr: u32) -> Vec<f64> {
     let rate = f64::from(sr);
     let width = TRANSITION_HZ / (rate / 2.0);
-    let order = ((STOPBAND_DB - 7.95) / (2.285 * PI * width)).ceil() as usize;
+    let order = ((STOPBAND_DB - KAISER_ORDER_OFFSET_DB) / (KAISER_ORDER_SLOPE * PI * width)).ceil()
+        as usize;
     let order = order + order % 2;
-    let beta = 0.1102 * (STOPBAND_DB - 8.7);
+    let beta = KAISER_BETA_SLOPE * (STOPBAND_DB - KAISER_BETA_OFFSET_DB);
     let (fc, half) = (f64::from(corner_hz) / rate, order as f64 / 2.0);
     let taps: Vec<f64> = (0..=order)
         .map(|i| {
