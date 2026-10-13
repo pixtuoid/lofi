@@ -1,5 +1,5 @@
-//! The master bus: each lane at its gain for how busy the room is, and the
-//! ceiling the mix plays under.
+//! The master bus: each lane at its gain for how busy the room is, the mix's
+//! level, and the ceiling it plays under.
 
 use std::collections::VecDeque;
 
@@ -37,6 +37,15 @@ pub fn lane_gain(lane: Lane, intensity: f32) -> f32 {
     // exact at both ends, so each anchor plays its tier's gains
     gains[k] * (1.0 - t) + gains[k + 1] * t
 }
+
+/// The mix's gain into the ceiling, which sets lofi's output level: pixtuoid's
+/// bus trim, the level its office has played the lanes at
+/// (<https://github.com/pixtuoid/pixtuoid/blob/a63f1782f477c357666e71a9c1147090b47fe17d/crates/pixtuoid-scene/src/audio/mixer.rs#L63-L65>),
+/// moved here, where it leaves the ceiling a rare backstop. pixtuoid is to
+/// play [`render`](crate::Performance::render)'s frames at the listener's
+/// volume alone, without that trim: the level is lofi's to set, and no value
+/// is copied between the repos.
+pub(crate) const MASTER_GAIN: f64 = 0.35;
 
 /// The peak no sample of [`render`](crate::Performance::render) passes, after
 /// EBU R 128 (<https://tech.ebu.ch/docs/r/r128.pdf>), which recommends "that
@@ -124,7 +133,6 @@ impl Ceiling {
     pub(crate) fn limit(&mut self, buf: &mut [f64]) {
         let limit = f64::from(self.limit);
         let unit = (1u64 << GAIN_BITS) as f64;
-        let average = self.steps.len() as f64 * unit;
         for x in buf {
             let need = if x.abs() > limit {
                 limit / x.abs()
@@ -150,9 +158,14 @@ impl Ceiling {
             self.sum += step;
             self.sum -= self.steps.pop_front().unwrap_or(0);
             self.late.push_back(*x);
-            *x = self.late.pop_front().unwrap_or(0.0) * (self.sum as f64 / average);
+            *x = self.late.pop_front().unwrap_or(0.0) * self.gain();
             self.frame += 1;
         }
+    }
+
+    /// The gain the last frame limited played at: the average of the steps.
+    pub(crate) fn gain(&self) -> f64 {
+        self.sum as f64 / (self.steps.len() as f64 * (1u64 << GAIN_BITS) as f64)
     }
 
     /// `x` as a sample, clamped to the ceiling.

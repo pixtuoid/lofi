@@ -4,7 +4,7 @@
 use std::fmt;
 
 use crate::dsp::SAMPLE_RATE;
-use crate::stream::master::{Ceiling, TIER_INTENSITIES, lane_gain};
+use crate::stream::master::{Ceiling, MASTER_GAIN, TIER_INTENSITIES, lane_gain};
 use crate::stream::schedule::{BLOCK, Schedule};
 use crate::synth::Lane;
 
@@ -142,20 +142,15 @@ impl Performance {
         self.position += out.len() as u64;
     }
 
-    /// Mixes the lanes' next frames into `mix`: at most `max`, [`BLOCK`] and
-    /// the rest of the playing song.
+    /// Mixes the lanes' next frames into `mix` at [`MASTER_GAIN`]: at most
+    /// `max`, [`BLOCK`] and the rest of the playing song.
     fn mix_next(&mut self, max: usize) {
         self.start_due_song();
         let n = max.min(BLOCK).min(self.schedule.song_left());
         let lanes = self.schedule.play(n);
         self.mix.clear();
-        // at unity: pixtuoid's mixer scales each lane by its tier gain, now
-        // applied here, then by its bus trim and the listener's volume
-        // (<https://github.com/pixtuoid/pixtuoid/blob/a63f1782f477c357666e71a9c1147090b47fe17d/crates/pixtuoid-scene/src/audio/mixer.rs#L123>),
-        // which it goes on applying to `render`'s frames, so its bus hears
-        // today's level
         self.mix
-            .extend((0..n).map(|i| lanes.iter().map(|lane| lane[i]).sum::<f64>()));
+            .extend((0..n).map(|i| lanes.iter().map(|lane| lane[i]).sum::<f64>() * MASTER_GAIN));
     }
 
     /// Frames rendered so far.
@@ -259,10 +254,10 @@ mod tests {
             let c = Controls::default().with_intensity(intensity);
             let got = mixed(&mut Performance::new(seed, c), frames);
             let first_diff = (0..frames).position(|i| {
-                let want: f64 = (unity.iter().zip(gains))
+                let lanes: f64 = (unity.iter().zip(gains))
                     .map(|(lane, gain)| f64::from(gain) * lane[i])
                     .sum();
-                got[i] != want
+                got[i] != lanes * MASTER_GAIN
             });
             assert_eq!(
                 first_diff, None,
@@ -271,13 +266,12 @@ mod tests {
         }
     }
 
-    /// The amplitude the ceiling holds, as its clamp reads it.
-    fn ceiling_amplitude() -> f64 {
-        f64::from(Ceiling::new(SAMPLE_RATE).clamp(f64::INFINITY))
-    }
-
     #[test]
-    fn every_corner_plays_under_the_ceiling_across_a_song_boundary() {
+    fn the_limiter_is_a_rare_backstop_at_every_corner_across_a_song_boundary() {
+        // opinion: the ceiling is a rare backstop, as pixtuoid's bus limiter
+        // has been, so the limiter turns down few frames, and not far
+        const MOST_LIMITED_SHARE: f64 = 0.001;
+        const DEEPEST_REDUCTION_DB: f64 = 1.0;
         let corners: Vec<Controls> = (0..8u8)
             .map(|bits| {
                 let on = |bit: u8| f32::from((bits >> bit) & 1);
@@ -294,9 +288,7 @@ mod tests {
                 (corners.iter().zip(corners.iter().rev())).map(move |(&a, &b)| (seed, a, b))
             })
             .collect();
-        // each run's loudest mixed sample, and how many samples the clamp
-        // caught after the limiter, of how many played
-        let heard: Vec<(f64, usize, usize)> = std::thread::scope(|scope| {
+        let heard: Vec<Heard> = std::thread::scope(|scope| {
             let runs: Vec<_> = (runs.iter())
                 .map(|&(seed, a, b)| {
                     scope.spawn(move || {
@@ -304,17 +296,18 @@ mod tests {
                         let mut p = Performance::new(seed, a);
                         p.set_controls(b);
                         let mut ceiling = Ceiling::new(SAMPLE_RATE);
-                        let (mut loudest, mut caught, mut played) = (0.0f64, 0, 0);
-                        while played < span {
-                            p.mix_next(span - played);
-                            loudest = p.mix.iter().fold(loudest, |m, x| m.max(x.abs()));
-                            ceiling.limit(&mut p.mix);
-                            caught += (p.mix.iter())
-                                .filter(|&&x| ceiling.clamp(x) != x as f32)
-                                .count();
-                            played += p.mix.len();
+                        let mut heard = Heard::default();
+                        while heard.played < span {
+                            p.mix_next(span - heard.played);
+                            // a frame at a time, which plays the same frames,
+                            // to read the gain each one plays at
+                            for i in 0..p.mix.len() {
+                                heard.loudest = heard.loudest.max(p.mix[i].abs());
+                                ceiling.limit(&mut p.mix[i..=i]);
+                                heard.hear(ceiling.gain(), ceiling.clamp(p.mix[i]), p.mix[i]);
+                            }
                         }
-                        (loudest, caught, played)
+                        heard
                     })
                 })
                 .collect();
@@ -323,20 +316,53 @@ mod tests {
                 .collect()
         });
         assert!(
-            heard
-                .iter()
-                .any(|&(loudest, ..)| loudest > ceiling_amplitude()),
-            "no run overloads the ceiling, so holding it proves nothing"
+            heard.iter().all(|h| h.loudest > 0.0),
+            "a run plays silence, which no ceiling limits"
         );
-        // the bound: the limiter alone holds the ceiling, so the clamp after
-        // it catches no sample
-        let caught: Vec<String> = (runs.iter().zip(&heard))
-            .filter(|(_, (_, caught, _))| *caught > 0)
-            .map(|((seed, a, b), (_, caught, played))| {
-                format!("seed {seed}, {a:?} into {b:?}: {caught} of {played}")
+        let off: Vec<String> = (runs.iter().zip(&heard))
+            .filter(|(_, h)| {
+                h.limited_share() > MOST_LIMITED_SHARE
+                    || h.deepest_db() > DEEPEST_REDUCTION_DB
+                    || h.caught > 0
             })
+            .map(|((seed, a, b), h)| format!("seed {seed}, {a:?} into {b:?}: {h:?}"))
             .collect();
-        assert!(caught.is_empty(), "the clamp caught samples: {caught:#?}");
+        assert!(
+            off.is_empty(),
+            "the ceiling did more than back the mix up: {off:#?}"
+        );
+    }
+
+    /// What one run's ceiling did.
+    #[derive(Debug, Default)]
+    struct Heard {
+        played: usize,
+        /// The loudest sample into the limiter.
+        loudest: f64,
+        /// Frames the limiter turned down, and the least gain it played.
+        limited: usize,
+        least_gain: Option<f64>,
+        /// Samples the clamp changed after the limiter.
+        caught: usize,
+    }
+
+    impl Heard {
+        fn hear(&mut self, gain: f64, clamped: f32, limited: f64) {
+            self.played += 1;
+            if gain < 1.0 {
+                self.limited += 1;
+                self.least_gain = Some(self.least_gain.map_or(gain, |g| g.min(gain)));
+            }
+            self.caught += usize::from(clamped != limited as f32);
+        }
+
+        fn limited_share(&self) -> f64 {
+            self.limited as f64 / self.played as f64
+        }
+
+        fn deepest_db(&self) -> f64 {
+            self.least_gain.map_or(0.0, |g| -20.0 * g.log10())
+        }
     }
 
     #[test]
@@ -345,10 +371,6 @@ mod tests {
         let frames = 10 * SAMPLE_RATE as usize;
         let got = next(&mut Performance::new(seed, c), frames);
         let mut mix = mixed(&mut Performance::new(seed, c), frames);
-        assert!(
-            mix.iter().any(|x| x.abs() > ceiling_amplitude()),
-            "the mix never overloads the ceiling here, so this proves nothing"
-        );
         let mut ceiling = Ceiling::new(SAMPLE_RATE);
         ceiling.limit(&mut mix);
         let first_diff = (got.iter().zip(&mix)).position(|(&[l, r], &x)| {
