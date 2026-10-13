@@ -216,8 +216,8 @@ every taste axis is a data table or named const with ONE home:
         <(sed -nE 's/^ *Lane::([A-Za-z]+) => (\[.*\]),$/\1 \2/p' src/stream/master.rs | tr '[:upper:]' '[:lower:]')
    ```
    then renders the batch on `main` into `DIR/base` and on the branch into `DIR/cand`, DIR
-   durable and outside the repo (`~/Desktop/lofi-listen/<change>`) with each render's
-   `git rev-parse HEAD` in `DIR/COMMIT`, and the owner blind-compares them:
+   durable and outside the repo (`~/Desktop/lofi-listen/<change>`), each from a clean tree
+   with its `git rev-parse HEAD` in `DIR/{base,cand}/COMMIT`, and the owner blind-compares them:
    `python3 .claude/skills/procedural-lofi/scripts/ab_listen.py DIR/base DIR/cand --out DIR/verdict.json`.
    A change of engine renders both on one commit, `--engine v1 --out DIR/base` and
    `--engine v2 --out DIR/cand` with the same `--mood`, `--tier` and seeds: each take keeps
