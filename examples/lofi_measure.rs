@@ -87,7 +87,7 @@ fn run() -> std::io::Result<()> {
         let (lanes, mix, took, rendered) = match batch.engine {
             Engine::V1 => {
                 let (beds, took) = render_take(&score);
-                let mix = soak_mix(&beds, &tier.lane_gains());
+                let mix = soak_mix(&beds, &batch.lane_gains());
                 let rendered = beds[0].len();
                 (Some((beds, took)), mix, took.iter().sum(), rendered)
             }

@@ -52,12 +52,6 @@ impl Tier {
             Tier::Busy => busy,
         }
     }
-
-    /// Each lane's gain in the tier's mix, in [`Lane::ALL`] order: lofi's, at
-    /// the tier's intensity.
-    pub(crate) fn lane_gains(self) -> [f32; Lane::ALL.len()] {
-        Lane::ALL.map(|lane| lane_gain(lane, self.intensity()))
-    }
 }
 
 /// Which engine renders a take. Both play the same score, so a batch from each
@@ -84,6 +78,9 @@ impl Engine {
         }
     }
 }
+
+/// The song of a seed's run that its take plays, whichever engine renders it.
+const SONG: u64 = 0;
 
 /// The lanes' noise seed: any fixed value, so a take renders alike on every run
 /// and a base and a candidate render differ only by their change.
@@ -184,15 +181,22 @@ impl Batch {
             .with_intensity(self.tier().intensity())
     }
 
+    /// Each lane's gain in the take's mix, in [`Lane::ALL`] order: lofi's, at
+    /// the intensity a `Performance` mixes it at.
+    pub(crate) fn lane_gains(&self) -> [f32; Lane::ALL.len()] {
+        let intensity = self.controls().intensity;
+        Lane::ALL.map(|lane| lane_gain(lane, intensity))
+    }
+
     /// The score `seed`'s take plays, whichever engine renders it.
     pub(crate) fn score(&self, seed: u64) -> Score {
-        audition::song_score(seed, 0, self.controls())
+        audition::song_score(seed, SONG, self.controls())
     }
 
     /// `seed`'s take as a `Performance` plays it: one channel of it, since it
     /// plays both alike.
     pub(crate) fn perform(&self, seed: u64) -> io::Result<Vec<f32>> {
-        audition::song(seed, 0, self.controls())
+        audition::song(seed, SONG, self.controls())
             .into_iter()
             .map(|[left, right]: Frame| {
                 (left.to_bits() == right.to_bits())
@@ -249,16 +253,20 @@ mod tests {
     }
 
     #[test]
-    fn every_tier_name_parses_to_its_tier() {
-        for (name, tier) in [
-            ("empty", Tier::Empty),
-            ("moderate", Tier::Moderate),
-            ("busy", Tier::Busy),
-        ] {
+    fn every_tier_and_mood_plays_under_the_controls_it_names() {
+        let [empty, moderate, busy] = TIER_INTENSITIES;
+        for (name, intensity) in [("empty", empty), ("moderate", moderate), ("busy", busy)] {
             let batch = parsed("--tier", name);
-            assert_eq!(batch.map(|b| b.tier()).ok(), Some(tier), "{name}");
+            assert_eq!(
+                batch.map(|b| b.controls().intensity).ok(),
+                Some(intensity),
+                "{name}"
+            );
         }
         assert!(parsed("--tier", "loud").is_err());
+        let [day, night] =
+            ["day", "night"].map(|mood| parsed("--mood", mood).map(|b| b.score(0)).ok());
+        assert!(day != night, "a night take plays a day song");
     }
 
     #[test]

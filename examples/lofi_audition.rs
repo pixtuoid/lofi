@@ -166,7 +166,7 @@ impl Args {
                         gains[s] = 1.0;
                         gains
                     }
-                    None => self.batch.tier().lane_gains(),
+                    None => self.batch.lane_gains(),
                 };
                 let (beds, _) = render_take(&self.batch.score(seed));
                 soak_mix(&beds, &gains)
