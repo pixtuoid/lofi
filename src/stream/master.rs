@@ -116,15 +116,21 @@ impl Ceiling {
         let lookahead = (LOOKAHEAD_S * rate) as usize;
         let window = lookahead + (HOLD_S * rate) as usize + 1;
         let unit = 1u64 << GAIN_BITS;
+        // each with room for one more than it keeps: a frame pushes before it
+        // pops
+        let mut late = VecDeque::with_capacity(lookahead + 1);
+        late.resize(lookahead, 0.0);
+        let mut steps = VecDeque::with_capacity(lookahead + 2);
+        steps.resize(lookahead + 1, unit);
         Self {
             limit: 10f32.powf(CEILING_DBFS / 20.0),
             window: window as u64,
             rise: 2f64.powf(1.0 / (RELEASE_S * rate)),
-            late: VecDeque::from(vec![0.0; lookahead]),
-            needs: VecDeque::with_capacity(window),
+            late,
+            needs: VecDeque::with_capacity(window + 1),
             frame: 0,
             released: 1.0,
-            steps: VecDeque::from(vec![unit; lookahead + 1]),
+            steps,
             sum: unit * (lookahead + 1) as u64,
         }
     }
@@ -313,6 +319,22 @@ mod tests {
                 .all(|&g| g == 1.0),
             "two release times and the lookahead on, the gain must be back at 1"
         );
+    }
+
+    #[test]
+    fn the_ceiling_plays_in_the_room_it_starts_with() {
+        let mut ceiling = Ceiling::new(SAMPLE_RATE);
+        let room = |c: &Ceiling| [c.late.capacity(), c.needs.capacity(), c.steps.capacity()];
+        let before = room(&ceiling);
+        // an overload quieter every frame for two windows, so the moving
+        // minimum keeps every frame's need
+        let frames = 2 * ceiling.window as usize;
+        let limit = f64::from(ceiling.limit);
+        let mut input: Vec<f64> = (0..frames)
+            .map(|i| limit * (4.0 - 2.0 * i as f64 / frames as f64))
+            .collect();
+        ceiling.limit(&mut input);
+        assert_eq!(room(&ceiling), before, "a buffer grew while playing");
     }
 
     #[test]
