@@ -1,8 +1,8 @@
 //! The texture's tape hiss: noise under a linear-phase low-pass. Hiss is
 //! stationary noise, so the kernel's symmetric pre-ringing has no transient
-//! to expose, and only an FIR reaches the brickwall v1's hiss used. Its noise
-//! is drawn ahead in blocks of its own, so no chunking of the render moves a
-//! draw.
+//! to expose, and only an FIR reaches the whole-lane chain's brickwall. Its
+//! noise is drawn ahead in blocks of its own, so no chunking of the render
+//! moves a draw.
 
 use std::f64::consts::{PI, TAU};
 
@@ -10,7 +10,7 @@ use crate::dsp::{NoiseStream, Twiddles, fft, twiddles};
 
 /// The low-pass's stopband, in dB under its passband, and its transition's
 /// width in Hz, centred on the corner: the controller's proposal (opinion),
-/// which the hiss test holds against v1's brickwall.
+/// which the hiss test holds against the whole-lane chain's brickwall.
 const STOPBAND_DB: f64 = 80.0;
 const TRANSITION_HZ: f64 = 200.0;
 
@@ -218,15 +218,15 @@ mod tests {
     }
 
     #[test]
-    fn the_hiss_keeps_v1s_passband_and_is_its_stopband_down_past_it() {
+    fn the_hiss_keeps_the_whole_lane_passband_and_is_its_stopband_down_past_it() {
         // the controller's proposal (opinion): the passband through the
-        // corner's band within this of v1's brickwall, and every band past it
-        // the stopband down, less what a band's edges leak
+        // corner's band within this of the whole-lane brickwall, and every
+        // band past it the stopband down, less what a band's edges leak
         const PASSBAND_DB: f64 = 0.5;
         const EDGE_LEAKAGE_DB: f64 = 3.0;
         let (sr, n, seed) = (SAMPLE_RATE, 1 << 20, 17);
-        let mut v2 = vec![0.0; n];
-        Hiss::new(HISS_HZ, sr).fill(&mut v2, &mut NoiseStream::new(seed));
+        let mut stream = vec![0.0; n];
+        Hiss::new(HISS_HZ, sr).fill(&mut stream, &mut NoiseStream::new(seed));
         // the same draws, from as far on as the kernel's centre lags its
         // newest
         let mut noise = NoiseStream::new(seed);
@@ -234,18 +234,18 @@ mod tests {
             noise.norm();
         }
         let raw: Vec<f32> = (0..n).map(|_| noise.norm()).collect();
-        let v1: Vec<f64> = lowpass(&raw, HISS_HZ).into_iter().map(f64::from).collect();
+        let whole: Vec<f64> = lowpass(&raw, HISS_HZ).into_iter().map(f64::from).collect();
         let edge = 2f32.powf(1.0 / 6.0);
         let corner = (-14..=12)
             .find(|&k| (centre(k) / edge..centre(k) * edge).contains(&HISS_HZ))
             .expect("a third octave holds the corner");
         let ks: Vec<i32> = (-14..=12).collect();
-        let (old, new) = (levels(&v1, &ks), levels(&v2, &ks));
+        let (old, new) = (levels(&whole, &ks), levels(&stream, &ks));
         let mut off = Vec::new();
         for ((&k, o), v) in ks.iter().zip(&old).zip(&new) {
             let hz = centre(k).round();
             if k <= corner && (v - o).abs() > PASSBAND_DB {
-                off.push(format!("{hz} Hz: {v:+.2} vs v1's {o:+.2} dB"));
+                off.push(format!("{hz} Hz: {v:+.2} vs the whole lane's {o:+.2} dB"));
             }
             if k > corner && *v > EDGE_LEAKAGE_DB - STOPBAND_DB {
                 off.push(format!("{hz} Hz: {v:+.2} dB"));

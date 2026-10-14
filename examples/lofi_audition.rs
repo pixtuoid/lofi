@@ -1,17 +1,17 @@
 //! The generator's STATISTICAL gate: render N random-seed takes to wav so
 //! `ab_judge.py` judges the COMPOSER, not one take. A take is the first song of
-//! a seed's run at one of pixtuoid's tiers. `--engine v2`, the default, renders
-//! it as a `Performance` plays it, so what you hear is what lofi ships;
-//! `--engine v1` renders the same score's lanes whole and loops their mix, as
+//! a seed's run at one of pixtuoid's tiers. `--engine stream`, the default,
+//! renders it as a `Performance` plays it, so what you hear is what lofi ships;
+//! `--engine whole` renders the same score's lanes whole and loops their mix, as
 //! pixtuoid's office played lofi before the stream. Either take is mono and a
 //! song long.
 //!
 //! Usage:
 //!   cargo run --release --example lofi_audition -- \
-//!     [--engine v1|v2] [--mood day|night] [--seeds N] [--start S] [--out DIR] \
+//!     [--engine whole|stream] [--mood day|night] [--seeds N] [--start S] [--out DIR] \
 //!     [--tier empty|moderate|busy | --solo pad|sparkle|keys|drums|texture|bass] \
 //!     [--shuffle KEYFILE]
-//!   `--solo` renders a lane whole, so it takes `--engine v1`.
+//!   `--solo` renders a lane whole, so it takes `--engine whole`.
 
 #[path = "common/batch.rs"]
 mod batch;
@@ -140,9 +140,9 @@ impl Args {
                     "--solo plays one lane, so it takes no --tier".into(),
                 ));
             }
-            if parsed.batch.engine != Engine::V1 {
+            if parsed.batch.engine != Engine::WholeLane {
                 return Err(usage_error(
-                    "--solo renders one lane whole, so it takes --engine v1".into(),
+                    "--solo renders one lane whole, so it takes --engine whole".into(),
                 ));
             }
         }
@@ -150,7 +150,7 @@ impl Args {
     }
 
     /// Each seed with its take's file name. No engine changes a name, so
-    /// `ab_listen.py` pairs a v1 batch with a v2 batch.
+    /// `ab_listen.py` pairs a whole-lane batch with a stream batch.
     fn takes(&self) -> Vec<(u64, String)> {
         let mix = match self.solo {
             Some(s) => LANE_NAMES[s],
@@ -166,7 +166,7 @@ impl Args {
     /// would write a different take.
     fn render(&self, seed: u64) -> io::Result<Vec<f32>> {
         let mut take = match self.batch.engine {
-            Engine::V1 => {
+            Engine::WholeLane => {
                 let gains = match self.solo {
                     Some(s) => {
                         let mut gains = [0.0; Lane::ALL.len()];
@@ -178,7 +178,7 @@ impl Args {
                 let (beds, _) = render_take(&self.batch.score(seed));
                 soak_mix(&beds, &gains)
             }
-            Engine::V2 => self.batch.perform(seed)?,
+            Engine::Stream => self.batch.perform(seed)?,
         };
         fade_edges(&mut take);
         let gain = 10f64.powf((TARGET_LUFS - gated_lufs(&take, SAMPLE_RATE)) / 20.0) as f32;
@@ -285,18 +285,18 @@ mod tests {
 
     #[test]
     fn a_take_keeps_its_name_under_either_engine() {
-        let [v1, v2] = ["v1", "v2"].map(|engine| {
+        let [whole, stream] = ["whole", "stream"].map(|engine| {
             parsed(&["--engine", engine, "--mood", "night", "--tier", "empty"]).takes()
         });
-        assert_eq!(v1, v2);
+        assert_eq!(whole, stream);
         // the shape `ab_listen.py`'s NAME pairs
-        assert_eq!(v1[0], (0, "gen_night_empty_000.wav".to_owned()));
+        assert_eq!(whole[0], (0, "gen_night_empty_000.wav".to_owned()));
     }
 
     #[test]
     fn both_engines_write_a_take_as_long_and_at_the_target_loudness() {
         let seed = 1;
-        let [v1, v2] = ["v1", "v2"].map(|engine| {
+        let [whole, stream] = ["whole", "stream"].map(|engine| {
             let take = parsed(&["--engine", engine]).render(seed);
             let written: Vec<f32> = (take.expect("the take renders").iter())
                 .map(|&x| f32::from(pcm(x)) / f32::from(i16::MAX))
@@ -308,12 +308,12 @@ mod tests {
             );
             written.len()
         });
-        assert_eq!(v1, v2, "the engines' takes last apart");
+        assert_eq!(whole, stream, "the engines' takes last apart");
     }
 
     #[test]
     fn both_engines_write_a_take_from_silence_to_silence() {
-        for engine in ["v1", "v2"] {
+        for engine in ["whole", "stream"] {
             let take = parsed(&["--engine", engine]).render(2);
             let edges = take.map(|t| [t[0], t[t.len() - 1]].map(pcm)).ok();
             assert_eq!(edges, Some([0, 0]), "{engine}'s first and last samples");

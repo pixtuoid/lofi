@@ -207,7 +207,7 @@ every taste axis is a data table or named const with ONE home:
    unit-draw per mood — re-weight the bands rather than adding draws).
 4. Extend the distribution property test; run the compose suite (fast — no synthesis).
 5. Render a batch (`cargo run --release --example lofi_audition -- --seeds N`;
-   `--engine v1 --solo sparkle` isolates the lane, rendered whole) → `ab_judge.py` gates it →
+   `--engine whole --solo sparkle` isolates the lane) → `ab_judge.py` gates it →
    tighten or ship. A change to a shipped sound first diffs the tier gains moved here
    against pixtuoid's (no output: in step),
    ```bash
@@ -240,8 +240,8 @@ every taste axis is a data table or named const with ONE home:
    ```
    The owner's blind listen is optional and, when given, overrides the judge:
    `python3 .claude/skills/procedural-lofi/scripts/ab_listen.py DIR/base DIR/cand --out DIR/verdict.json`.
-   A change of engine renders both on one commit, `--engine v1 --out DIR/base` and
-   `--engine v2 --out DIR/cand` with the same `--mood`, `--tier` and seeds: each take keeps
+   A change of engine renders both on one commit, `--engine whole --out DIR/base` and
+   `--engine stream --out DIR/cand` with the same `--mood`, `--tier` and seeds: each take keeps
    its name and its score under either engine.
 
 Mix LANES stay instrument-blind (a consumer's mixer sees lanes, never voices) — a

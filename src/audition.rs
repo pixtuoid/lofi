@@ -29,7 +29,7 @@ pub const WHOLE_LANE_SEEDS: Range<u64> = 0..24;
 /// How much the whole-lane mix's gated loudness varied across
 /// [`WHOLE_LANE_SEEDS`], as [`lufs_sd`] reads it, at an intensity and a
 /// daylight: `(intensity, daylight, LU)`. What lofi played before it
-/// streamed, on the songs a `Performance` plays: `lofi_measure --engine v1`
+/// streamed, on the songs a `Performance` plays: `lofi_measure --engine whole`
 /// prints it over those seeds at the row's `--tier` and `--mood`. A run's
 /// songs may vary up to [`lufs_sd_bound`], a non-regression, not a target.
 pub const WHOLE_LANE_LUFS_SD: [(f32, f32, f64); 4] = [

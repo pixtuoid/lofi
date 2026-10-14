@@ -1,13 +1,13 @@
 //! The listening loop's numbers: what a sound change moves in a pixtuoid
-//! tier's mix, and per lane through `--engine v1`. They steer a change;
-//! `ab_judge.py` judges it. `--engine v2`, the default, measures a
-//! `Performance`'s song, which is what lofi ships; `--engine v1` measures the
+//! tier's mix, and per lane through `--engine whole`. They steer a change;
+//! `ab_judge.py` judges it. `--engine stream`, the default, measures a
+//! `Performance`'s song, which is what lofi ships; `--engine whole` measures the
 //! same score's lanes rendered whole and their mix looped as long, at the
 //! stage where the stream's mix meets its ceiling, so the two mixes compare.
 //!
 //! Usage:
 //!   cargo run --release --example lofi_measure -- \
-//!     [--engine v1|v2] [--mood day|night] [--seeds N] [--start S] [--tier empty|moderate|busy]
+//!     [--engine whole|stream] [--mood day|night] [--seeds N] [--start S] [--tier empty|moderate|busy]
 
 #[path = "common/batch.rs"]
 mod batch;
@@ -83,15 +83,15 @@ fn run() -> std::io::Result<()> {
     let mut mix_lufs = Vec::new();
     for seed in batch.seeds() {
         let score = batch.score(seed);
-        // v1 renders each lane's loop once, then plays it again
+        // the whole-lane chain renders each lane's loop once, then plays it again
         let (lanes, mix, took, rendered) = match batch.engine {
-            Engine::V1 => {
+            Engine::WholeLane => {
                 let (beds, took) = render_take(&score);
                 let mix = soak_mix(&beds, &batch.lane_gains());
                 let rendered = beds[0].len();
                 (Some((beds, took)), mix, took.iter().sum(), rendered)
             }
-            Engine::V2 => {
+            Engine::Stream => {
                 let started = Instant::now();
                 let mix = batch.perform(seed)?;
                 let rendered = mix.len();
@@ -392,17 +392,17 @@ mod tests {
     }
 
     #[test]
-    fn v1s_mix_reads_at_the_stage_v2s_does() {
+    fn the_whole_lane_mix_reads_at_the_stage_the_streams_does() {
         let (batch, seed) = (Batch::default(), 0);
         let (beds, _) = render_take(&batch.score(seed));
-        let v1 = gated_lufs(&soak_mix(&beds, &batch.lane_gains()), SAMPLE_RATE);
-        let v2 = gated_lufs(&batch.perform(seed).expect("v2 plays"), SAMPLE_RATE);
+        let whole = gated_lufs(&soak_mix(&beds, &batch.lane_gains()), SAMPLE_RATE);
+        let stream = gated_lufs(&batch.perform(seed).expect("the stream plays"), SAMPLE_RATE);
         // half the staging in dB, which a mix staged once less or once more
         // reads past
         let bound = -10.0 * MASTER_GAIN.log10();
         assert!(
-            (v1 - v2).abs() < bound,
-            "v1's mix reads {v1:.2} LUFS, v2's {v2:.2}"
+            (whole - stream).abs() < bound,
+            "the whole-lane mix reads {whole:.2} LUFS, the stream's {stream:.2}"
         );
     }
 

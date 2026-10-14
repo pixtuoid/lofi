@@ -27,7 +27,7 @@ The same seed gives the same score, event for event and bit for bit, on every pl
 cargo run --release --example lofi_audition -- --seeds 4
 ```
 
-Writes one wav per seed at one of pixtuoid's tiers (`--tier empty|moderate|busy`), matched on gated loudness: the seed's first song, as a `Performance` plays it at the tier's intensity. `--engine v1` renders that song's lanes whole and loops their mix instead, and takes `--solo <lane>` to isolate one. `--shuffle KEYFILE` hides which seed is which. In the repo, `--example lofi_measure` prints what a change moves in the tier's mix, and per lane under `--engine v1`.
+Writes one wav per seed at one of pixtuoid's tiers (`--tier empty|moderate|busy`), matched on gated loudness: the seed's first song, as a `Performance` plays it at the tier's intensity. `--engine whole` renders that song's lanes whole and loops their mix instead, and takes `--solo <lane>` to isolate one. `--shuffle KEYFILE` hides which seed is which. In the repo, `--example lofi_measure` prints what a change moves in the tier's mix, and per lane under `--engine whole`.
 
 ## License
 

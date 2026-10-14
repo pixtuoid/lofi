@@ -60,21 +60,21 @@ impl Tier {
 pub(crate) enum Engine {
     /// The lanes rendered whole as one loop each, then looped and mixed: how
     /// pixtuoid's office played lofi before the stream.
-    V1,
+    WholeLane,
     /// A `Performance`, which is what lofi ships, so a sound change is heard
     /// as its listeners will hear it.
     #[default]
-    V2,
+    Stream,
 }
 
 impl Engine {
-    const ALL: [Engine; 2] = [Engine::V1, Engine::V2];
+    const ALL: [Engine; 2] = [Engine::WholeLane, Engine::Stream];
 
     /// The `--engine` spelling.
     pub(crate) fn name(self) -> &'static str {
         match self {
-            Engine::V1 => "v1",
-            Engine::V2 => "v2",
+            Engine::WholeLane => "whole",
+            Engine::Stream => "stream",
         }
     }
 }
@@ -202,7 +202,9 @@ impl Batch {
                 (left.to_bits() == right.to_bits())
                     .then_some(left)
                     .ok_or_else(|| {
-                        io::Error::other("v2 plays its channels apart, so one is not the take")
+                        io::Error::other(
+                            "the stream plays its channels apart, so one is not the take",
+                        )
                     })
             })
             .collect()
@@ -259,7 +261,7 @@ mod tests {
             let batch = parsed("--tier", name).expect("the tier parses");
             assert_eq!(batch.controls().intensity, intensity, "{name}");
             let gains = Lane::ALL.map(|lane| lane_gain(lane, intensity));
-            assert_eq!(batch.lane_gains(), gains, "{name}'s v1 mix");
+            assert_eq!(batch.lane_gains(), gains, "{name}'s whole-lane mix");
         }
         assert!(parsed("--tier", "loud").is_err());
         let [day, night] =
@@ -269,10 +271,10 @@ mod tests {
 
     #[test]
     fn every_engine_name_parses_to_its_engine() {
-        for (name, engine) in [("v1", Engine::V1), ("v2", Engine::V2)] {
+        for (name, engine) in [("whole", Engine::WholeLane), ("stream", Engine::Stream)] {
             let batch = parsed("--engine", name);
             assert_eq!(batch.map(|b| b.engine).ok(), Some(engine), "{name}");
         }
-        assert!(parsed("--engine", "v3").is_err());
+        assert!(parsed("--engine", "both").is_err());
     }
 }
