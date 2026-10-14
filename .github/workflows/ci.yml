@@ -39,6 +39,8 @@ jobs:
           fi
       - name: ab_judge.py's verdict gate holds its tests
         run: python3 -I .claude/skills/procedural-lofi/scripts/test_verdict.py
+      - name: the remote judge's batch validator holds its tests
+        run: python3 -I .claude/skills/procedural-lofi/judge/test_validate_batch.py
 
   test:
     strategy:

@@ -5,21 +5,22 @@ GENERATOR loop step 5 says, which also sets up the venv this runs in),
 scores both sides with two learned judges and their distance from real lofi,
 describes each pair, and writes the verdict.
 
-Usage: $J/bin/python ab_judge.py DIR --refs REFS
+Usage: $J/bin/python ab_judge.py DIR --refs REFS [--fad-cache CACHE] [--score-identical]
   DIR holds base/ and cand/, each with the COMMIT it rendered at; writes
   DIR/judge.json and prints a table.
   REFS is the reference corpus: audio/ and its manifest.json of sha256s.
+  CACHE holds the corpus's FAD statistics, built on a miss.
+  --score-identical scores byte-identical pairs too: the proof that they tie.
 
-The verdict is the controller's proposal (opinion): per mood and over every
-take, an exact one-sided sign test, ties dropped, that cand scores LOWER than
-base on each judge's headline score, or sits FARTHER from the corpus by
-per-song FAD. Any test significant at ALPHA is REGRESSION; a group with too
-few untied pairs for a test to ever reach ALPHA is INSUFFICIENT; anything else
-is PASS. The batch takes its worst group's verdict, a detected regression
-first, and exits non-zero unless it PASSes. The owner's blind listen, when
-given, overrides this verdict. Every third-octave band whose difference
-passes TO_EXPLAIN_DB is listed TO-EXPLAIN: a PR names its cause, but it fails
-nothing.
+The verdict is the controller's proposal (opinion), `verdict.judged`: per
+mood, an exact one-sided sign test on each judge, ties dropped, that cand
+scores LOWER than base on its headline score, or sits FARTHER from the corpus
+by per-song FAD. Byte-identical pairs are never scored, and a mood with only
+those is UNCHANGED. The batch takes its worst mood's verdict, a detected
+regression first, and exits non-zero on REGRESSION or INSUFFICIENT. The
+owner's blind listen, when given, overrides this verdict. Every third-octave
+band whose difference passes TO_EXPLAIN_DB is listed TO-EXPLAIN: a PR names
+its cause, but it fails nothing.
 
 A score is a guard against regression from a base batch to a candidate,
 never an objective to maximize: lofi's character (hiss, crackle, roll-off) is
@@ -86,11 +87,17 @@ from scipy import signal
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ab_listen import NAME
-from verdict import ALPHA, MIN_UNTIED, batch_verdict, exit_message, group_verdict, sign_test
+from verdict import JUDGES, exit_message, judged
 
-# the clone of https://github.com/dgtql/MuQ-Eval that SKILL.md's setup puts
-# in the venv: its model code is no package
+# the clone of https://github.com/dgtql/MuQ-Eval that SKILL.md's setup and
+# the Modal image put in the venv, at the commit this judge was ratified on:
+# its model code is no package
 MUQ_EVAL = Path(sys.prefix) / "MuQ-Eval"
+MUQ_EVAL_COMMIT = "60a88f8ac0909ca1fd1a78af3660f1fc376977a1"
+# a detached checkout's HEAD holds its commit
+head = MUQ_EVAL / ".git" / "HEAD"
+if not head.is_file() or head.read_text().strip() != MUQ_EVAL_COMMIT:
+    sys.exit(f"{MUQ_EVAL} isn't a MuQ-Eval checkout at {MUQ_EVAL_COMMIT}")
 sys.path.insert(0, str(MUQ_EVAL))
 from src.model import MusicQualityModel
 
@@ -119,10 +126,17 @@ RESAMPLE = {
     "beta": 14.769656459379492,
 }
 
-# the floor every take gets before anything scores it, in dBFS RMS: over both
+# the floor every take gets before anything scores it: white noise over both
 # engines' numerical floors, which a learned judge scores and a listener
-# can't hear (inaudible is opinion)
-NOISE_FLOOR_DBFS = -70.0
+# can't hear (inaudible is opinion). It was calibrated at this RMS in dBFS
+# under takes at this integrated loudness, lofi_audition's `TARGET_LUFS` then,
+# and keeps that distance under each take's own loudness: the engines'
+# numerical floors scale with the music, and a pure gain change must move a
+# take and its floor together, or FAD's loudness normalization hears the
+# floor move
+FLOOR_CALIBRATED_DBFS = -70.0
+FLOOR_CALIBRATED_LUFS = -18.0
+FLOOR_RE_TAKE_DB = FLOOR_CALIBRATED_DBFS - FLOOR_CALIBRATED_LUFS
 
 # Audiobox's own window, `make_inference_batch(wavs, 10, 10, ...)` in its
 # infer.py: both judges score a take as consecutive windows this long
@@ -166,13 +180,14 @@ def mono(x):
     return (left + right) / 2
 
 
-def floored(x, name):
-    """`x` over `NOISE_FLOOR_DBFS` of white noise, the same in each channel,
-    seeded by the take's name: both sides of a pair share it, so two identical
-    takes still tie and the floor adds no variance to the pair's difference."""
+def floored(x, name, lufs):
+    """`x`, whose integrated loudness is `lufs`, over white noise
+    `FLOOR_RE_TAKE_DB` under it, the same in each channel and seeded by the
+    take's name: both sides of a pair share the draw, so two identical takes
+    still tie and the floor adds no variance to the pair's difference."""
     seed = int.from_bytes(hashlib.sha256(name.encode()).digest()[:8], "little")
     noise = np.random.default_rng(seed).standard_normal(len(x)).astype(np.float32)
-    noise *= np.float32(10 ** (NOISE_FLOOR_DBFS / 20))
+    noise *= np.float32(10 ** ((lufs + FLOOR_RE_TAKE_DB) / 20))
     return x + (noise if x.ndim == 1 else noise[:, None])
 
 
@@ -264,13 +279,16 @@ class Fad:
     LAION-CLAP embedding: the Fréchet distance between the corpus's frame
     statistics and the take's, as fadtk's `score_individual` takes it."""
 
-    def __init__(self, refs, takes_lufs):
+    def __init__(self, refs, takes_lufs, caches):
         manifest = (refs / "manifest.json").read_bytes()
         tracks = json.loads(manifest)["tracks"]
-        for t in tracks:
-            digest = hashlib.sha256((refs / "audio" / t["file"]).read_bytes()).hexdigest()
-            if digest != t["sha256"]:
-                sys.exit(f"{t['file']} doesn't match its manifest sha256; refusing the corpus")
+        # by index: the corpus's names are private, and the CI's log is not
+        for i, t in enumerate(tracks):
+            path = refs / "audio" / t["file"]
+            if not path.is_file():
+                sys.exit(f"reference {i} of the manifest is missing; refusing the corpus")
+            if hashlib.sha256(path.read_bytes()).hexdigest() != t["sha256"]:
+                sys.exit(f"reference {i} doesn't match its manifest sha256; refusing the corpus")
         # fadtk loads whatever sits at its checkpoint path and downloads a
         # missing one from the repo's head
         # (https://github.com/microsoft/fadtk/blob/6f815282007288a7165d037a95dacd6d783b6f32/fadtk/model_loader.py#L303-L310),
@@ -285,7 +303,6 @@ class Fad:
         self.model = fadtk.model_loader.CLAPLaionModel(FAD_EMBEDDING)
         self.model.load_model()
         manifest_sha = hashlib.sha256(manifest).hexdigest()
-        caches = Path(sys.prefix) / "fad-cache"
         caches.mkdir(parents=True, exist_ok=True)
         # the corpus alone sets it, and measuring it decodes every track
         quietest_file = caches / f"{manifest_sha}-quietest.json"
@@ -380,6 +397,13 @@ def main():
     ap = argparse.ArgumentParser(description="Judge an A/B batch by measurement.")
     ap.add_argument("dir", type=Path, help="the batch: base/ and cand/ of same-named takes")
     ap.add_argument("--refs", type=Path, required=True, help="the reference corpus: audio/ and manifest.json")
+    ap.add_argument(
+        "--fad-cache",
+        type=Path,
+        default=Path(sys.prefix) / "fad-cache",
+        help="the corpus's FAD statistics, built here on a miss (default: the venv's)",
+    )
+    ap.add_argument("--score-identical", action="store_true", help="score byte-identical pairs too")
     args = ap.parse_args()
     base_dir, cand_dir = args.dir / "base", args.dir / "cand"
 
@@ -396,71 +420,37 @@ def main():
     if not names:
         sys.exit("no .wav name is in both directories")
     commits = {"base": read_commit(base_dir), "cand": read_commit(cand_dir)}
-
-    # the device Audiobox's own `setup_model` picks
-    device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
-    audiobox = initialize_predictor(hf_hub_download(AUDIOBOX[0], "checkpoint.pt", revision=AUDIOBOX[1]))
-    muq = MuqEval(device)
     sides = (("base", base_dir), ("cand", cand_dir))
-    takes_lufs = float(np.median([mono_lufs(*sf.read(d / n, dtype="float32")) for n in names for _, d in sides]))
-    fad = Fad(args.refs, takes_lufs)
+    # a pair the change left byte for byte as it was can only tie, so no judge
+    # hears it
+    changed = [n for n in names if args.score_identical or (base_dir / n).read_bytes() != (cand_dir / n).read_bytes()]
+    pairs = [
+        {"take": n.removesuffix(".wav"), "mood": NAME.fullmatch(n)["mood"], "identical": n not in changed}
+        for n in names
+    ]
+    record = {"dir": str(args.dir.resolve()), "commits": commits, "floor_re_take_db": FLOOR_RE_TAKE_DB}
 
-    pairs = []
-    for name in names:
-        row = {"take": name.removesuffix(".wav"), "mood": NAME.fullmatch(name)["mood"]}
-        takes = {}
-        for side, d in sides:
-            x, sr = sf.read(d / name, dtype="float32")
-            # the descriptors measure the take as rendered, the judges hear it floored
-            row[side] = describe(x, sr)
-            x = floored(x, name)
-            takes[side] = (x, sr)
-            row[side]["muq_mi"] = muq.score(x, sr)
-        row["base"]["fad"], row["cand"]["fad"] = fad.score_pair(takes["base"], takes["cand"])
-        # Audiobox reads a path with `torchaudio.load`
-        # (https://github.com/facebookresearch/audiobox-aesthetics/blob/2618e9d451b456e9328b39495b5e6234678aa550/src/audiobox_aesthetics/infer.py#L32-L45),
-        # which "relies on TorchCodec" since TorchAudio 2.9
-        # (https://docs.pytorch.org/audio/2.11.0/generated/torchaudio.load.html),
-        # so it gets tensors
-        scores = audiobox.forward(
-            [{"path": torch.from_numpy(np.atleast_2d(x.T).copy()), "sample_rate": sr} for x, sr in takes.values()]
+    if changed:
+        # the device Audiobox's own `setup_model` picks
+        device = torch.device(
+            "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
         )
-        for side, s in zip(("base", "cand"), scores):
-            row[side]["audiobox"] = s
-        row["bands_delta_db"] = [c - b for b, c in zip(row["base"]["bands_db"], row["cand"]["bands_db"])]
-        pairs.append(row)
-        print(f"scored {row['take']}", flush=True)
-
-    groups = {mood: [p for p in pairs if p["mood"] == mood] for mood in sorted({p["mood"] for p in pairs})}
-    groups["all"] = pairs
-    verdict = {}
-    for group, members in groups.items():
-        ce = [p["cand"]["audiobox"]["CE"] - p["base"]["audiobox"]["CE"] for p in members]
-        mi = [p["cand"]["muq_mi"] - p["base"]["muq_mi"] for p in members]
-        fd = [p["cand"]["fad"] - p["base"]["fad"] for p in members]
-        tests = {
-            "audiobox_ce": {**sign_test(ce), "mean_delta": float(np.mean(ce))},
-            "muq_eval_mi": {**sign_test(mi), "mean_delta": float(np.mean(mi))},
-            # nearer the corpus is better, so a gain is a fall in FAD
-            "fad": {**sign_test([-d for d in fd]), "mean_delta": float(np.mean(fd))},
-        }
-        verdict[group] = {
-            "pairs": len(members),
-            **tests,
-            "audiobox_mean_delta_pq": float(
-                np.mean([p["cand"]["audiobox"]["PQ"] - p["base"]["audiobox"]["PQ"] for p in members])
-            ),
-            "verdict": group_verdict(tests),
-            "to_explain": to_explain(members),
-        }
-    overall = batch_verdict([v["verdict"] for v in verdict.values()])
-
-    record = {
-        "dir": str(args.dir.resolve()),
-        "commits": commits,
-        "judges": {
+        if device.type == "cuda":
+            # cuDNN "can be a source of nondeterminism", and the algorithm it
+            # picks "may be nondeterministic, unless ... cudnn.deterministic =
+            # True" (https://docs.pytorch.org/docs/2.14/notes/randomness.html),
+            # which would let two identical takes' scores differ
+            torch.backends.cudnn.benchmark = False
+            torch.backends.cudnn.deterministic = True
+        audiobox = initialize_predictor(hf_hub_download(AUDIOBOX[0], "checkpoint.pt", revision=AUDIOBOX[1]))
+        muq = MuqEval(device)
+        takes_lufs = float(
+            np.median([mono_lufs(*sf.read(d / n, dtype="float32")) for n in changed for _, d in sides])
+        )
+        fad = Fad(args.refs, takes_lufs, args.fad_cache)
+        record["judges"] = {
             "audiobox": {"package": version("audiobox_aesthetics"), "checkpoint": AUDIOBOX},
-            "muq_eval": {"code": str(MUQ_EVAL), "checkpoint": MUQ_EVAL_A1, "encoder": MUQ_310M},
+            "muq_eval": {"code": MUQ_EVAL_COMMIT, "checkpoint": MUQ_EVAL_A1, "encoder": MUQ_310M},
             "fad": {
                 "package": version("fadtk"),
                 "embedding": fad.model.name,
@@ -470,21 +460,69 @@ def main():
             },
             "torch": version("torch"),
             "device": str(device),
-        },
-        "noise_floor_dbfs": NOISE_FLOOR_DBFS,
-        "fad_calibration": fad.calibration,
-        "alpha": ALPHA,
-        "min_untied": MIN_UNTIED,
-        "bands_hz": BANDS_HZ,
-        "pairs": pairs,
-        "verdict": verdict,
-        "overall": overall,
-    }
+        }
+        record["fad_calibration"] = fad.calibration
+        for row in pairs:
+            if row["identical"]:
+                continue
+            name = f"{row['take']}.wav"
+            takes = {}
+            for side, d in sides:
+                x, sr = sf.read(d / name, dtype="float32")
+                # the descriptors measure the take as rendered, the judges hear it floored
+                row[side] = describe(x, sr)
+                x = floored(x, name, mono_lufs(x, sr))
+                takes[side] = (x, sr)
+                row[side]["muq_mi"] = muq.score(x, sr)
+            row["base"]["fad"], row["cand"]["fad"] = fad.score_pair(takes["base"], takes["cand"])
+            # Audiobox reads a path with `torchaudio.load`
+            # (https://github.com/facebookresearch/audiobox-aesthetics/blob/2618e9d451b456e9328b39495b5e6234678aa550/src/audiobox_aesthetics/infer.py#L32-L45),
+            # which "relies on TorchCodec" since TorchAudio 2.9
+            # (https://docs.pytorch.org/audio/2.11.0/generated/torchaudio.load.html),
+            # so it gets tensors
+            scores = audiobox.forward(
+                [{"path": torch.from_numpy(np.atleast_2d(x.T).copy()), "sample_rate": sr} for x, sr in takes.values()]
+            )
+            for side, s in zip(("base", "cand"), scores):
+                row[side]["audiobox"] = s
+            row["bands_delta_db"] = [c - b for b, c in zip(row["base"]["bands_db"], row["cand"]["bands_db"])]
+            b, c = row["base"], row["cand"]
+            row["deltas"] = dict(
+                zip(JUDGES, (c["audiobox"]["CE"] - b["audiobox"]["CE"], c["muq_mi"] - b["muq_mi"], c["fad"] - b["fad"]))
+            )
+            # nearer the corpus is better, so a gain is a fall in FAD
+            row["gains"] = {j: -d if j == "fad" else d for j, d in row["deltas"].items()}
+            print(f"scored {row['take']}", flush=True)
+
+    result = judged(pairs)
+    verdict = {}
+    for group, g in result["groups"].items():
+        members = g["changed"]
+        v = {"pairs": len(members), "identical": g["identical"], "gates": group != "all", "verdict": g["verdict"]}
+        if members:
+            for j, test in g["tests"].items():
+                v[j] = {**test, "mean_delta": float(np.mean([p["deltas"][j] for p in members]))}
+            v["audiobox_mean_delta_pq"] = float(
+                np.mean([p["cand"]["audiobox"]["PQ"] - p["base"]["audiobox"]["PQ"] for p in members])
+            )
+            v["to_explain"] = to_explain(members)
+        verdict[group] = v
+    record.update(
+        alpha=result["alpha"],
+        min_untied=result["min_untied"],
+        bands_hz=BANDS_HZ,
+        pairs=pairs,
+        verdict=verdict,
+        overall=result["overall"],
+    )
     (args.dir / "judge.json").write_text(json.dumps(record, indent=1) + "\n")
 
     print(f"\n{'take':<24} {'dCE':>6} {'dPQ':>6} {'dMI':>6} {'dFAD':>6} {'max|dB|':>8} {'@Hz':>6}"
           f" {'centroid b/c':>13} {'crest b/c':>11} {'LR b/c':>11} {'clk/min b/c':>11} {'hat b/c':>11}")
     for p in pairs:
+        if p["identical"]:
+            print(f"{p['take'].removeprefix('gen_'):<24} identical")
+            continue
         b, c = p["base"], p["cand"]
         worst = int(np.argmax(np.abs(p["bands_delta_db"])))
         print(
@@ -500,30 +538,37 @@ def main():
             f" {b['clicks_per_min']:5.0f}/{c['clicks_per_min']:<5.0f}"
             f" {b[HAT_FLUX_KEY]:5.2f}/{c[HAT_FLUX_KEY]:<5.2f}"
         )
-    print(f"\n{'group':<6} {'pairs':>5}  {'Audiobox CE w/l/t':>17} {'p':>7} {'mean dCE':>8} {'mean dPQ':>8}"
+    print(f"\n{'group':<6} {'pairs':>5} {'same':>4}  {'Audiobox CE w/l/t':>17} {'p':>7} {'mean dCE':>8} {'mean dPQ':>8}"
           f"  {'MuQ-Eval MI w/l/t':>17} {'p':>7} {'mean dMI':>8}  {'FAD w/l/t':>9} {'p':>7} {'mean dFAD':>9}  verdict")
     for group, v in verdict.items():
+        label = v["verdict"] if v["gates"] else f"({v['verdict']}, not gating)"
+        if not v["pairs"]:
+            print(f"{group:<6} {0:>5} {v['identical']:>4}  {label}")
+            continue
         ce, mi, fd = v["audiobox_ce"], v["muq_eval_mi"], v["fad"]
         print(
-            f"{group:<6} {v['pairs']:>5}  {ce['wins']:>7}/{ce['losses']}/{ce['ties']:<5} {ce['p']:7.4f}"
+            f"{group:<6} {v['pairs']:>5} {v['identical']:>4}  {ce['wins']:>7}/{ce['losses']}/{ce['ties']:<5} {ce['p']:7.4f}"
             f" {ce['mean_delta']:+8.3f} {v['audiobox_mean_delta_pq']:+8.3f}"
             f"  {mi['wins']:>7}/{mi['losses']}/{mi['ties']:<5} {mi['p']:7.4f} {mi['mean_delta']:+8.3f}"
-            f"  {fd['wins']:>3}/{fd['losses']}/{fd['ties']:<3} {fd['p']:7.4f} {fd['mean_delta']:+9.3f}  {v['verdict']}"
+            f"  {fd['wins']:>3}/{fd['losses']}/{fd['ties']:<3} {fd['p']:7.4f} {fd['mean_delta']:+9.3f}  {label}"
         )
-    held = np.array(list(fad.calibration.values()))
-    print(
-        f"\nFAD calibration, {len(held)} held-out references: median {np.median(held):.3f}"
-        f" ({held.min():.3f}..{held.max():.3f}); takes: base median"
-        f" {np.median([p['base']['fad'] for p in pairs]):.3f}, cand median {np.median([p['cand']['fad'] for p in pairs]):.3f}"
-    )
+    if changed:
+        print(f"alpha {result['alpha']:.4g} a test, so one needs {result['min_untied']} untied pairs to ever reject")
+        held = np.array(list(fad.calibration.values()))
+        print(
+            f"\nFAD calibration, {len(held)} held-out references: median {np.median(held):.3f}"
+            f" ({held.min():.3f}..{held.max():.3f}); takes: base median"
+            f" {np.median([p['base']['fad'] for p in pairs if not p['identical']]):.3f},"
+            f" cand median {np.median([p['cand']['fad'] for p in pairs if not p['identical']]):.3f}"
+        )
     for group, v in verdict.items():
-        for t in v["to_explain"]:
+        for t in v.get("to_explain", []):
             print(
                 f"TO-EXPLAIN {group}: {t['band_hz']} Hz, {t['pairs_over']} of {v['pairs']} pairs past"
                 f" ±{TO_EXPLAIN_DB:g} dB, median {t['median_db']:+.1f} ({t['min_db']:+.1f}..{t['max_db']:+.1f})"
             )
-    print(f"\nverdict: {overall}  ({args.dir / 'judge.json'})")
-    if failure := exit_message(overall):
+    print(f"\nverdict: {result['overall']}  ({args.dir / 'judge.json'})")
+    if failure := exit_message(result):
         sys.exit(failure)
 
 
