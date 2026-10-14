@@ -4,7 +4,7 @@ Volumes cache, for a batch this machine uploads.
 Usage, with modal-requirements.txt's client and a configured token:
   modal volume put lofi-judge-refs REFS/manifest.json /manifest.json
   modal run modal_judge.py::provision     fetch the corpus, then build the caches
-  modal run modal_judge.py::upload_missing --refs REFS
+  modal run modal_judge.py::upload_missing --refs-dir REFS
                                           what archive.org didn't serve, from REFS
   modal run modal_judge.py::judge --batch DIR [--out OUT]
                                           judge DIR's base/ and cand/
@@ -46,10 +46,11 @@ SPACING_S = 2
 TRIES = 5
 FETCH_TIMEOUT_S = 120
 
-# the design's estimate, until a provisioning run and a full batch measure them
-CPU = 4.0
-MEMORY_MIB = 16384
-JUDGE_TIMEOUT_S = 3600
+# over what the cache build and the full judge batches used, which the
+# commit that set them records; the timeout is twice the slowest batch
+CPU = 2.0
+MEMORY_MIB = 12288
+JUDGE_TIMEOUT_S = 1800
 
 
 def muq_eval_commit():
@@ -74,7 +75,7 @@ image = (
         f'git -C "$(python -c "import sys; print(sys.prefix)")/MuQ-Eval" checkout --detach {muq_eval_commit()}',
     )
     .env({"HF_HOME": MODELS})
-    .add_local_dir(SCRIPTS, REMOTE_SCRIPTS)
+    .add_local_dir(SCRIPTS, REMOTE_SCRIPTS, ignore=["**/__pycache__"])
 )
 app = modal.App("lofi-judge", image=image)
 models = modal.Volume.from_name("lofi-judge-models", create_if_missing=True)
@@ -114,7 +115,7 @@ def fetch(url):
 
 
 @app.function(volumes={REFS: refs}, timeout=JUDGE_TIMEOUT_S)
-def provision():
+def fetch_refs():
     """Fetches each reference missing or unverified in the refs Volume, one at
     a time, and keeps it only when its sha256 matches the manifest. With none
     left missing, builds the caches."""
@@ -134,7 +135,6 @@ def provision():
         served += 1
     refs.commit()
     report = {"served": served, "kept": kept, "missing": missing}
-    print(f"archive.org served {served}; {kept} were in the Volume; missing: {missing or 'none'}")
     if not missing:
         report["caches"] = build.remote()
     return report
@@ -205,6 +205,17 @@ def score():
 
 
 @app.local_entrypoint()
+def provision():
+    """Fetches the corpus into the refs Volume and, once it is whole, builds
+    the caches; prints what each step did."""
+    report = fetch_refs.remote()
+    print(f"archive.org served {report['served']}; {report['kept']} were in the Volume;"
+          f" missing: {report['missing'] or 'none'}")
+    if "caches" in report:
+        print(f"caches: {report['caches']}")
+
+
+@app.local_entrypoint()
 def judge(batch: str, out: str = ""):
     """Uploads `batch`'s base/ and cand/ to a Volume that lives as long as the
     run, judges them, prints the table, and writes the result to `out`."""
@@ -224,7 +235,9 @@ def judge(batch: str, out: str = ""):
     if out:
         Path(out).mkdir(parents=True, exist_ok=True)
         (Path(out) / "verdict.json").write_text(json.dumps(result, indent=1) + "\n")
-    raise SystemExit({"PASS": 0, "UNCHANGED": 0, "REGRESSION": 1, "INSUFFICIENT": 1}.get(result["outcome"], 2))
+    code = {"PASS": 0, "UNCHANGED": 0, "REGRESSION": 1, "INSUFFICIENT": 1}.get(result["outcome"], 2)
+    if code:
+        raise SystemExit(code)
 
 
 @app.local_entrypoint()
