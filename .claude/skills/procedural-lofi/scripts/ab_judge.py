@@ -5,11 +5,12 @@ GENERATOR loop step 5 says, which also sets up the venv this runs in),
 scores both sides with two learned judges and their distance from real lofi,
 describes each pair, and writes the verdict.
 
-Usage: $J/bin/python ab_judge.py DIR --refs REFS [--fad-cache CACHE]
+Usage: $J/bin/python ab_judge.py DIR --refs REFS [--fad-cache CACHE] [--score-identical]
   DIR holds base/ and cand/, each with the COMMIT it rendered at; writes
   DIR/judge.json and prints a table.
   REFS is the reference corpus: audio/ and its manifest.json of sha256s.
   CACHE holds the corpus's FAD statistics, built on a miss.
+  --score-identical scores byte-identical pairs too: the proof that they tie.
 
 The verdict is the controller's proposal (opinion), `verdict.judged`: per
 mood, an exact one-sided sign test on each judge, ties dropped, that cand
@@ -125,10 +126,17 @@ RESAMPLE = {
     "beta": 14.769656459379492,
 }
 
-# the floor every take gets before anything scores it, in dBFS RMS: over both
+# the floor every take gets before anything scores it: white noise over both
 # engines' numerical floors, which a learned judge scores and a listener
-# can't hear (inaudible is opinion)
-NOISE_FLOOR_DBFS = -70.0
+# can't hear (inaudible is opinion). It was calibrated at this RMS in dBFS
+# under takes at this integrated loudness, lofi_audition's `TARGET_LUFS` then,
+# and keeps that distance under each take's own loudness: the engines'
+# numerical floors scale with the music, and a pure gain change must move a
+# take and its floor together, or FAD's loudness normalization hears the
+# floor move
+FLOOR_CALIBRATED_DBFS = -70.0
+FLOOR_CALIBRATED_LUFS = -18.0
+FLOOR_RE_TAKE_DB = FLOOR_CALIBRATED_DBFS - FLOOR_CALIBRATED_LUFS
 
 # Audiobox's own window, `make_inference_batch(wavs, 10, 10, ...)` in its
 # infer.py: both judges score a take as consecutive windows this long
@@ -172,13 +180,14 @@ def mono(x):
     return (left + right) / 2
 
 
-def floored(x, name):
-    """`x` over `NOISE_FLOOR_DBFS` of white noise, the same in each channel,
-    seeded by the take's name: both sides of a pair share it, so two identical
-    takes still tie and the floor adds no variance to the pair's difference."""
+def floored(x, name, lufs):
+    """`x`, whose integrated loudness is `lufs`, over white noise
+    `FLOOR_RE_TAKE_DB` under it, the same in each channel and seeded by the
+    take's name: both sides of a pair share the draw, so two identical takes
+    still tie and the floor adds no variance to the pair's difference."""
     seed = int.from_bytes(hashlib.sha256(name.encode()).digest()[:8], "little")
     noise = np.random.default_rng(seed).standard_normal(len(x)).astype(np.float32)
-    noise *= np.float32(10 ** (NOISE_FLOOR_DBFS / 20))
+    noise *= np.float32(10 ** ((lufs + FLOOR_RE_TAKE_DB) / 20))
     return x + (noise if x.ndim == 1 else noise[:, None])
 
 
@@ -394,6 +403,7 @@ def main():
         default=Path(sys.prefix) / "fad-cache",
         help="the corpus's FAD statistics, built here on a miss (default: the venv's)",
     )
+    ap.add_argument("--score-identical", action="store_true", help="score byte-identical pairs too")
     args = ap.parse_args()
     base_dir, cand_dir = args.dir / "base", args.dir / "cand"
 
@@ -413,12 +423,12 @@ def main():
     sides = (("base", base_dir), ("cand", cand_dir))
     # a pair the change left byte for byte as it was can only tie, so no judge
     # hears it
-    changed = [n for n in names if (base_dir / n).read_bytes() != (cand_dir / n).read_bytes()]
+    changed = [n for n in names if args.score_identical or (base_dir / n).read_bytes() != (cand_dir / n).read_bytes()]
     pairs = [
         {"take": n.removesuffix(".wav"), "mood": NAME.fullmatch(n)["mood"], "identical": n not in changed}
         for n in names
     ]
-    record = {"dir": str(args.dir.resolve()), "commits": commits, "noise_floor_dbfs": NOISE_FLOOR_DBFS}
+    record = {"dir": str(args.dir.resolve()), "commits": commits, "floor_re_take_db": FLOOR_RE_TAKE_DB}
 
     if changed:
         # the device Audiobox's own `setup_model` picks
@@ -461,7 +471,7 @@ def main():
                 x, sr = sf.read(d / name, dtype="float32")
                 # the descriptors measure the take as rendered, the judges hear it floored
                 row[side] = describe(x, sr)
-                x = floored(x, name)
+                x = floored(x, name, mono_lufs(x, sr))
                 takes[side] = (x, sr)
                 row[side]["muq_mi"] = muq.score(x, sr)
             row["base"]["fad"], row["cand"]["fad"] = fad.score_pair(takes["base"], takes["cand"])
