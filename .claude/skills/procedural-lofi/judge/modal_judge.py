@@ -6,7 +6,7 @@ Usage, with modal-requirements.txt's client and a configured token:
   modal run modal_judge.py::provision     fetch the corpus, then build the caches
   modal run modal_judge.py::upload_missing --refs-dir REFS
                                           what archive.org didn't serve, from REFS
-  modal run modal_judge.py::judge --batch DIR [--out OUT]
+  modal run modal_judge.py::judge --batch DIR [--out OUT] [--force-score]
                                           judge DIR's base/ and cand/
 
 REFS is the private corpus: its manifest's names and its audio never leave
@@ -177,13 +177,14 @@ def build():
 
 
 @app.function(gpu="T4", cpu=CPU, memory=MEMORY_MIB, timeout=JUDGE_TIMEOUT_S)
-def score():
+def score(score_identical=False):
     """Judges the batch the caller mounts at BATCH, offline, over the
     read-only caches, and returns what's safe to publish: the table, the
     record without the corpus's names, and what the run took."""
     started = time.time()
     run = subprocess.run(
-        [sys.executable, f"{REMOTE_SCRIPTS}/ab_judge.py", BATCH, "--refs", REFS, "--fad-cache", f"{REFS}/fad-cache"],
+        [sys.executable, f"{REMOTE_SCRIPTS}/ab_judge.py", BATCH, "--refs", REFS, "--fad-cache", f"{REFS}/fad-cache"]
+        + (["--score-identical"] if score_identical else []),
         capture_output=True,
         text=True,
         env={**os.environ, "HF_HUB_OFFLINE": "1"},
@@ -216,22 +217,35 @@ def provision():
 
 
 @app.local_entrypoint()
-def judge(batch: str, out: str = ""):
-    """Uploads `batch`'s base/ and cand/ to a Volume that lives as long as the
-    run, judges them, prints the table, and writes the result to `out`."""
-    with modal.Volume.ephemeral() as vol:
-        with vol.batch_upload() as upload:
-            for side in ("base", "cand"):
-                upload.put_directory(str(Path(batch) / side), f"/{side}")
-        result = score.with_options(
-            volumes={
-                BATCH: vol,
-                MODELS: models.with_mount_options(read_only=True),
-                REFS: refs.with_mount_options(read_only=True),
-            }
-        ).remote()
-    print(result.get("table", result.get("message")))
-    print(f"\nwall {result['wall_s']:.0f} s, judge CPU {result['cpu_s']:.0f} s, peak RSS {result['peak_rss_mib']:.0f} MiB")
+def judge(batch: str, out: str = "", force_score: bool = False):
+    """Judges `batch`'s base/ and cand/ through a Volume that lives as long
+    as the run, prints the table, and writes the result to `out`. Only the
+    pairs that differ go up, since a byte-identical pair can only tie, so a
+    batch of none makes no remote call; `force_score` sends and scores every
+    pair, the proof that identical ones tie."""
+    root = Path(batch)
+    names = sorted({p.name for p in (root / "base").glob("*.wav")} & {p.name for p in (root / "cand").glob("*.wav")})
+    differ = [n for n in names if force_score or (root / "base" / n).read_bytes() != (root / "cand" / n).read_bytes()]
+    if differ:
+        with modal.Volume.ephemeral() as vol:
+            with vol.batch_upload() as upload:
+                for side in ("base", "cand"):
+                    upload.put_file(str(root / side / "COMMIT"), f"/{side}/COMMIT")
+                    for n in differ:
+                        upload.put_file(str(root / side / n), f"/{side}/{n}")
+            result = score.with_options(
+                volumes={
+                    BATCH: vol,
+                    MODELS: models.with_mount_options(read_only=True),
+                    REFS: refs.with_mount_options(read_only=True),
+                }
+            ).remote(score_identical=force_score)
+        print(result.get("table", result.get("message")))
+        print(f"\nwall {result['wall_s']:.0f} s, judge CPU {result['cpu_s']:.0f} s, peak RSS {result['peak_rss_mib']:.0f} MiB")
+    else:
+        result = {"outcome": "UNCHANGED"}
+        print(f"verdict: UNCHANGED, all {len(names)} pairs byte-identical; nothing was sent or scored")
+    result["identical_not_sent"] = len(names) - len(differ)
     if out:
         Path(out).mkdir(parents=True, exist_ok=True)
         (Path(out) / "verdict.json").write_text(json.dumps(result, indent=1) + "\n")
