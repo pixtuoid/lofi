@@ -79,6 +79,37 @@ impl Engine {
     }
 }
 
+/// A batch `--batch` names, which picks its own moods, tiers and seeds.
+#[derive(Clone, Copy)]
+pub(crate) enum Named {
+    /// What `ab_judge.py` scores a sound change on.
+    Judge,
+}
+
+impl Named {
+    const ALL: [Named; 1] = [Named::Judge];
+
+    /// The `--batch` spelling.
+    fn name(self) -> &'static str {
+        match self {
+            Named::Judge => "judge",
+        }
+    }
+}
+
+/// `verdict.py`'s `MIN_UNTIED`, which `test_verdict.py` reads here: the
+/// untied pairs each mood of the judge batch is built to reach.
+pub(crate) const JUDGE_MIN_UNTIED: usize = 7;
+
+/// The judge batch's seeds at `empty`, per mood in [`MOODS`] order: the fewest
+/// from 0 that give every lead voice the mood draws [`JUDGE_MIN_UNTIED`] takes,
+/// since `empty` is the one tier the lead plays at.
+const JUDGE_EMPTY_SEEDS: [u64; MOODS.len()] = [27, 26];
+
+/// The judge batch's seeds at each louder tier: [`JUDGE_MIN_UNTIED`] or more
+/// between them, so a change to a lane `empty` mutes still reaches the floor.
+const JUDGE_TIER_SEEDS: u64 = JUDGE_MIN_UNTIED.div_ceil(2) as u64;
+
 /// The song of a seed's run that its take plays, whichever engine renders it.
 const SONG: u64 = 0;
 
@@ -109,7 +140,8 @@ pub(crate) fn parse_choice(v: Option<String>, flag: &str, names: &[&str]) -> io:
 }
 
 /// The takes a run selects: `--seeds` seeds of one `--mood` from `--start`,
-/// heard at `--tier` through `--engine`.
+/// heard at `--tier` through `--engine`, or the `--batch` named.
+#[derive(Clone, Copy)]
 pub(crate) struct Batch {
     mood: usize,
     seeds: u64,
@@ -117,6 +149,11 @@ pub(crate) struct Batch {
     /// The `--tier` given.
     pub(crate) tier: Option<Tier>,
     pub(crate) engine: Engine,
+    /// The `--batch` given.
+    pub(crate) named: Option<Named>,
+    /// Whether `--mood`, `--seeds`, `--start` or `--tier` was given, which a
+    /// named batch picks itself.
+    picked: bool,
 }
 
 impl Default for Batch {
@@ -127,6 +164,8 @@ impl Default for Batch {
             start: 0,
             tier: None,
             engine: Engine::default(),
+            named: None,
+            picked: false,
         }
     }
 }
@@ -139,6 +178,9 @@ impl Batch {
         flag: &str,
         args: &mut impl Iterator<Item = String>,
     ) -> io::Result<bool> {
+        if matches!(flag, "--mood" | "--seeds" | "--start" | "--tier") {
+            self.picked = true;
+        }
         match flag {
             "--mood" => self.mood = parse_choice(args.next(), flag, &MOODS.map(|(name, _)| name))?,
             "--seeds" => {
@@ -156,9 +198,46 @@ impl Batch {
                 self.engine =
                     Engine::ALL[parse_choice(args.next(), flag, &Engine::ALL.map(Engine::name))?];
             }
+            "--batch" => {
+                self.named = Some(
+                    Named::ALL[parse_choice(args.next(), flag, &Named::ALL.map(Named::name))?],
+                );
+            }
             _ => return Ok(false),
         }
+        if self.picked && self.named.is_some() {
+            return Err(usage_error(
+                "--batch picks its own moods, tiers and seeds, so it takes no --mood, --seeds, --start or --tier"
+                    .into(),
+            ));
+        }
         Ok(true)
+    }
+
+    /// The batches of one mood and one tier the run plays: this one, or each
+    /// of its named batch's, through its engine.
+    pub(crate) fn runs(&self) -> Vec<Batch> {
+        match self.named {
+            None => vec![*self],
+            Some(Named::Judge) => (0..MOODS.len())
+                .flat_map(|mood| {
+                    [
+                        (Tier::Empty, JUDGE_EMPTY_SEEDS[mood]),
+                        (Tier::Moderate, JUDGE_TIER_SEEDS),
+                        (Tier::Busy, JUDGE_TIER_SEEDS),
+                    ]
+                    .map(|(tier, seeds)| Batch {
+                        mood,
+                        seeds,
+                        start: 0,
+                        tier: Some(tier),
+                        named: None,
+                        picked: true,
+                        ..*self
+                    })
+                })
+                .collect(),
+        }
     }
 
     pub(crate) fn mood_name(&self) -> &'static str {
@@ -244,6 +323,8 @@ pub(crate) fn soak_mix(beds: &[Vec<f32>], gains: &[f32]) -> Vec<f32> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
 
     /// A default batch after `flag value`.
@@ -267,6 +348,63 @@ mod tests {
         let [day, night] =
             ["day", "night"].map(|mood| parsed("--mood", mood).map(|b| b.score(0)).ok());
         assert!(day != night, "a night take plays a day song");
+    }
+
+    #[test]
+    fn the_judge_batch_gives_every_lead_voice_the_floor_at_empty_and_no_more() {
+        let judge = parsed("--batch", "judge").expect("the batch parses").runs();
+        for (mood, (name, _)) in MOODS.iter().enumerate() {
+            let empty = (judge.iter())
+                .find(|run| run.mood == mood && run.tier == Some(Tier::Empty))
+                .expect("the judge batch plays each mood at empty");
+            let voices = |seeds: Range<u64>| {
+                let mut counts = BTreeMap::new();
+                for seed in seeds {
+                    *counts
+                        .entry(empty.score(seed).lead_voice_name())
+                        .or_insert(0) += 1;
+                }
+                counts
+            };
+            // every voice the mood draws over far more seeds than the batch has
+            let pool = voices(0..256);
+            let short = |counts: &BTreeMap<&str, usize>| {
+                (pool.keys())
+                    .find(|v| counts.get(*v).is_none_or(|&n| n < JUDGE_MIN_UNTIED))
+                    .copied()
+            };
+            let seeds = empty.seeds();
+            assert_eq!(
+                short(&voices(seeds.clone())),
+                None,
+                "{name}'s lead voices at empty"
+            );
+            // one seed fewer would leave a voice short, so no pair is spare
+            assert!(
+                short(&voices(seeds.start..seeds.end - 1)).is_some(),
+                "{name} has spare seeds at empty"
+            );
+        }
+    }
+
+    #[test]
+    fn a_named_batch_takes_no_pick_of_its_own() {
+        for pick in [
+            ["--tier", "busy"],
+            ["--mood", "night"],
+            ["--seeds", "3"],
+            ["--start", "2"],
+        ] {
+            for order in [[["--batch", "judge"], pick], [pick, ["--batch", "judge"]]] {
+                let mut batch = Batch::default();
+                let mut args = order.concat().into_iter().map(str::to_owned);
+                let mut outcome = Ok(true);
+                while let Some(flag) = args.next() {
+                    outcome = outcome.and_then(|_| batch.parse_flag(&flag, &mut args));
+                }
+                assert!(outcome.is_err(), "{order:?} parsed");
+            }
+        }
     }
 
     #[test]

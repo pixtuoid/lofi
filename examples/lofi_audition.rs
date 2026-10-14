@@ -10,8 +10,9 @@
 //!   cargo run --release --example lofi_audition -- \
 //!     [--engine whole|stream] [--mood day|night] [--seeds N] [--start S] [--out DIR] \
 //!     [--tier empty|moderate|busy | --solo pad|sparkle|keys|drums|texture|bass] \
-//!     [--shuffle KEYFILE]
-//!   `--solo` renders a lane whole, so it takes `--engine whole`.
+//!     [--batch judge] [--shuffle KEYFILE]
+//!   `--solo` renders a lane whole, so it takes `--engine whole`. `--batch judge`
+//!   renders what `ab_judge.py` scores in place of the mood, tier and seeds.
 
 #[path = "common/batch.rs"]
 mod batch;
@@ -66,20 +67,16 @@ fn run() -> io::Result<()> {
     let takes = args.takes();
     let files = match args.key {
         Some(_) => shuffled_names(takes.len()),
-        None => takes.iter().map(|(_, take)| take.clone()).collect(),
+        None => takes.iter().map(|take| take.name.clone()).collect(),
     };
-    let mut order: Vec<(&String, &String, u64)> = files
-        .iter()
-        .zip(&takes)
-        .map(|(file, (seed, take))| (file, take, *seed))
-        .collect();
+    let mut order: Vec<(&String, &Take)> = files.iter().zip(&takes).collect();
     // rendered in file-name order, so the files' times don't give the seeds away
-    order.sort();
-    for &(file, _, seed) in &order {
+    order.sort_by_key(|&(file, _)| file);
+    for &(file, take) in &order {
         let path = args.out.join(file);
-        write_wav(&path, &args.render(seed)?)?;
+        write_wav(&path, &args.render(&take.run, take.seed)?)?;
         if args.key.is_none() {
-            let score = args.batch.score(seed);
+            let (seed, score) = (take.seed, take.run.score(take.seed));
             println!(
                 "  seed {seed:3}  {:>3.0} bpm  lead={:5}  {}",
                 score.bpm(),
@@ -91,8 +88,8 @@ fn run() -> io::Result<()> {
     match &args.key {
         Some(key) => {
             let mut w = BufWriter::new(File::create(key)?);
-            for (file, take, _) in &order {
-                writeln!(w, "{file} {take}")?;
+            for (file, take) in &order {
+                writeln!(w, "{file} {}", take.name)?;
             }
             w.flush()?;
             println!("\nblind-audition:");
@@ -103,6 +100,14 @@ fn run() -> io::Result<()> {
         println!("  afplay {}", args.out.join(file).display());
     }
     Ok(())
+}
+
+/// One take a run renders: its seed in one of the run's batches, and its
+/// file name.
+struct Take {
+    run: Batch,
+    seed: u64,
+    name: String,
 }
 
 /// What a run renders, and where.
@@ -138,15 +143,15 @@ impl Args {
                 },
                 other => {
                     return Err(usage_error(format!(
-                        "unknown argument {other:?}; valid: --engine --mood --seeds --start --out --tier --solo --shuffle"
+                        "unknown argument {other:?}; valid: --engine --mood --seeds --start --out --tier --batch --solo --shuffle"
                     )));
                 }
             }
         }
         if parsed.solo.is_some() {
-            if parsed.batch.tier.is_some() {
+            if parsed.batch.tier.is_some() || parsed.batch.named.is_some() {
                 return Err(usage_error(
-                    "--solo plays one lane, so it takes no --tier".into(),
+                    "--solo plays one lane, so it takes no --tier or --batch".into(),
                 ));
             }
             if parsed.batch.engine != Engine::WholeLane {
@@ -158,23 +163,29 @@ impl Args {
         Ok(parsed)
     }
 
-    /// Each seed with its take's file name. No engine changes a name, so
-    /// `ab_listen.py` pairs a whole-lane batch with a stream batch.
-    fn takes(&self) -> Vec<(u64, String)> {
-        let mix = match self.solo {
-            Some(s) => LANE_NAMES[s],
-            None => self.batch.tier().name(),
-        };
-        let mood = self.batch.mood_name();
-        (self.batch.seeds())
-            .map(|seed| (seed, format!("gen_{mood}_{mix}_{seed:03}.wav")))
-            .collect()
+    /// Every take of every run. No engine changes a name, so `ab_listen.py`
+    /// pairs a whole-lane batch with a stream batch.
+    fn takes(&self) -> Vec<Take> {
+        let runs = self.batch.runs();
+        let takes = runs.iter().flat_map(|run| {
+            let mix = match self.solo {
+                Some(s) => LANE_NAMES[s],
+                None => run.tier().name(),
+            };
+            let mood = run.mood_name();
+            (run.seeds()).map(move |seed| Take {
+                run: *run,
+                seed,
+                name: format!("gen_{mood}_{mix}_{seed:03}.wav"),
+            })
+        });
+        takes.collect()
     }
 
-    /// `seed`'s take at its target loudness; an error if that clips it,
-    /// which would write a different take.
-    fn render(&self, seed: u64) -> io::Result<Vec<f32>> {
-        let mut take = match self.batch.engine {
+    /// `seed`'s take in `run` at its target loudness; an error if that clips
+    /// it, which would write a different take.
+    fn render(&self, run: &Batch, seed: u64) -> io::Result<Vec<f32>> {
+        let mut take = match run.engine {
             Engine::WholeLane => {
                 let gains = match self.solo {
                     Some(s) => {
@@ -182,12 +193,12 @@ impl Args {
                         gains[s] = 1.0;
                         gains
                     }
-                    None => self.batch.lane_gains(),
+                    None => run.lane_gains(),
                 };
-                let (beds, _) = render_take(&self.batch.score(seed));
+                let (beds, _) = render_take(&run.score(seed));
                 soak_mix(&beds, &gains)
             }
-            Engine::Stream => self.batch.perform(seed)?,
+            Engine::Stream => run.perform(seed)?,
         };
         fade_edges(&mut take);
         let target = self.target_lufs();
@@ -282,6 +293,12 @@ mod tests {
         Args::parse(args.iter().map(|&a| a.to_owned())).expect("the arguments parse")
     }
 
+    /// `seed`'s take in the run's one batch.
+    fn rendered(args: &[&str], seed: u64) -> io::Result<Vec<f32>> {
+        let args = parsed(args);
+        args.render(&args.batch, seed)
+    }
+
     #[test]
     fn shuffled_names_are_each_take_once_and_not_kept_in_order() {
         for count in [1, 2, 7, 12] {
@@ -306,16 +323,44 @@ mod tests {
         let [whole, stream] = ["whole", "stream"].map(|engine| {
             parsed(&["--engine", engine, "--mood", "night", "--tier", "empty"]).takes()
         });
+        let names = |takes: Vec<Take>| {
+            takes
+                .into_iter()
+                .map(|t| (t.seed, t.name))
+                .collect::<Vec<_>>()
+        };
+        let (whole, stream) = (names(whole), names(stream));
         assert_eq!(whole, stream);
         // the shape `ab_listen.py`'s NAME pairs
         assert_eq!(whole[0], (0, "gen_night_empty_000.wav".to_owned()));
     }
 
     #[test]
+    fn the_judge_batch_names_each_take_once_by_its_mood_tier_and_seed() {
+        let takes = parsed(&["--batch", "judge"]).takes();
+        let mut names: Vec<&str> = takes.iter().map(|t| t.name.as_str()).collect();
+        for take in &takes {
+            let (mood, tier) = (take.run.mood_name(), take.run.tier().name());
+            assert_eq!(take.name, format!("gen_{mood}_{tier}_{:03}.wav", take.seed));
+        }
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), takes.len(), "two takes share a name");
+        assert!(
+            Args::parse(
+                ["--batch", "judge", "--solo", "pad"]
+                    .map(str::to_owned)
+                    .into_iter()
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
     fn both_engines_write_a_take_as_long_and_at_the_target_loudness() {
         let seed = 1;
         let [whole, stream] = ["whole", "stream"].map(|engine| {
-            let take = parsed(&["--engine", engine]).render(seed);
+            let take = rendered(&["--engine", engine], seed);
             let written: Vec<f32> = (take.expect("the take renders").iter())
                 .map(|&x| f32::from(pcm(x)) / f32::from(i16::MAX))
                 .collect();
@@ -332,7 +377,7 @@ mod tests {
     #[test]
     fn both_engines_write_a_take_from_silence_to_silence() {
         for engine in ["whole", "stream"] {
-            let take = parsed(&["--engine", engine]).render(2);
+            let take = rendered(&["--engine", engine], 2);
             let edges = take.map(|t| [t[0], t[t.len() - 1]].map(pcm)).ok();
             assert_eq!(edges, Some([0, 0]), "{engine}'s first and last samples");
         }
@@ -342,7 +387,7 @@ mod tests {
     fn every_lane_writes_a_solo_take() {
         for mood in ["day", "night"] {
             for lane in LANE_NAMES {
-                let take = parsed(&["--engine", "whole", "--mood", mood, "--solo", lane]).render(0);
+                let take = rendered(&["--engine", "whole", "--mood", mood, "--solo", lane], 0);
                 assert!(take.is_ok(), "{mood} {lane}: {:?}", take.err());
             }
         }
