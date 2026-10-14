@@ -5,7 +5,7 @@
 //! machine, since the times are only its.
 //!
 //! Usage, natively, then on wasm32 under Node, through a harness that lends the
-//! build a clock and a console, which that target's std lacks:
+//! build what its wasm32 `host` imports:
 //!   cargo run --release --example lofi_bench
 //!   cargo build --release --example lofi_bench --target wasm32-unknown-unknown
 //!   node examples/lofi_bench.mjs target/wasm32-unknown-unknown/release/examples/lofi_bench.wasm
@@ -222,8 +222,12 @@ mod host {
     }
 }
 
-/// What the host lends the bench: on wasm32, whose std has no clock and whose
-/// stdout discards, `lofi_bench.mjs`'s.
+/// What the host lends the bench: on wasm32, `lofi_bench.mjs`'s. That
+/// target's std reads no clock, falling to an `Instant::now` that panics
+/// (<https://github.com/rust-lang/rust/blob/1.98.1/library/std/src/sys/time/mod.rs#L47-L50>,
+/// <https://github.com/rust-lang/rust/blob/1.98.1/library/std/src/sys/time/unsupported.rs#L12-L14>),
+/// and its `println!` "does nothing"
+/// (<https://doc.rust-lang.org/1.98.1/rustc/platform-support/wasm32-unknown-unknown.html>).
 #[cfg(target_arch = "wasm32")]
 mod host {
     #[expect(
