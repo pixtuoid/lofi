@@ -35,6 +35,15 @@ use loudness::gated_lufs;
 /// gain.
 const TARGET_LUFS: f64 = -18.0;
 
+/// What a solo take renders at instead, since a lane alone peaks past full
+/// scale at [`TARGET_LUFS`]: the loudest level at which every lane's solo,
+/// both moods and seeds 0–23, kept its peak under full scale, as the commit
+/// that set it records, less [`SOLO_MARGIN_DB`].
+const SOLO_TARGET_LUFS: f64 = -31.6 - SOLO_MARGIN_DB;
+
+/// Room for a seed past that sweep to peak higher (opinion).
+const SOLO_MARGIN_DB: f64 = 1.0;
+
 /// How long, in seconds, a take fades in and out under a raised cosine: cut
 /// from a stream or a loop, it starts and ends mid-waveform, and the click
 /// there differs by engine, so it could tell a blind A/B's sides apart. The
@@ -162,8 +171,8 @@ impl Args {
             .collect()
     }
 
-    /// `seed`'s take at [`TARGET_LUFS`]; an error if that clips it, which
-    /// would write a different take.
+    /// `seed`'s take at its target loudness; an error if that clips it,
+    /// which would write a different take.
     fn render(&self, seed: u64) -> io::Result<Vec<f32>> {
         let mut take = match self.batch.engine {
             Engine::WholeLane => {
@@ -181,16 +190,25 @@ impl Args {
             Engine::Stream => self.batch.perform(seed)?,
         };
         fade_edges(&mut take);
-        let gain = 10f64.powf((TARGET_LUFS - gated_lufs(&take, SAMPLE_RATE)) / 20.0) as f32;
+        let target = self.target_lufs();
+        let gain = 10f64.powf((target - gated_lufs(&take, SAMPLE_RATE)) / 20.0) as f32;
         for v in &mut take {
             *v *= gain;
         }
         if take.iter().any(|v| v.abs() > 1.0) {
             return Err(io::Error::other(format!(
-                "seed {seed} clips at {TARGET_LUFS} LUFS"
+                "seed {seed} clips at {target} LUFS"
             )));
         }
         Ok(take)
+    }
+
+    /// The gated loudness every take of the run renders at.
+    fn target_lufs(&self) -> f64 {
+        match self.solo {
+            Some(_) => SOLO_TARGET_LUFS,
+            None => TARGET_LUFS,
+        }
     }
 }
 
@@ -317,6 +335,16 @@ mod tests {
             let take = parsed(&["--engine", engine]).render(2);
             let edges = take.map(|t| [t[0], t[t.len() - 1]].map(pcm)).ok();
             assert_eq!(edges, Some([0, 0]), "{engine}'s first and last samples");
+        }
+    }
+
+    #[test]
+    fn every_lane_writes_a_solo_take() {
+        for mood in ["day", "night"] {
+            for lane in LANE_NAMES {
+                let take = parsed(&["--engine", "whole", "--mood", mood, "--solo", lane]).render(0);
+                assert!(take.is_ok(), "{mood} {lane}: {:?}", take.err());
+            }
         }
     }
 }
