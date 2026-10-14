@@ -6,7 +6,7 @@
 
 use std::f64::consts::{PI, TAU};
 
-use crate::dsp::{NoiseStream, Twiddles, fft, twiddles};
+use crate::dsp::{NoiseStream, Twiddles, fft, twiddles, white_noise_gain};
 
 /// The low-pass's stopband, in dB under its passband, and its transition's
 /// width in Hz, centred on the corner: the controller's proposal (opinion),
@@ -88,7 +88,7 @@ pub(crate) fn kernel(corner_hz: f32, sr: u32) -> Vec<f64> {
 #[derive(Debug)]
 pub(crate) struct Hiss {
     /// The kernel's spectrum over a transform, real then imaginary, with the
-    /// inverse's 1/N in it.
+    /// inverse's 1/N and the rate's [`white_noise_gain`] in it.
     kernel: [Vec<f32>; 2],
     twiddles: Twiddles,
     /// The noise the next two segments read: the kernel's memory, then
@@ -116,7 +116,7 @@ impl Hiss {
             *r = t as f32;
         }
         fft(&mut re, &mut im, &twiddles, false);
-        let scale = 1.0 / n as f32;
+        let scale = white_noise_gain(sr) / n as f32;
         for v in re.iter_mut().chain(&mut im) {
             *v *= scale;
         }

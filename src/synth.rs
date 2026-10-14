@@ -7,7 +7,9 @@
 //! a whole lane at [`SAMPLE_RATE`] for lofi's own tools. The engine plays the
 //! same recipe through `stream::lanes`' causal chains.
 
-use super::dsp::{NoiseStream, SAMPLE_RATE, bandpass, bandpass_at, highpass, lowpass};
+use super::dsp::{
+    NoiseStream, SAMPLE_RATE, bandpass, bandpass_at, highpass, lowpass, white_noise_gain,
+};
 
 const SR: f32 = SAMPLE_RATE as f32;
 
@@ -95,8 +97,9 @@ fn bed_room_tone(t: f32) -> f32 {
 /// One vinyl-crackle pop at `sr`, and the gain it mixes in at.
 pub(crate) fn crackle_pop(rng: &mut NoiseStream, sr: u32) -> (Vec<f32>, f32) {
     let pn = samples_at(0.003 + 0.004 * rng.unit(), sr);
+    let white = white_noise_gain(sr);
     let pop = (0..pn)
-        .map(|i| rng.norm() * (-(i as f32 / sr as f32) * 800.0).exp())
+        .map(|i| rng.norm() * white * (-(i as f32 / sr as f32) * 800.0).exp())
         .collect();
     (pop, 0.03 + 0.06 * rng.unit())
 }
@@ -219,16 +222,18 @@ fn kick(rng: &mut NoiseStream, sr: u32) -> Vec<f32> {
             phase.sin() * (-t * 11.0).exp()
         })
         .collect();
+    let white = white_noise_gain(sr);
     for (i, slot) in buf.iter_mut().enumerate().take(samples_at(0.006, sr)) {
         let t = i as f32 / sr as f32;
-        *slot += rng.norm() * 0.25 * (-t * 300.0).exp();
+        *slot += rng.norm() * white * 0.25 * (-t * 300.0).exp();
     }
     buf
 }
 
 fn snare(rng: &mut NoiseStream, sr: u32) -> Vec<f32> {
     let n = samples_at(0.22, sr);
-    let raw: Vec<f32> = (0..n).map(|_| rng.norm()).collect();
+    let white = white_noise_gain(sr);
+    let raw: Vec<f32> = (0..n).map(|_| rng.norm() * white).collect();
     let noise = bandpass_at(&raw, 400.0, 3200.0, sr);
     let tau = std::f32::consts::TAU;
     noise
@@ -245,7 +250,8 @@ fn snare(rng: &mut NoiseStream, sr: u32) -> Vec<f32> {
 fn hat(rng: &mut NoiseStream, open: bool, sr: u32) -> Vec<f32> {
     let (dur, decay) = if open { (0.35, 9.0) } else { (0.06, 60.0) };
     let n = samples_at(dur, sr);
-    let raw: Vec<f32> = (0..n).map(|_| rng.norm()).collect();
+    let white = white_noise_gain(sr);
+    let raw: Vec<f32> = (0..n).map(|_| rng.norm() * white).collect();
     let hp = highpass(&raw, 6000.0, sr);
     hp.iter()
         .enumerate()
@@ -362,7 +368,8 @@ fn pluck_note(midi: u8, dur_s: f32, vel: f32, sr: u32) -> Vec<f32> {
         .collect();
     let pn = samples_at(0.006, sr);
     let mut prng = NoiseStream::new((u64::from(midi) << 32) ^ u64::from(vel.to_bits()));
-    let raw: Vec<f32> = (0..pn).map(|_| prng.norm()).collect();
+    let white = white_noise_gain(sr);
+    let raw: Vec<f32> = (0..pn).map(|_| prng.norm() * white).collect();
     let pick_noise = bandpass_at(&raw, 2000.0, 5000.0, sr);
     for (i, &v) in pick_noise.iter().enumerate() {
         if let Some(slot) = buf.get_mut(i) {
@@ -417,7 +424,8 @@ fn kalimba_note(midi: u8, dur_s: f32, vel: f32, sr: u32) -> Vec<f32> {
     let pn = samples_at(0.010, sr);
     let mut prng =
         NoiseStream::new(0x4B41_4C49 ^ (u64::from(midi) << 32) ^ u64::from(vel.to_bits()));
-    let raw: Vec<f32> = (0..pn).map(|_| prng.norm()).collect();
+    let white = white_noise_gain(sr);
+    let raw: Vec<f32> = (0..pn).map(|_| prng.norm() * white).collect();
     let thump = bandpass_at(&raw, 120.0, 700.0, sr);
     for (i, &v) in thump.iter().enumerate() {
         if let Some(slot) = buf.get_mut(i) {
@@ -451,7 +459,8 @@ fn vibe_note(midi: u8, dur_s: f32, vel: f32, sr: u32) -> Vec<f32> {
     let pn = samples_at(0.008, sr);
     let mut prng =
         NoiseStream::new(0x5649_4245 ^ (u64::from(midi) << 32) ^ u64::from(vel.to_bits()));
-    let raw: Vec<f32> = (0..pn).map(|_| prng.norm()).collect();
+    let white = white_noise_gain(sr);
+    let raw: Vec<f32> = (0..pn).map(|_| prng.norm() * white).collect();
     let mallet = bandpass_at(&raw, 600.0, 1800.0, sr);
     for (i, &v) in mallet.iter().enumerate() {
         if let Some(slot) = buf.get_mut(i) {

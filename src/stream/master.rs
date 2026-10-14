@@ -285,38 +285,42 @@ mod tests {
 
     #[test]
     fn a_peak_holds_the_gain_down_then_releases_it_doubling_per_release_time() {
-        let frames = |secs: f64| (secs * f64::from(SAMPLE_RATE)) as usize;
-        let (lookahead, hold, release) = (frames(LOOKAHEAD_S), frames(HOLD_S), frames(RELEASE_S));
-        let mut ceiling = Ceiling::new(SAMPLE_RATE);
-        // a lone peak that needs a quarter of the gain, then silence
-        let mut input = vec![0.0; lookahead + hold + 2 * release + 2 * lookahead];
-        input[0] = 4.0 * f64::from(ceiling.limit);
-        let gains: Vec<f64> = (input.iter_mut())
-            .map(|x| {
-                ceiling.limit(std::slice::from_mut(x));
-                ceiling.gain()
-            })
-            .collect();
-        let held = lookahead + hold;
-        assert!(
-            gains[lookahead..=held].iter().all(|&g| g == 0.25),
-            "the gain must hold at the peak's need through the hold"
-        );
-        // halfway back one release time on: the box averages the release
-        // over the lookahead, so a little under
-        let half = gains[held + release];
-        let floor = 0.5 * 2f64.powf(-(lookahead as f64) / release as f64);
-        assert!(
-            (floor..0.5).contains(&half),
-            "one release time on, the gain must have doubled: {half}"
-        );
-        assert!(gains[held + 2 * release - 1] < 1.0, "the release ran fast");
-        assert!(
-            gains[held + 2 * release + lookahead + 1..]
-                .iter()
-                .all(|&g| g == 1.0),
-            "two release times and the lookahead on, the gain must be back at 1"
-        );
+        // a second rate, so a span that counts `SAMPLE_RATE`'s frames misses it
+        for sr in [SAMPLE_RATE, 96_000] {
+            let frames = |secs: f64| (secs * f64::from(sr)) as usize;
+            let (lookahead, hold, release) =
+                (frames(LOOKAHEAD_S), frames(HOLD_S), frames(RELEASE_S));
+            let mut ceiling = Ceiling::new(sr);
+            // a lone peak that needs a quarter of the gain, then silence
+            let mut input = vec![0.0; lookahead + hold + 2 * release + 2 * lookahead];
+            input[0] = 4.0 * f64::from(ceiling.limit);
+            let gains: Vec<f64> = (input.iter_mut())
+                .map(|x| {
+                    ceiling.limit(std::slice::from_mut(x));
+                    ceiling.gain()
+                })
+                .collect();
+            let held = lookahead + hold;
+            assert!(
+                gains[lookahead..=held].iter().all(|&g| g == 0.25),
+                "the gain must hold at the peak's need through the hold"
+            );
+            // halfway back one release time on: the box averages the release
+            // over the lookahead, so a little under
+            let half = gains[held + release];
+            let floor = 0.5 * 2f64.powf(-(lookahead as f64) / release as f64);
+            assert!(
+                (floor..0.5).contains(&half),
+                "one release time on, the gain must have doubled: {half}"
+            );
+            assert!(gains[held + 2 * release - 1] < 1.0, "the release ran fast");
+            assert!(
+                gains[held + 2 * release + lookahead + 1..]
+                    .iter()
+                    .all(|&g| g == 1.0),
+                "two release times and the lookahead on, the gain must be back at 1"
+            );
+        }
     }
 
     #[test]

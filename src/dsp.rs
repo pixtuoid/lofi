@@ -63,6 +63,15 @@ impl NoiseStream {
     }
 }
 
+/// The gain that keeps [`NoiseStream::norm`]'s draws, one a sample, as loud in
+/// each hertz at `sr` as at [`SAMPLE_RATE`], where every noise level was set:
+/// white noise's power spectral density "is a constant"
+/// (<https://ccrma.stanford.edu/~jos/sasp/White_Noise_I.html>), so a draw's
+/// variance spreads evenly up to the rate's Nyquist.
+pub(crate) fn white_noise_gain(sr: u32) -> f32 {
+    (sr as f32 / SAMPLE_RATE as f32).sqrt()
+}
+
 /// `e^(−2πik/n)` for `k` in `0..n/2` as `(cos, sin)` rows, built per transform
 /// pair and dropped: a kept table for the longest beds pins megabytes.
 pub(crate) type Twiddles = Vec<(f32, f32)>;

@@ -402,25 +402,155 @@ mod tests {
 
     #[test]
     fn crackle_pops_at_its_rate_at_poisson_times() {
-        let sr = SAMPLE_RATE;
         let secs = 3600.0;
-        let mut crackle = Crackle::new(NoiseStream::new(5), sr);
-        let (mut gaps, mut last) = (Vec::new(), 0);
-        while crackle.next < samples_at(secs, sr) {
-            gaps.push((crackle.next - last) as f64 / f64::from(sr));
-            last = crackle.next;
-            crackle.strike(last, last + 1, &mut Ring::default(), sr);
-        }
-        // a Poisson count's standard deviation is the square root of its mean
-        let want = f64::from(CRACKLE_POPS_PER_SEC * secs);
-        let count = gaps.len() as f64;
+        // a second rate, so a gap or a pop that counts `SAMPLE_RATE`'s frames
+        // misses it
+        let [ratified, at] = [SAMPLE_RATE, 96_000].map(|sr| {
+            let mut crackle = Crackle::new(NoiseStream::new(5), sr);
+            let (mut gaps, mut last, mut pops) = (Vec::new(), 0, Vec::new());
+            while crackle.next < samples_at(secs, sr) {
+                gaps.push((crackle.next - last) as f64 / f64::from(sr));
+                last = crackle.next;
+                let mut ring = Ring::default();
+                crackle.strike(last, last + 1, &mut ring, sr);
+                let mut pop = vec![0.0; ring.0.len()];
+                ring.take(&mut pop);
+                pops.extend(pop.iter().map(|&v| v as f32));
+            }
+            // a Poisson count's standard deviation is the square root of its mean
+            let want = f64::from(CRACKLE_POPS_PER_SEC * secs);
+            let count = gaps.len() as f64;
+            assert!(
+                (count - want).abs() < 4.0 * want.sqrt(),
+                "{count} pops in an hour at {sr} Hz vs {want}"
+            );
+            // an exponential's standard deviation is its mean; a grid's is 0
+            let mean = gaps.iter().sum::<f64>() / count;
+            let sd = (gaps.iter().map(|g| (g - mean).powi(2)).sum::<f64>() / count).sqrt();
+            assert!((sd / mean - 1.0).abs() < 0.15, "gaps vary by {}", sd / mean);
+            // the pops' power over every third octave, which averages more of
+            // their draws than any one band does
+            let power: f64 = third_octaves(&pops, sr)
+                .iter()
+                .map(|db| 10f64.powf(db / 10.0))
+                .sum();
+            10.0 * power.log10()
+        });
         assert!(
-            (count - want).abs() < 4.0 * want.sqrt(),
-            "{count} pops in an hour vs {want}"
+            (at - ratified).abs() < 0.5,
+            "an hour's pops play at {at:.2} dB at 96 kHz, {ratified:.2} dB at {SAMPLE_RATE} Hz"
         );
-        // an exponential's standard deviation is its mean; a grid's is 0
-        let mean = gaps.iter().sum::<f64>() / count;
-        let sd = (gaps.iter().map(|g| (g - mean).powi(2)).sum::<f64>() / count).sqrt();
-        assert!((sd / mean - 1.0).abs() < 0.15, "gaps vary by {}", sd / mean);
+    }
+
+    /// Seed 0's first song under `c` at `sr`: its loop's length in seconds,
+    /// and each lane's first loop.
+    fn lanes_at(c: Controls, sr: u32) -> (f64, [Vec<f32>; LANES]) {
+        let mut run = Schedule::new(0, 0, sr);
+        run.start_song(c, UNITY);
+        let loop_len = run.song_left() / LOOPS_PER_SONG;
+        let mut lanes: [Vec<f32>; LANES] = Default::default();
+        while lanes[0].len() < loop_len {
+            let n = BLOCK.min(loop_len - lanes[0].len());
+            for (lane, sum) in lanes.iter_mut().zip(run.play(n)) {
+                lane.extend(sum.iter().map(|&v| v as f32));
+            }
+        }
+        (loop_len as f64 / f64::from(sr), lanes)
+    }
+
+    /// `buf`'s mean square at `sr` in each third octave from 25 Hz to 4 kHz,
+    /// in dB, which a sound keeps however it is sampled.
+    fn third_octaves(buf: &[f32], sr: u32) -> Vec<f64> {
+        let n = buf.len().next_power_of_two();
+        let (mut re, mut im) = (buf.to_vec(), vec![0.0; n]);
+        re.resize(n, 0.0);
+        crate::dsp::fft(&mut re, &mut im, &crate::dsp::twiddles(n), false);
+        let hz_per_bin = f64::from(sr) / n as f64;
+        let edge = 2f64.powf(1.0 / 6.0);
+        (0..=22)
+            .map(|k| {
+                let centre = 25.0 * 2f64.powf(f64::from(k) / 3.0);
+                let bins = (centre / edge / hz_per_bin).ceil() as usize
+                    ..=(centre * edge / hz_per_bin) as usize;
+                let power: f64 = (re[bins.clone()].iter().zip(&im[bins]))
+                    .map(|(&r, &i)| f64::from(r).powi(2) + f64::from(i).powi(2))
+                    .sum();
+                // Parseval's, the mirrored half included
+                10.0 * (2.0 * power / (n * buf.len()) as f64).log10()
+            })
+            .collect()
+    }
+
+    /// `buf`'s mean square at `sr` over each 50 ms, in dB.
+    fn envelope(buf: &[f32], sr: u32) -> Vec<f64> {
+        let window = samples_at(0.05, sr);
+        (buf.chunks_exact(window))
+            .map(|w| {
+                10.0 * (w.iter().map(|&x| f64::from(x).powi(2)).sum::<f64>() / window as f64)
+                    .log10()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_song_at_96_khz_plays_as_it_does_at_the_ratified_rate() {
+        const RATE: u32 = 96_000;
+        // per lane in `Lane::ALL` order, how far a third octave, and the
+        // envelope at its 90th percentile, may stray between the rates: just
+        // past what they stray by, the noise lanes' draws being apart
+        // (opinion)
+        const STRAY_DB: [(f64, f64); LANES] = [
+            (0.5, 0.08),
+            (1.0, 0.2),
+            (0.5, 0.08),
+            (2.0, 1.6),
+            (1.2, 0.7),
+            (0.5, 0.05),
+        ];
+        // a band or a window this far under the lane's loudest is left out,
+        // too quiet to compare (opinion)
+        const FLOOR_DB: f64 = 30.0;
+        let loudest = |levels: &[f64]| levels.iter().copied().fold(f64::MIN, f64::max);
+        let mut off = Vec::new();
+        for c in [Controls::default(), Controls::default().with_daylight(0.0)] {
+            let [(ratified_loop, ratified), (loop_at, at)] =
+                [SAMPLE_RATE, RATE].map(|sr| lanes_at(c, sr));
+            // each loop rounds to a whole frame at its rate
+            if (ratified_loop - loop_at).abs() > 1.0 / f64::from(SAMPLE_RATE) {
+                off.push(format!(
+                    "{c:?}: a loop lasts {loop_at} s, not {ratified_loop} s"
+                ));
+            }
+            let lanes = Lane::ALL.iter().zip(ratified.iter().zip(&at)).zip(STRAY_DB);
+            for ((lane, (ratified, at)), (band_db, envelope_db)) in lanes {
+                let (want, got) = (
+                    third_octaves(ratified, SAMPLE_RATE),
+                    third_octaves(at, RATE),
+                );
+                let top = loudest(&want);
+                for (k, (w, g)) in want.iter().zip(&got).enumerate() {
+                    if *w > top - FLOOR_DB && (g - w).abs() > band_db {
+                        off.push(format!(
+                            "{c:?} {lane:?}, third octave {k}: {g:.2} vs {w:.2} dB"
+                        ));
+                    }
+                }
+                let (want, got) = (envelope(ratified, SAMPLE_RATE), envelope(at, RATE));
+                let top = loudest(&want);
+                let mut strays: Vec<f64> = (want.iter().zip(&got))
+                    .filter(|(w, _)| **w > top - FLOOR_DB)
+                    .map(|(w, g)| (g - w).abs())
+                    .collect();
+                strays.sort_by(f64::total_cmp);
+                let stray = strays[(strays.len() - 1) * 9 / 10];
+                if stray > envelope_db {
+                    off.push(format!("{c:?} {lane:?}: the envelope strays {stray:.2} dB"));
+                }
+            }
+        }
+        assert!(
+            off.is_empty(),
+            "the song plays apart at {RATE} Hz: {off:#?}"
+        );
     }
 }
