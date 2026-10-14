@@ -29,7 +29,9 @@ jobs:
       changed: ${{ steps.compare.outputs.changed }}
       merge-base: ${{ steps.merge-base.outputs.sha }}
     steps:
-      # the PR's head, not the merge commit a pull_request run checks out
+      # the PR's head: a pull_request run's own checkout is the "Last merge
+      # commit on the GITHUB_REF branch"
+      # (https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request)
       - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.head.sha }}
@@ -75,7 +77,9 @@ jobs:
           done
           echo "$differ of $pairs pairs differ" >> "$GITHUB_STEP_SUMMARY"
           if [ "$differ" -gt 0 ]; then echo changed=true; else echo changed=false; fi >> "$GITHUB_OUTPUT"
-      # a fork's PR gets no secret, so no job would read it
+      # `judge` skips a fork's PR, whose run gets no secret
+      # (https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflows-in-forked-repositories),
+      # so no job would read it
       - if: steps.compare.outputs.changed == 'true' && github.event.pull_request.head.repo.full_name == github.repository
         uses: actions/upload-artifact@v7
         with:
@@ -216,7 +220,9 @@ jobs:
             echo "Unscored: no take renders a song seam or a mid-song control ramp."
           } > "$body"
           cat "$body" >> "$GITHUB_STEP_SUMMARY"
-          # a fork's token can't comment, so its score is the summary's notice
+          # "The GITHUB_TOKEN has read-only permissions in pull requests from
+          # forked repositories" (the events reference above), so a fork's
+          # notice is the summary alone
           if [ "$SAME_REPO" = true ]; then
             ids=$(gh api --paginate "repos/$REPO/issues/$PR/comments" \
               --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | contains("<!-- lofi-judge -->"))) | .id')
