@@ -1,34 +1,54 @@
 //! The generator's STATISTICAL gate: render N random-seed takes to wav so
-//! `ab_judge.py` judges the COMPOSER, not one take. Renders through the REAL
-//! `render_lane` chain and mixes it at one of pixtuoid's tiers, so what you hear
-//! is what ships.
+//! `ab_judge.py` judges the COMPOSER, not one take. A take is the first song of
+//! a seed's run at one of pixtuoid's tiers. `--engine stream`, the default,
+//! renders it as a `Performance` plays it, so what you hear is what lofi ships;
+//! `--engine whole` renders the same score's lanes whole and loops their mix, as
+//! pixtuoid's office played lofi before the stream. Either take is mono and a
+//! song long.
 //!
 //! Usage:
 //!   cargo run --release --example lofi_audition -- \
-//!     [--mood day|night] [--seeds N] [--start S] [--out DIR] \
+//!     [--engine whole|stream] [--mood day|night] [--seeds N] [--start S] [--out DIR] \
 //!     [--tier empty|moderate|busy | --solo pad|sparkle|keys|drums|texture|bass] \
 //!     [--shuffle KEYFILE]
+//!   `--solo` renders a lane whole, so it takes `--engine whole`.
 
 #[path = "common/batch.rs"]
 mod batch;
 #[path = "common/loudness.rs"]
 mod loudness;
 
+use std::f64::consts::PI;
 use std::fs::File;
 use std::hash::{BuildHasher as _, RandomState};
-use std::io::{BufWriter, Write as _};
-use std::path::PathBuf;
+use std::io::{self, BufWriter, Write as _};
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use pixtuoid_lofi::audition::Lane;
 use pixtuoid_lofi::dsp::{NoiseStream, SAMPLE_RATE};
-use pixtuoid_lofi::{Lane, compose};
 
-use batch::{Batch, LANE_NAMES, parse_choice, render_take, soak_mix, tier_gain, usage_error};
+use batch::{Batch, Engine, LANE_NAMES, parse_choice, render_take, soak_mix, usage_error};
 use loudness::gated_lufs;
 
 /// Every take renders at ONE gated loudness, so a blind A/B compares takes, not
 /// gain.
 const TARGET_LUFS: f64 = -18.0;
+
+/// What a solo take renders at instead, since a lane alone peaks past full
+/// scale at [`TARGET_LUFS`]: the loudest level at which every lane's solo,
+/// both moods and seeds 0–23, kept its peak under full scale, as the commit
+/// that set it records, less [`SOLO_MARGIN_DB`].
+const SOLO_TARGET_LUFS: f64 = -31.6 - SOLO_MARGIN_DB;
+
+/// Room for a seed past that sweep to peak higher (opinion).
+const SOLO_MARGIN_DB: f64 = 1.0;
+
+/// How long, in seconds, a take fades in and out under a raised cosine: cut
+/// from a stream or a loop, it starts and ends mid-waveform, and the click
+/// there differs by engine, so it could tell a blind A/B's sides apart. The
+/// length is opinion.
+const EDGE_FADE_S: f64 = 0.01;
 
 fn main() -> ExitCode {
     match run() {
@@ -40,76 +60,26 @@ fn main() -> ExitCode {
     }
 }
 
-fn run() -> std::io::Result<()> {
-    let mut batch = Batch::default();
-    let mut out = PathBuf::from("audio-demos");
-    let mut solo: Option<usize> = None;
-    let mut key: Option<PathBuf> = None;
-    let mut args = std::env::args().skip(1);
-    while let Some(a) = args.next() {
-        if batch.parse_flag(&a, &mut args)? {
-            continue;
-        }
-        match a.as_str() {
-            "--out" => match args.next() {
-                Some(v) => out = PathBuf::from(v),
-                None => return Err(usage_error("--out needs a directory".into())),
-            },
-            "--solo" => solo = Some(parse_choice(args.next(), "--solo", &LANE_NAMES)?),
-            "--shuffle" => match args.next() {
-                Some(v) => key = Some(PathBuf::from(v)),
-                None => return Err(usage_error("--shuffle needs a key file".into())),
-            },
-            other => {
-                return Err(usage_error(format!(
-                    "unknown argument {other:?}; valid: --mood --seeds --start --out --tier --solo --shuffle"
-                )));
-            }
-        }
-    }
-    if solo.is_some() && batch.tier.is_some() {
-        return Err(usage_error(
-            "--solo plays one lane, so it takes no --tier".into(),
-        ));
-    }
-    std::fs::create_dir_all(&out)?;
-
-    let (mix_name, gains) = match solo {
-        Some(s) => {
-            let mut gains = [0.0; Lane::ALL.len()];
-            gains[s] = 1.0;
-            (LANE_NAMES[s], gains)
-        }
-        None => {
-            let tier = batch.tier();
-            (tier.name(), Lane::ALL.map(|lane| tier_gain(lane, tier)))
-        }
-    };
-    let seeds: Vec<u64> = batch.seeds().collect();
-    let takes: Vec<String> = seeds
-        .iter()
-        .map(|seed| format!("gen_{}_{mix_name}_{seed:03}.wav", batch.mood_name()))
-        .collect();
-    let files = match key {
+fn run() -> io::Result<()> {
+    let args = Args::parse(std::env::args().skip(1))?;
+    std::fs::create_dir_all(&args.out)?;
+    let takes = args.takes();
+    let files = match args.key {
         Some(_) => shuffled_names(takes.len()),
-        None => takes.clone(),
+        None => takes.iter().map(|(_, take)| take.clone()).collect(),
     };
     let mut order: Vec<(&String, &String, u64)> = files
         .iter()
         .zip(&takes)
-        .zip(&seeds)
-        .map(|((file, take), &seed)| (file, take, seed))
+        .map(|(file, (seed, take))| (file, take, *seed))
         .collect();
     // rendered in file-name order, so the files' times don't give the seeds away
     order.sort();
     for &(file, _, seed) in &order {
-        let score = compose(batch.mood(), seed);
-        let beds = render_take(&score).map(|(bed, _)| bed);
-        let mut mixdown = soak_mix(&beds, &gains);
-        loudness_normalize(&mut mixdown);
-        let path = out.join(file);
-        write_wav(&path, &mixdown)?;
-        if key.is_none() {
+        let path = args.out.join(file);
+        write_wav(&path, &args.render(seed)?)?;
+        if args.key.is_none() {
+            let score = args.batch.score(seed);
             println!(
                 "  seed {seed:3}  {:>3.0} bpm  lead={:5}  {}",
                 score.bpm(),
@@ -118,7 +88,7 @@ fn run() -> std::io::Result<()> {
             );
         }
     }
-    match &key {
+    match &args.key {
         Some(key) => {
             let mut w = BufWriter::new(File::create(key)?);
             for (file, take, _) in &order {
@@ -130,9 +100,127 @@ fn run() -> std::io::Result<()> {
         None => println!("\nblind-audition (--shuffle KEYFILE hides the seeds):"),
     }
     for (file, ..) in &order {
-        println!("  afplay {}", out.join(file).display());
+        println!("  afplay {}", args.out.join(file).display());
     }
     Ok(())
+}
+
+/// What a run renders, and where.
+struct Args {
+    batch: Batch,
+    out: PathBuf,
+    /// The lane `--solo` plays alone, as its index in [`LANE_NAMES`].
+    solo: Option<usize>,
+    key: Option<PathBuf>,
+}
+
+impl Args {
+    fn parse(mut args: impl Iterator<Item = String>) -> io::Result<Self> {
+        let mut parsed = Self {
+            batch: Batch::default(),
+            out: PathBuf::from("audio-demos"),
+            solo: None,
+            key: None,
+        };
+        while let Some(a) = args.next() {
+            if parsed.batch.parse_flag(&a, &mut args)? {
+                continue;
+            }
+            match a.as_str() {
+                "--out" => match args.next() {
+                    Some(v) => parsed.out = PathBuf::from(v),
+                    None => return Err(usage_error("--out needs a directory".into())),
+                },
+                "--solo" => parsed.solo = Some(parse_choice(args.next(), "--solo", &LANE_NAMES)?),
+                "--shuffle" => match args.next() {
+                    Some(v) => parsed.key = Some(PathBuf::from(v)),
+                    None => return Err(usage_error("--shuffle needs a key file".into())),
+                },
+                other => {
+                    return Err(usage_error(format!(
+                        "unknown argument {other:?}; valid: --engine --mood --seeds --start --out --tier --solo --shuffle"
+                    )));
+                }
+            }
+        }
+        if parsed.solo.is_some() {
+            if parsed.batch.tier.is_some() {
+                return Err(usage_error(
+                    "--solo plays one lane, so it takes no --tier".into(),
+                ));
+            }
+            if parsed.batch.engine != Engine::WholeLane {
+                return Err(usage_error(
+                    "--solo renders one lane whole, so it takes --engine whole".into(),
+                ));
+            }
+        }
+        Ok(parsed)
+    }
+
+    /// Each seed with its take's file name. No engine changes a name, so
+    /// `ab_listen.py` pairs a whole-lane batch with a stream batch.
+    fn takes(&self) -> Vec<(u64, String)> {
+        let mix = match self.solo {
+            Some(s) => LANE_NAMES[s],
+            None => self.batch.tier().name(),
+        };
+        let mood = self.batch.mood_name();
+        (self.batch.seeds())
+            .map(|seed| (seed, format!("gen_{mood}_{mix}_{seed:03}.wav")))
+            .collect()
+    }
+
+    /// `seed`'s take at its target loudness; an error if that clips it,
+    /// which would write a different take.
+    fn render(&self, seed: u64) -> io::Result<Vec<f32>> {
+        let mut take = match self.batch.engine {
+            Engine::WholeLane => {
+                let gains = match self.solo {
+                    Some(s) => {
+                        let mut gains = [0.0; Lane::ALL.len()];
+                        gains[s] = 1.0;
+                        gains
+                    }
+                    None => self.batch.lane_gains(),
+                };
+                let (beds, _) = render_take(&self.batch.score(seed));
+                soak_mix(&beds, &gains)
+            }
+            Engine::Stream => self.batch.perform(seed)?,
+        };
+        fade_edges(&mut take);
+        let target = self.target_lufs();
+        let gain = 10f64.powf((target - gated_lufs(&take, SAMPLE_RATE)) / 20.0) as f32;
+        for v in &mut take {
+            *v *= gain;
+        }
+        if take.iter().any(|v| v.abs() > 1.0) {
+            return Err(io::Error::other(format!(
+                "seed {seed} clips at {target} LUFS"
+            )));
+        }
+        Ok(take)
+    }
+
+    /// The gated loudness every take of the run renders at.
+    fn target_lufs(&self) -> f64 {
+        match self.solo {
+            Some(_) => SOLO_TARGET_LUFS,
+            None => TARGET_LUFS,
+        }
+    }
+}
+
+/// `take` faded in from silence and out to it over [`EDGE_FADE_S`].
+fn fade_edges(take: &mut [f32]) {
+    let n = (EDGE_FADE_S * f64::from(SAMPLE_RATE)) as usize;
+    let last = take.len() - 1;
+    for i in 0..n {
+        let w = (0.5 * (1.0 - (PI * i as f64 / n as f64).cos())) as f32;
+        take[i] *= w;
+        take[last - i] *= w;
+    }
 }
 
 /// `count` opaque file names in a random order, seeded from a [`RandomState`],
@@ -155,16 +243,13 @@ fn shuffle_names(count: usize, rng: &mut NoiseStream) -> Vec<String> {
     order.iter().map(|i| format!("take_{i:02}.wav")).collect()
 }
 
-/// Scale the mixdown to [`TARGET_LUFS`].
-fn loudness_normalize(x: &mut [f32]) {
-    let gain = 10f64.powf((TARGET_LUFS - gated_lufs(x)) / 20.0) as f32;
-    for v in x.iter_mut() {
-        *v *= gain;
-    }
+/// `x` as the 16-bit sample the file holds, which the loudness test reads too.
+fn pcm(x: f32) -> i16 {
+    (x * f32::from(i16::MAX)) as i16
 }
 
-/// 16-bit stereo RIFF/WAVE (mono mixdown duplicated L/R) with the audition soft clip.
-fn write_wav(path: &PathBuf, mono: &[f32]) -> std::io::Result<()> {
+/// 16-bit stereo RIFF/WAVE, the take in both channels.
+fn write_wav(path: &Path, mono: &[f32]) -> io::Result<()> {
     let mut w = BufWriter::new(File::create(path)?);
     let n = mono.len() as u32;
     let data_len = n * 4; // 2 channels × i16
@@ -182,8 +267,7 @@ fn write_wav(path: &PathBuf, mono: &[f32]) -> std::io::Result<()> {
     w.write_all(b"data")?;
     w.write_all(&data_len.to_le_bytes())?;
     for &s in mono {
-        let clipped = (s * 1.1).tanh() * 0.85;
-        let pcm = (clipped * 32767.0) as i16;
+        let pcm = pcm(s);
         w.write_all(&pcm.to_le_bytes())?;
         w.write_all(&pcm.to_le_bytes())?;
     }
@@ -193,6 +277,10 @@ fn write_wav(path: &PathBuf, mono: &[f32]) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn parsed(args: &[&str]) -> Args {
+        Args::parse(args.iter().map(|&a| a.to_owned())).expect("the arguments parse")
+    }
 
     #[test]
     fn shuffled_names_are_each_take_once_and_not_kept_in_order() {
@@ -210,6 +298,53 @@ mod tests {
                 count == 1 || moved,
                 "{count} names stayed in order for every seed"
             );
+        }
+    }
+
+    #[test]
+    fn a_take_keeps_its_name_under_either_engine() {
+        let [whole, stream] = ["whole", "stream"].map(|engine| {
+            parsed(&["--engine", engine, "--mood", "night", "--tier", "empty"]).takes()
+        });
+        assert_eq!(whole, stream);
+        // the shape `ab_listen.py`'s NAME pairs
+        assert_eq!(whole[0], (0, "gen_night_empty_000.wav".to_owned()));
+    }
+
+    #[test]
+    fn both_engines_write_a_take_as_long_and_at_the_target_loudness() {
+        let seed = 1;
+        let [whole, stream] = ["whole", "stream"].map(|engine| {
+            let take = parsed(&["--engine", engine]).render(seed);
+            let written: Vec<f32> = (take.expect("the take renders").iter())
+                .map(|&x| f32::from(pcm(x)) / f32::from(i16::MAX))
+                .collect();
+            let lufs = gated_lufs(&written, SAMPLE_RATE);
+            assert!(
+                (lufs - TARGET_LUFS).abs() <= 0.1,
+                "{engine} writes {lufs:.3} LUFS"
+            );
+            written.len()
+        });
+        assert_eq!(whole, stream, "the engines' takes last apart");
+    }
+
+    #[test]
+    fn both_engines_write_a_take_from_silence_to_silence() {
+        for engine in ["whole", "stream"] {
+            let take = parsed(&["--engine", engine]).render(2);
+            let edges = take.map(|t| [t[0], t[t.len() - 1]].map(pcm)).ok();
+            assert_eq!(edges, Some([0, 0]), "{engine}'s first and last samples");
+        }
+    }
+
+    #[test]
+    fn every_lane_writes_a_solo_take() {
+        for mood in ["day", "night"] {
+            for lane in LANE_NAMES {
+                let take = parsed(&["--engine", "whole", "--mood", mood, "--solo", lane]).render(0);
+                assert!(take.is_ok(), "{mood} {lane}: {:?}", take.err());
+            }
         }
     }
 }

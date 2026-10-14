@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Blind A/B of a sound change. Pairs the renders a baseline batch and a
-candidate batch share by name (`lofi_audition --out BASE_DIR` on main, then
-`--out CAND_DIR` on the branch), plays each pair in a random order with the
-candidate on a random side, and records every verdict with its unblinding.
+candidate batch share by name (rendered as SKILL.md's GENERATOR loop step 5
+says), plays each pair in a random order with the candidate on a random
+side, and records every verdict with its unblinding.
 Verdicts save after each pair, and a rerun with the same --out resumes.
 
 Usage: python3 ab_listen.py BASE_DIR CAND_DIR --out VERDICT.json

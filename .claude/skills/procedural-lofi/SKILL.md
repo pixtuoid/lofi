@@ -42,8 +42,8 @@ solves all three:
   enough** not to fatigue (the day loop doubled from 4 to 8 bars because a short looped
   melody *was* audibly repetitive — "loop the bed" does not mean "make it short"); (2) a
   consumer scatters genuinely-stochastic layers fresh at runtime (pixtuoid's rain drops and
-  keystrokes); (3) a consumer's mixer fades whole lanes in and out (pixtuoid's by how busy
-  its office is), so the arrangement keeps changing even while the notes don't.
+  keystrokes); (3) a `Performance` sets each lane's gain by `Controls::intensity`, which a
+  consumer sets, e.g. by how busy an office is, so the arrangement changes while the notes don't.
 
 The one law of the whole method:
 
@@ -183,10 +183,10 @@ imports `phase2_audition.py` — both are bundled. Adapt the voices to your own 
 ## The GENERATOR loop (this crate's composer — iterate in minutes, not design cycles)
 
 Once a project graduates from frozen takes to a theory-constrained generator
-(`src/compose.rs` + `synth::render_lane` in `src/synth.rs`), the iteration loop changes
-shape: the gate becomes **statistical** (`ab_judge.py` judges a batch of seeds, step 5;
-PASS = the GENERATOR ships — REGRESSION = tighten a constraint and re-batch), and
-every taste axis is a data table or named const with ONE home:
+(`compose`'s scores, which a `Performance` plays through `synth`'s voices and `stream`'s
+chains), the iteration loop changes shape: the gate becomes **statistical** (`ab_judge.py`
+judges a batch of seeds, step 5; PASS = the GENERATOR ships — REGRESSION = tighten a
+constraint and re-batch), and every taste axis is a data table or named const with ONE home:
 
 | Want to change…            | Edit (all in `compose.rs` unless noted)                  |
 |----------------------------|----------------------------------------------------------|
@@ -196,29 +196,32 @@ every taste axis is a data table or named const with ONE home:
 | groove feel                | `DAY_GROOVES` templates / `night_drums` pattern + the swing/drag consts |
 | comping density            | `keys_events` density draws                              |
 | room-tone crackle          | `synth::CRACKLE_POPS_PER_SEC` (one knob, both beds)      |
+| lane gains, mix level      | `stream::master`: `tier_gains`, `MASTER_GAIN`            |
+| staging, bed crossfade     | `stream::lanes`: `staging`, `BED_CROSSFADE_S`            |
 | **a new instrument**       | see the checklist below                                  |
 
 **Add-an-instrument checklist** (executed once for the `Pluck` lead — repeat verbatim):
-1. Write the voice as a pure note fn in `synth.rs` (`fn my_voice(midi, dur_s, vel) -> Vec<f32>`),
-   physics-first then tuned by ear/fingerprint (Phase 1-2 of this skill still apply).
+1. Write the voice as a pure note fn in `synth.rs`, a `NoteVoice` rendered at the rate it
+   is given, physics-first then tuned by ear/fingerprint (Phase 1-2 of this skill still apply).
 2. Add a `compose::LeadVoice` variant + its arm in `synth::lead_voice_fn` (the ONE dispatch).
 3. Give it a draw weight at the END of `compose()` — the voice draw is deliberately LAST in
    the seed stream so new voices never redraw an already-blessed seed's notes (one banded
    unit-draw per mood — re-weight the bands rather than adding draws).
 4. Extend the distribution property test; run the compose suite (fast — no synthesis).
 5. Render a batch (`cargo run --release --example lofi_audition -- --seeds N`;
-   `--solo sparkle` isolates the lane) → `ab_judge.py` gates it → tighten or ship. A change to a
-   shipped sound first diffs the copied tier gains against pixtuoid's (no output: in step),
+   `--engine whole --solo sparkle` isolates the lane) → `ab_judge.py` gates it → tighten or
+   ship. A change to a shipped sound first diffs `tier_gains` against pixtuoid's (no output: in step),
    ```bash
    diff <(gh api repos/pixtuoid/pixtuoid/contents/crates/pixtuoid-scene/src/audio/mod.rs --jq .content | base64 -d |
             sed -nE 's/^const (PAD|SPARKLE|KEYS|DRUMS|TEXTURE|BASS)_GAIN: TierGain = TierGain::new\((.*)\);$/\1 \2/p' | tr '[:upper:]' '[:lower:]') \
-        <(sed -nE 's/^ *Lane::([A-Za-z]+) => (\[.*\]),$/\1 \2/p' examples/common/batch.rs | tr '[:upper:]' '[:lower:]')
+        <(sed -nE 's/^ *Lane::([A-Za-z]+) => (\[.*\]),$/\1 \2/p' src/stream/master.rs | tr '[:upper:]' '[:lower:]')
    ```
-   then renders the batch on `main` into `DIR/base` and on the branch into `DIR/cand`, each
-   from a clean tree with its `git rev-parse HEAD` in `DIR/{base,cand}/COMMIT`, and
-   `ab_judge.py` gates them (its header holds the verdict rule and each measure's blind
-   spots) against REFS, the private reference corpus (`audio/` and its `manifest.json` of
-   sha256s, never committed), from a venv outside the repo, set up once:
+   then renders the batch on `main` into `DIR/base` and on the branch into `DIR/cand`, DIR
+   durable and outside the repo (`~/Desktop/lofi-listen/<change>`), each from a clean tree
+   with its `git rev-parse HEAD` in `DIR/{base,cand}/COMMIT`, and `ab_judge.py` gates them
+   (its header holds the verdict rule and each measure's blind spots) against REFS, the
+   private reference corpus (`audio/` and its `manifest.json` of sha256s, never committed),
+   from a venv outside the repo, set up once:
    ```bash
    # Python 3.12: fadtk 1.1.0 pins numpy<2
    # (https://github.com/microsoft/fadtk/blob/6f815282007288a7165d037a95dacd6d783b6f32/pyproject.toml#L9),
@@ -238,7 +241,9 @@ every taste axis is a data table or named const with ONE home:
    ```
    The owner's blind listen is optional and, when given, overrides the judge:
    `python3 .claude/skills/procedural-lofi/scripts/ab_listen.py DIR/base DIR/cand --out DIR/verdict.json`.
+   A change of engine renders `--engine whole --out DIR/base` and `--engine stream --out DIR/cand`
+   on one commit, at one `--mood`, `--tier` and seeds: a take keeps its name and score.
 
-Mix LANES stay instrument-blind (a consumer's mixer sees lanes, never voices) — a
-lane is a busy-ness ROLE, an instrument is a timbre WITHIN it. That split is what keeps
-"blend in another instrument" a minutes-scale edit instead of a design cycle.
+Mix LANES stay instrument-blind (`stream::master::lane_gain` sees lanes, never voices; a
+consumer sets `Controls` and receives `Frame`s) — a lane is a busy-ness ROLE, an instrument a
+timbre WITHIN it, which keeps "blend in another instrument" a minutes-scale edit, not a design cycle.

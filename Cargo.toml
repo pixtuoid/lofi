@@ -3,7 +3,7 @@ name         = "pixtuoid-lofi"
 version      = "0.1.0"
 edition      = "2024"
 rust-version = "1.98"
-description  = "Procedural lofi in Rust: a seed composes a song, synthesized from constants — no samples, no dependencies."
+description  = "Procedural lofi in Rust: a seed composes an endless run of songs, synthesized from constants — no samples, no dependencies."
 license      = "MIT"
 repository   = "https://github.com/pixtuoid/lofi"
 readme       = "README.md"
@@ -23,7 +23,10 @@ opt-level = 2
 unreachable_pub = "warn"
 missing_debug_implementations = "warn"
 missing_docs = "warn"
-unsafe_code = "forbid"
+# `deny`, which a scoped `expect` can override where `forbid` can't
+# (https://doc.rust-lang.org/1.98.1/rustc/lints/levels.html#forbid): `tests/alloc_budget.rs`'s
+# counting allocator and `lofi_bench`'s wasm imports do. `src/lib.rs` forbids it in the library.
+unsafe_code = "deny"
 
 # An `allow` outlives the warning it silenced; an `expect` fails once its lint
 # stops firing, and a `reason` says why the suppression exists.

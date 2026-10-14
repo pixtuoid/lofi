@@ -18,7 +18,7 @@ use super::dsp::NoiseStream;
 
 /// The listening context a song is composed for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Mood {
+pub(crate) enum Mood {
     /// The daytime pool of progressions and lead voices.
     Day,
     /// The night-time pool of progressions and lead voices.
@@ -55,8 +55,7 @@ pub(super) enum DrumKind {
 }
 
 /// One composed song — tempo, lead voice, harmonic timeline and every lane's
-/// events — that [`render_lane`](crate::render_lane) synthesizes. Fields stay
-/// private so a music-only patch can reshape them.
+/// events — that `synth`'s voices play.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Score {
     pub(super) mood: Mood,
@@ -72,7 +71,7 @@ pub struct Score {
     /// day pickup dips one step under); this lane owns the register the night
     /// pad no longer bakes.
     pub(super) bass: Vec<(f32, u8, f32)>,
-    /// Night only: kick timestamps for the texture's baked duck (empty for day).
+    /// Night only: kick timestamps the texture ducks under (empty for day).
     pub(super) kick_times: Vec<f32>,
     /// Which instrument sings the lead.
     pub(super) lead_voice: LeadVoice,
@@ -955,8 +954,9 @@ fn keys_events(
 }
 
 /// Compose one full take from a seed — deterministic, no clock and no I/O.
-/// Synthesis lives in [`super::synth::render_lane`].
-pub fn compose(mood: Mood, seed: u64) -> Score {
+/// A [`Performance`](crate::Performance) plays it;
+/// [`render_lane`](super::synth::render_lane) renders one lane whole.
+pub(crate) fn compose(mood: Mood, seed: u64) -> Score {
     let mut rng = NoiseStream::new(crate::dsp::splitmix64(seed ^ 0x10F1_C0DE));
 
     let (progs, bpm_win): (&[Progression], (f32, f32)) = match mood {

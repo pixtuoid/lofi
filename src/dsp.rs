@@ -1,7 +1,7 @@
 //! Minimal DSP kernel for the procedural synth — a real-input FFT, brickwall
 //! band filters, spectral-envelope noise shaping, and a deterministic noise
-//! stream. Everything runs ONCE per track to pre-render sample buffers
-//! ([`render_lane`](crate::render_lane)), never per audio frame.
+//! stream. The filters take a whole buffer — one voice's note, one foley
+//! one-shot — never a stream, so none runs per audio frame.
 //! Dependency-free on purpose: a consumer's wasm ships this module, and an FFT
 //! crate is a download every visitor pays.
 
@@ -22,7 +22,7 @@ pub(crate) fn splitmix64(z: u64) -> u64 {
 }
 
 /// Draw `n` of the splitmix64 stream seeded at `seed`, counting from 1.
-fn splitmix_draw(seed: u64, n: u64) -> u64 {
+pub(crate) fn splitmix_draw(seed: u64, n: u64) -> u64 {
     splitmix64(seed.wrapping_add(n.wrapping_mul(GOLDEN_GAMMA)))
 }
 
@@ -46,6 +46,12 @@ impl NoiseStream {
         splitmix_draw(self.seed, self.counter)
     }
 
+    /// A stream seeded by this one's next draw, so what it draws moves no
+    /// sibling fork's draws.
+    pub(crate) fn fork(&mut self) -> Self {
+        Self::new(self.next_u64())
+    }
+
     /// Uniform in [0, 1).
     pub fn unit(&mut self) -> f32 {
         (self.next_u64() >> 40) as f32 / (1u64 << 24) as f32
@@ -57,13 +63,22 @@ impl NoiseStream {
     }
 }
 
+/// The gain that keeps [`NoiseStream::norm`]'s draws, one a sample, as loud in
+/// each hertz at `sr` as at [`SAMPLE_RATE`], where every noise level was set:
+/// white noise's power spectral density "is a constant"
+/// (<https://ccrma.stanford.edu/~jos/sasp/White_Noise_I.html>), so a draw's
+/// variance spreads evenly up to the rate's Nyquist.
+pub(crate) fn white_noise_gain(sr: u32) -> f32 {
+    (sr as f32 / SAMPLE_RATE as f32).sqrt()
+}
+
 /// `e^(−2πik/n)` for `k` in `0..n/2` as `(cos, sin)` rows, built per transform
 /// pair and dropped: a kept table for the longest beds pins megabytes.
-type Twiddles = Vec<(f32, f32)>;
+pub(crate) type Twiddles = Vec<(f32, f32)>;
 
 /// [`Twiddles`] for `n`, in f64: a recurrence across a stage drifts by its
 /// length.
-fn twiddles(n: usize) -> Twiddles {
+pub(crate) fn twiddles(n: usize) -> Twiddles {
     (0..n / 2)
         .map(|k| {
             let a = -2.0 * std::f64::consts::PI * k as f64 / n as f64;
@@ -75,7 +90,7 @@ fn twiddles(n: usize) -> Twiddles {
 /// In-place iterative radix-2 FFT (Cooley–Tukey), unscaled. `re`/`im` len
 /// must be a power of two no longer than the table: `tw` is [`twiddles`] for
 /// a power of two at least `re.len()`.
-fn fft(re: &mut [f32], im: &mut [f32], tw: &[(f32, f32)], inverse: bool) {
+pub(crate) fn fft(re: &mut [f32], im: &mut [f32], tw: &[(f32, f32)], inverse: bool) {
     let n = re.len();
     debug_assert!(n.is_power_of_two() && im.len() == n && 2 * tw.len() >= n);
     let mut j = 0usize;
@@ -194,12 +209,13 @@ fn signal(xr: &[f32], xi: &[f32], tw: &[(f32, f32)]) -> Vec<f32> {
 }
 
 /// `buf`'s half spectrum at the next power of two, with the twiddles it was
-/// taken with (half that length) for the [`signal`] back, and the bin width.
-fn forward_spectrum(buf: &[f32]) -> (Vec<f32>, Vec<f32>, Twiddles, f32) {
+/// taken with (half that length) for the [`signal`] back, and the bin width
+/// at `sr`.
+fn forward_spectrum(buf: &[f32], sr: u32) -> (Vec<f32>, Vec<f32>, Twiddles, f32) {
     let n = buf.len().next_power_of_two().max(2);
     let tw = twiddles(n);
     let (re, im) = spectrum(buf, &tw);
-    (re, im, tw, SAMPLE_RATE as f32 / n as f32)
+    (re, im, tw, sr as f32 / n as f32)
 }
 
 /// Mirror-aware frequency of FFT bin `k` in an `n`-point spectrum: bins above
@@ -215,7 +231,12 @@ fn bin_freq(k: usize, n: usize, hz_per_bin: f32) -> f32 {
 /// power-of-two buffer filters circularly (a seamless loop stays seamless) and
 /// any other length does not.
 pub fn bandpass(buf: &[f32], lo_hz: f32, hi_hz: f32) -> Vec<f32> {
-    let (mut re, mut im, tw, hz_per_bin) = forward_spectrum(buf);
+    bandpass_at(buf, lo_hz, hi_hz, SAMPLE_RATE)
+}
+
+/// [`bandpass`] of a buffer sampled at `sr`.
+pub(crate) fn bandpass_at(buf: &[f32], lo_hz: f32, hi_hz: f32, sr: u32) -> Vec<f32> {
+    let (mut re, mut im, tw, hz_per_bin) = forward_spectrum(buf, sr);
     let n = 2 * tw.len();
     for (k, (r, i)) in re.iter_mut().zip(&mut im).enumerate() {
         let f = bin_freq(k, n, hz_per_bin);
@@ -234,8 +255,8 @@ pub fn lowpass(buf: &[f32], cutoff_hz: f32) -> Vec<f32> {
     bandpass(buf, 0.0, cutoff_hz)
 }
 
-pub(crate) fn highpass(buf: &[f32], cutoff_hz: f32) -> Vec<f32> {
-    bandpass(buf, cutoff_hz, SAMPLE_RATE as f32)
+pub(crate) fn highpass(buf: &[f32], cutoff_hz: f32, sr: u32) -> Vec<f32> {
+    bandpass_at(buf, cutoff_hz, sr as f32, sr)
 }
 
 /// Tape wow/flutter — resample `buf` along a sinusoidally warped time axis
@@ -342,7 +363,7 @@ fn moving_average(x: &[f32], window: usize) -> Vec<f32> {
 
 /// Spectral centroid of `buf` in Hz.
 pub fn centroid_hz(buf: &[f32]) -> f32 {
-    let (re, im, _, hz_per_bin) = forward_spectrum(buf);
+    let (re, im, _, hz_per_bin) = forward_spectrum(buf, SAMPLE_RATE);
     let (mut num, mut den) = (0.0f64, 0.0f64);
     for (k, (r, i)) in re.iter().zip(&im).enumerate() {
         let p = f64::from(r * r + i * i);
@@ -354,7 +375,7 @@ pub fn centroid_hz(buf: &[f32]) -> f32 {
 
 /// Fraction of `buf`'s spectral power inside `[lo_hz, hi_hz)`.
 pub fn band_energy_share(buf: &[f32], lo_hz: f32, hi_hz: f32) -> f32 {
-    let (re, im, tw, hz_per_bin) = forward_spectrum(buf);
+    let (re, im, tw, hz_per_bin) = forward_spectrum(buf, SAMPLE_RATE);
     let (mut band, mut total) = (0.0f64, 0.0f64);
     for k in 1..=tw.len() {
         let p = f64::from(re[k] * re[k] + im[k] * im[k]);
@@ -431,6 +452,17 @@ mod tests {
         let rms = |v: &[f32]| (v.iter().map(|x| x * x).sum::<f32>() / v.len() as f32).sqrt();
         assert!(rms(&kept) > 0.5, "in-band tone survives");
         assert!(rms(&killed) < 0.01, "out-of-band tone dies");
+        // a bin's own frequency at 48 kHz, so none leaks into the band below,
+        // which holds where that bin falls at `SAMPLE_RATE`
+        let (sr, n) = (48_000, 8192);
+        let hz = 85.0 * sr as f32 / n as f32;
+        let t: Vec<f32> = (0..n)
+            .map(|i| (2.0 * std::f32::consts::PI * hz * i as f32 / sr as f32).sin())
+            .collect();
+        let kept = bandpass_at(&t, hz - 20.0, hz + 20.0, sr);
+        let killed = bandpass_at(&t, hz - 200.0, hz - 20.0, sr);
+        assert!(rms(&kept) > 0.5, "in-band tone survives at {sr}");
+        assert!(rms(&killed) < 0.01, "out-of-band tone dies at {sr}");
     }
 
     #[test]
@@ -461,5 +493,131 @@ mod tests {
         let high = band_energy_share(&buf, 1000.0, 8000.0);
         assert!((low - 0.70).abs() < 0.05, "low band {low}");
         assert!((high - 0.30).abs() < 0.05, "high band {high}");
+    }
+
+    /// The octave edges a fingerprint reads power shares between, in Hz.
+    const OCTAVE_EDGES_HZ: [f32; 10] = [
+        0.0,
+        125.0,
+        250.0,
+        500.0,
+        1000.0,
+        2000.0,
+        4000.0,
+        8000.0,
+        16000.0,
+        SAMPLE_RATE as f32 / 2.0,
+    ];
+
+    /// `buf`'s fingerprint: its RMS in dB, its peak, its centroid and its
+    /// power's share in each octave.
+    fn fingerprint(buf: &[f32]) -> Vec<f32> {
+        let power = buf.iter().map(|&v| f64::from(v * v)).sum::<f64>() / buf.len() as f64;
+        let peak = buf.iter().fold(0.0f32, |p, v| p.max(v.abs()));
+        let shares = (OCTAVE_EDGES_HZ.windows(2)).map(|w| band_energy_share(buf, w[0], w[1]));
+        [(10.0 * power.log10()) as f32, peak, centroid_hz(buf)]
+            .into_iter()
+            .chain(shares)
+            .collect()
+    }
+
+    #[test]
+    fn the_public_filters_keep_their_fingerprints() {
+        // over a platform's last-bit `sin`, and under any change pixtuoid's
+        // foley, tuned on these outputs, could hear (opinion)
+        const TOLERANCE: f32 = 1e-4;
+        // a keystroke's length, not a power of two, so the padding shows
+        let mut rng = NoiseStream::new(11);
+        let noise: Vec<f32> = (0..2646).map(|_| rng.norm()).collect();
+        // the bands pixtuoid's rain plays
+        // (crates/pixtuoid-scene/src/audio/foley.rs at a63f178)
+        let rain = [
+            (20.0, 60.0, 1.5),
+            (60.0, 125.0, 3.5),
+            (125.0, 250.0, 6.9),
+            (250.0, 500.0, 14.3),
+            (500.0, 1000.0, 24.4),
+            (1000.0, 2000.0, 25.3),
+            (2000.0, 4000.0, 10.2),
+            (4000.0, 8000.0, 8.9),
+            (8000.0, 16000.0, 4.0),
+        ];
+        let mut drops = NoiseStream::new(5);
+        let wash = shaped_noise_loop(1 << 16, &rain, &mut drops);
+        // RMS, peak and centroid, then a share per octave
+        type Fingerprint = [f32; 3 + OCTAVE_EDGES_HZ.len() - 1];
+        let cases: [(&str, Vec<f32>, usize, Fingerprint); 3] = [
+            (
+                "bandpass",
+                bandpass(&noise, 900.0, 3000.0),
+                noise.len(),
+                [
+                    -10.244952,
+                    1.0600876,
+                    1877.087,
+                    0.0001621343,
+                    0.00019316099,
+                    0.00044842198,
+                    0.061360985,
+                    0.4954008,
+                    0.44222355,
+                    0.00014493968,
+                    4.7951376e-5,
+                    1.8008892e-5,
+                ],
+            ),
+            (
+                "lowpass",
+                lowpass(&noise, 4000.0),
+                noise.len(),
+                [
+                    -7.590567,
+                    1.2667441,
+                    1829.902,
+                    0.021072902,
+                    0.047142792,
+                    0.057722352,
+                    0.15510617,
+                    0.27290294,
+                    0.4448293,
+                    0.0012147744,
+                    8.259414e-6,
+                    5.318578e-7,
+                ],
+            ),
+            (
+                "shaped_noise_loop",
+                wash,
+                1 << 16,
+                [
+                    -12.900906,
+                    1.0,
+                    1956.3048,
+                    0.048485186,
+                    0.06570255,
+                    0.14594305,
+                    0.24840866,
+                    0.2583636,
+                    0.10464047,
+                    0.088480085,
+                    0.039949004,
+                    2.7414626e-5,
+                ],
+            ),
+        ];
+        let mut off = Vec::new();
+        for (name, buf, len, want) in cases {
+            let got = fingerprint(&buf);
+            let strays = (got.iter().zip(want)).any(|(g, w)| (g - w).abs() > TOLERANCE * w.abs());
+            if buf.len() != len || strays {
+                off.push(format!("{name}: {} samples, {got:?}", buf.len()));
+            }
+        }
+        // the draws it took, which every later draw of pixtuoid's stream follows
+        let next = drops.unit();
+        if next != 0.789_408_7 {
+            off.push(format!("shaped_noise_loop's stream draws {next} next"));
+        }
+        assert!(off.is_empty(), "off their fingerprints: {off:#?}");
     }
 }
