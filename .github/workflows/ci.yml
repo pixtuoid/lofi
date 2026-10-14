@@ -37,6 +37,8 @@ jobs:
             echo "::error::audio files are tracked; references are copyrighted and takes are local"
             exit 1
           fi
+      - name: ab_judge.py's verdict gate holds its tests
+        run: python3 -I .claude/skills/procedural-lofi/scripts/test_verdict.py
 
   test:
     strategy:
@@ -80,6 +82,7 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - run: cargo build --lib --target wasm32-unknown-unknown
+      - run: cargo build --example lofi_bench --target wasm32-unknown-unknown
 
   workflows:
     runs-on: ubuntu-latest
