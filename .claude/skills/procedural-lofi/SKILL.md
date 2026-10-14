@@ -42,8 +42,8 @@ solves all three:
   enough** not to fatigue (the day loop doubled from 4 to 8 bars because a short looped
   melody *was* audibly repetitive — "loop the bed" does not mean "make it short"); (2) a
   consumer scatters genuinely-stochastic layers fresh at runtime (pixtuoid's rain drops and
-  keystrokes); (3) a `Performance` sets each lane's gain by its intensity, which pixtuoid
-  sets by how busy its office is, so the arrangement keeps changing while the notes don't.
+  keystrokes); (3) a `Performance` sets each lane's gain by `Controls::intensity`, which a
+  consumer sets, e.g. by how busy an office is, so the arrangement changes while the notes don't.
 
 The one law of the whole method:
 
