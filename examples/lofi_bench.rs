@@ -89,13 +89,13 @@ fn main() -> ExitCode {
 
 /// The longest one `render` of a `buf`-long chunk took, in seconds, over each
 /// of [`SEEDS`]' first two songs: a busy day's, whose bars empty the room,
-/// fill it again and grade toward night, then a night's, whose first bars the
-/// day's tails ring over. With it, the seed and the frame the chunk started
+/// fill it again and grade toward night, then a rainy night's, whose first
+/// bars the day's tails ring over. With it, the seed and the frame the chunk started
 /// at, which tell a cold start from a transition. Errs unless the run played
 /// those two songs.
 fn slowest_chunk(buf: &mut [Frame]) -> Result<(f64, u64, u64), String> {
     let day = Controls::default().with_intensity(1.0);
-    let night = day.with_daylight(0.0);
+    let night = day.with_daylight(0.0).with_rain(1.0);
     let mut worst = (0.0, SEEDS.start, 0);
     for seed in SEEDS {
         let span = audition::song_len(seed, 0, day) + audition::song_len(seed, 1, night);
@@ -140,7 +140,7 @@ fn slowest_chunk(buf: &mut [Frame]) -> Result<(f64, u64, u64), String> {
         let night_alone = audition::song(seed, 1, night, &[]);
         if day_alone != opening || night_alone[night_alone.len() - last..] != buf[..last] {
             return Err(format!(
-                "seed {seed} didn't play a day's song, then a night's"
+                "seed {seed} didn't play a day's song, then a rainy night's"
             ));
         }
     }
