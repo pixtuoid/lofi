@@ -104,8 +104,9 @@ mod tests {
             song_len(seed, 0, day) < night_len,
             "seed 1's night song is no longer"
         );
-        let late = [(0, night), (night_len - 1, night)];
-        assert_eq!(song(seed, 0, day, &late), song(seed, 0, night, &late[1..]));
+        // the last of the frame-0 calls wins, as before any latch
+        let late = [(0, day), (0, night), (night_len - 1, night)];
+        assert_eq!(song(seed, 0, day, &late), song(seed, 0, night, &late[2..]));
     }
 
     #[test]
