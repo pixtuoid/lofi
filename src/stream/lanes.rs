@@ -116,6 +116,17 @@ impl Chain {
         }
     }
 
+    /// The frame the lane's colour holds from, if it grades.
+    #[cfg(test)]
+    pub(crate) fn graded_until(&self) -> Option<usize> {
+        match self {
+            Self::Tape(Tape {
+                grade: Some(grade), ..
+            }) => Some(grade.clock.t.end()),
+            _ => None,
+        }
+    }
+
     /// Plays the lane's next frames in place; the texture draws its hiss
     /// from `noise`.
     pub(crate) fn process(&mut self, buf: &mut [f64], noise: &mut NoiseStream) {
@@ -597,6 +608,13 @@ mod tests {
                     .all(|w| w[1].0 > w[0].0 && w[1].1 >= w[0].1),
                 "{lane:?} grades out of order: {steps:?}"
             );
+            // halfway in daylight is halfway in octaves
+            let [night, day] = grade.corners_hz.map(f64::from);
+            let half = f64::from(grade.corner_hz(0.5));
+            assert!(
+                (half - (night * day).sqrt()).abs() < 1e-3,
+                "{lane:?} halfway at {half} Hz"
+            );
         }
         for lane in [Lane::Pad, Lane::Texture] {
             let score = crate::compose::compose(Mood::Day, 0);
@@ -638,6 +656,21 @@ mod tests {
         assert_eq!(grade.clock.at(latch + over), 1.0);
         assert_eq!(grade.tuned, 1.0, "no recompute at the ramp's end");
         assert_eq!(tape.drive, recipe(Mood::Day, Lane::Drums).1);
+    }
+
+    #[test]
+    fn a_grade_ramping_past_the_songs_end_holds_its_value_there() {
+        let len = samples_at(60.0, SAMPLE_RATE);
+        let mut tape = graded_tape(Mood::Day, Lane::Keys, 1.0);
+        let grade = tape.grade.as_mut().expect("the lane grades");
+        grade.clock.t.toward(len - 100, 0.0, 10_000);
+        let at_end = grade.clock.at(len);
+        assert!(at_end > 0.0 && at_end < 1.0);
+        assert!(
+            [len + 1, len + 5000, len + 100_000]
+                .iter()
+                .all(|&n| grade.clock.at(n) == at_end)
+        );
     }
 
     #[test]

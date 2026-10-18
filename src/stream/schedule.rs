@@ -196,8 +196,8 @@ struct Song {
     grade_ramp: usize,
     /// Whether each lane plays the notes struck in the latched bar.
     present: [bool; LANES],
-    /// Each lane's gain into the mix, which its tails keep past the song's
-    /// last bar at its value there.
+    /// Each lane's gain into the mix. Its last bar is longer than a level's
+    /// ramp, so its tails ring on at the level it ended on.
     levels: [Ramp; LANES],
 }
 
@@ -309,22 +309,14 @@ impl Song {
             buf.resize(n, 0.0);
             ring.take(buf);
             chain.process(buf, &mut cues.noise);
-            // past the last bar, the tails ring at the level it ended on
-            let held = if self.played >= self.len {
-                Some(level.at(self.len))
-            } else {
-                (level.end() <= self.played).then(|| level.to())
-            };
-            match held {
-                Some(level) => {
-                    for (s, x) in sum.iter_mut().zip(buf.iter()) {
-                        *s += level * x;
-                    }
+            if level.end() <= self.played {
+                let level = level.to();
+                for (s, x) in sum.iter_mut().zip(buf.iter()) {
+                    *s += level * x;
                 }
-                None => {
-                    for ((s, x), at) in sum.iter_mut().zip(buf.iter()).zip(self.played..) {
-                        *s += level.at(at.min(self.len)) * x;
-                    }
+            } else {
+                for ((s, x), at) in sum.iter_mut().zip(buf.iter()).zip(self.played..) {
+                    *s += level.at(at) * x;
                 }
             }
         }
@@ -576,6 +568,29 @@ mod tests {
     }
 
     #[test]
+    fn a_silent_hit_draws_the_noise_it_would_have_played() {
+        let (seed, bars) = (7, 6);
+        let [mut empty, mut moderate] = [0.0, 0.5].map(|intensity| {
+            Song::new(
+                seed,
+                0,
+                Controls::default().with_intensity(intensity),
+                SAMPLE_RATE,
+            )
+        });
+        let to = empty.bars[bars];
+        let (mut sums, mut buf) = (std::array::from_fn(|_| Vec::new()), Vec::new());
+        for song in [&mut empty, &mut moderate] {
+            while song.played < to {
+                song.play(&mut sums, &mut buf, BLOCK.min(to - song.played));
+            }
+        }
+        assert!(!empty.present[drums()] && moderate.present[drums()]);
+        let [a, b] = [&mut empty, &mut moderate].map(|song| song.cues[drums()].noise.unit());
+        assert_eq!(a, b, "a silent hit moved the drums' later draws");
+    }
+
+    #[test]
     fn a_lane_enters_on_its_first_note_after_the_line_at_six_db_or_more() {
         let (seed, empty) = (2, Controls::default().with_intensity(0.0));
         let moderate = empty.with_intensity(0.5);
@@ -609,6 +624,21 @@ mod tests {
         assert_eq!(level.at(latch), from);
         assert!(level.at(latch + beat - 1) < to, "the ramp ends early");
         assert_eq!(level.at(latch + beat), to);
+    }
+
+    #[test]
+    fn a_daylight_latch_grades_each_graded_lane_over_a_bar() {
+        let (seed, day) = (4, Controls::default());
+        let bars = bar_frames(seed, 0, day);
+        let latch = bars[3] - samples_at(ANTICIPATION_S, SAMPLE_RATE);
+        let (run, _) = latched(seed, day, &[(bars[2], day.with_daylight(0.6))], latch + 1);
+        let song = run.song.as_ref().expect("a song plays");
+        let bar = samples_at(song.score.bar_s(), SAMPLE_RATE);
+        let ends: Vec<Option<usize>> = song.chains.iter().map(Chain::graded_until).collect();
+        let want: Vec<Option<usize>> = (Lane::ALL.iter())
+            .map(|lane| (![Lane::Pad, Lane::Texture].contains(lane)).then_some(latch + bar))
+            .collect();
+        assert_eq!(ends, want);
     }
 
     #[test]

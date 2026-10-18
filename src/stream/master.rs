@@ -198,6 +198,24 @@ mod tests {
     use crate::dsp::{NoiseStream, SAMPLE_RATE};
     use crate::stream::assert_chunk_invariant;
 
+    #[test]
+    fn a_lane_rests_at_its_nearest_playing_tier() {
+        let [empty, moderate, busy] = TIER_INTENSITIES;
+        for (lane, intensity, want) in [
+            (Lane::Drums, empty, lane_gain(Lane::Drums, moderate)),
+            (Lane::Keys, empty, lane_gain(Lane::Keys, moderate)),
+            (Lane::Sparkle, busy, lane_gain(Lane::Sparkle, empty)),
+            (Lane::Sparkle, moderate, lane_gain(Lane::Sparkle, empty)),
+            (Lane::Pad, busy, lane_gain(Lane::Pad, busy)),
+        ] {
+            assert_eq!(
+                resting_gain(lane, intensity),
+                want,
+                "{lane:?} at {intensity}"
+            );
+        }
+    }
+
     /// `amplitude` cos at `hz` for `secs`, from its crest.
     fn tone(amplitude: f64, hz: f64, secs: f64) -> Vec<f64> {
         let sr = f64::from(SAMPLE_RATE);

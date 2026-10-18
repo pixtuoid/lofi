@@ -667,6 +667,11 @@ mod tests {
             .with_intensity(f32::NAN);
         assert_eq!(first_diff(&play(nan), &day), None);
         assert!(first_diff(&play(night()), &day).is_some());
+        // and a bar latches them alike
+        let bars = audition::bar_frames(4, 0, Controls::default());
+        let busy = Controls::default().with_intensity(1.0);
+        let asked = |c| self::play(4, busy, &[(bars[2], c)], &[], bars[5]);
+        assert_eq!(first_diff(&asked(nan), &asked(Controls::default())), None);
     }
 
     /// How late the ceiling plays the mix, in frames.
