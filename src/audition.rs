@@ -21,9 +21,12 @@ use crate::{Controls, Frame, Performance};
 /// If `calls` aren't in order, or one falls at or past the song's end, which
 /// would render a frame twice or another song's.
 pub fn song(seed: u64, k: u64, controls: Controls, calls: &[(usize, Controls)]) -> Vec<Frame> {
-    assert!(
-        calls.windows(2).all(|pair| pair[0].0 <= pair[1].0),
-        "calls out of order"
+    assert!(calls.is_sorted_by_key(|&(at, _)| at), "calls out of order");
+    // a call before the first render picks the song, as `set_controls` says
+    let first = calls.iter().take_while(|&&(at, _)| at == 0).count();
+    let (controls, calls) = (
+        calls[..first].last().map_or(controls, |&(_, c)| c),
+        &calls[first..],
     );
     let len = Performance::song_len(seed, k, controls);
     assert!(
@@ -91,6 +94,18 @@ mod tests {
     fn a_song_refuses_calls_out_of_order() {
         let c = Controls::default();
         song(1, 0, c, &[(2000, c), (1000, c)]);
+    }
+
+    #[test]
+    fn a_call_at_frame_0_picks_the_song_and_bounds_its_calls() {
+        let (day, night) = (Controls::default(), Controls::default().with_daylight(0.0));
+        let (seed, night_len) = (1, song_len(1, 0, night));
+        assert!(
+            song_len(seed, 0, day) < night_len,
+            "seed 1's night song is no longer"
+        );
+        let late = [(0, night), (night_len - 1, night)];
+        assert_eq!(song(seed, 0, day, &late), song(seed, 0, night, &late[1..]));
     }
 
     #[test]
