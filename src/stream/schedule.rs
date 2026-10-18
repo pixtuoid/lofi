@@ -7,7 +7,7 @@ use std::collections::VecDeque;
 use super::lanes::Chain;
 use crate::Controls;
 use crate::compose::{Mood, Score, compose};
-use crate::dsp::{NoiseStream, splitmix_draw};
+use crate::dsp::{NoiseStream, SAMPLE_RATE, splitmix_draw};
 use crate::synth::{CRACKLE_POPS_PER_SEC, Lane, Part, crackle_pop, part, samples_at};
 
 const LANES: usize = Lane::ALL.len();
@@ -35,6 +35,19 @@ pub fn song_score(seed: u64, k: u64, controls: Controls) -> Score {
         Mood::Day
     };
     compose(mood, song_seed(seed, k))
+}
+
+/// The frame each bar of song `k` of `seed`'s run starts on under
+/// `controls`, at [`SAMPLE_RATE`]: where the pad strikes its chords, one a
+/// bar, in every loop.
+pub fn bar_frames(seed: u64, k: u64, controls: Controls) -> Vec<usize> {
+    let score = song_score(seed, k, controls);
+    let loop_len = samples_at(score.loop_secs(), SAMPLE_RATE);
+    let mut frames: Vec<usize> = (part(&score, Lane::Pad).onsets(SAMPLE_RATE).into_iter())
+        .flat_map(|at| every_loop(at, loop_len))
+        .collect();
+    frames.sort_unstable();
+    frames
 }
 
 /// The songs a seed composes, played one after another.
@@ -299,7 +312,6 @@ pub(crate) const UNITY: [f64; LANES] = [1.0; LANES];
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dsp::SAMPLE_RATE;
 
     #[test]
     fn each_song_of_a_run_is_composed_anew() {
@@ -313,6 +325,21 @@ mod tests {
                 *a != Song::new(2, k as u64, day, UNITY, SAMPLE_RATE).score,
                 "seeds 1 and 2 share song {k}"
             );
+        }
+    }
+
+    #[test]
+    fn a_songs_bars_start_where_its_pad_strikes_each_chord() {
+        let pad = Lane::ALL.iter().position(|&lane| lane == Lane::Pad);
+        for (seed, controls) in [
+            (1, Controls::default()),
+            (2, Controls::default().with_daylight(0.0)),
+        ] {
+            let song = Song::new(seed, 0, controls, UNITY, SAMPLE_RATE);
+            let strikes: Vec<usize> = pad
+                .map(|i| song.cues[i].order.iter().map(|&(at, _)| at).collect())
+                .unwrap_or_default();
+            assert_eq!(bar_frames(seed, 0, controls), strikes, "seed {seed}");
         }
     }
 
