@@ -21,12 +21,11 @@ pub(crate) const BLOCK: usize = 1024;
 pub const LOOPS_PER_SONG: usize = 4;
 
 /// The daylight below which a song is composed for the night.
-const DUSK: f32 = 0.5;
+pub const DUSK: f32 = 0.5;
 
 /// How long before its bar line a bar latches the controls asked for: the
 /// composer's earliest anticipation, a downbeat hat's half of
-/// [`HAT_JITTER_S`], so an anticipated downbeat joins the bar it anticipates,
-/// as Wwise's pre-entry does.
+/// [`HAT_JITTER_S`], so an anticipated downbeat joins the bar it anticipates.
 pub(crate) const ANTICIPATION_S: f32 = HAT_JITTER_S / 2.0;
 
 /// How long, in beats, a lane's level takes to reach the one a latch asks

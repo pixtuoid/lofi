@@ -110,13 +110,13 @@ impl Performance {
     }
 
     /// Applies from the next bar on, latched a little before its line so a
-    /// note played early for the bar plays under it. It is heard from that
-    /// latch frame plus the ceiling's lookahead, `LOOKAHEAD_S` in
-    /// `stream::master`; the first bar latches the controls `new` was given,
-    /// at position 0. The intensity enters a lane at its first note in the
-    /// bar, and moves a lane's level within a beat; the daylight grades the
-    /// colour within a bar, and picks the day or night song at the next
-    /// song's first bar. Of several calls before one latch, the last wins.
+    /// note played early for it plays under it; a song's first bar latches on
+    /// its line, the first song's what was asked last before the first render.
+    /// It is heard from the latch plus the ceiling's lookahead, `LOOKAHEAD_S`
+    /// in `stream::master`. The intensity enters a lane at its first note in
+    /// the bar and moves its level within a beat; the daylight grades the
+    /// colour within a bar and picks the next song's day or night family. Of
+    /// several calls before one latch, the last wins.
     pub fn set_controls(&mut self, controls: Controls) {
         self.asked = controls;
     }
@@ -763,8 +763,8 @@ mod tests {
         let k0 = audition::bar_frames(seed, 0, c);
         let anticipation = crate::synth::samples_at(ANTICIPATION_S, SAMPLE_RATE);
         let boundary = audition::song_len(seed, 0, c);
-        // asked before song 0's last latch, so its level ramps and grade run
-        // past its end
+        // asked at song 0's last latch, so its last bar plays `into` and song
+        // 1 starts under it
         let last = k0[k0.len() - 1] - anticipation;
         let into = night().with_intensity(0.2);
         let mut playing = Performance::new(seed, c);
