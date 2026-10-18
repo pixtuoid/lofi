@@ -16,6 +16,17 @@ from validate_batch import Invalid, validate
 BASE, CAND = "a" * 40, "b" * 40
 
 
+def riff(*chunks):
+    """A RIFF WAVE file of `chunks`, `(tag, declared size, payload)`, its RIFF
+    size consistent with its length."""
+    body = b"WAVE" + b"".join(tag + struct.pack("<I", size) + payload for tag, size, payload in chunks)
+    return b"RIFF" + struct.pack("<I", len(body)) + body
+
+
+# 16-bit stereo PCM at 44.1 kHz: 4-byte frames
+FMT = (b"fmt ", 16, struct.pack("<HHIIHH", 1, 2, 44100, 44100 * 4, 4, 16))
+
+
 def write_wav(path, frames=8):
     with wave.open(str(path), "wb") as w:
         w.setnchannels(2)
@@ -38,6 +49,7 @@ class Batches(unittest.TestCase):
         self.tmp.cleanup()
 
     def assertInvalid(self, why):
+        """The batch is refused with a message holding `why`."""
         with self.assertRaises(Invalid) as caught:
             validate(self.dir, BASE, CAND)
         self.assertIn(why, str(caught.exception))
@@ -91,17 +103,17 @@ class Batches(unittest.TestCase):
 
     def test_a_take_that_is_not_a_wav_is_invalid(self):
         (self.dir / "base" / "gen_day_empty_000.wav").write_bytes(b"ID3 not a wav")
-        self.assertInvalid("gen_day_empty_000.wav")
+        self.assertInvalid("gen_day_empty_000.wav is not a RIFF WAVE file")
 
     def test_a_take_whose_data_outruns_its_header_is_invalid(self):
         path = self.dir / "base" / "gen_day_empty_000.wav"
         path.write_bytes(path.read_bytes() + b"\0" * 64)
-        self.assertInvalid("gen_day_empty_000.wav")
+        self.assertInvalid("gen_day_empty_000.wav's RIFF size isn't its length")
 
     def test_a_take_cut_short_of_its_header_is_invalid(self):
         path = self.dir / "cand" / "gen_day_empty_000.wav"
         path.write_bytes(path.read_bytes()[:-4])
-        self.assertInvalid("gen_day_empty_000.wav")
+        self.assertInvalid("gen_day_empty_000.wav's RIFF size isn't its length")
 
     def test_a_compressed_take_is_invalid(self):
         path = self.dir / "cand" / "gen_day_empty_000.wav"
@@ -109,7 +121,23 @@ class Batches(unittest.TestCase):
         # the fmt chunk's format tag, after "RIFF", the size, "WAVE", "fmt " and its size
         struct.pack_into("<H", raw, 20, 3)
         path.write_bytes(raw)
-        self.assertInvalid("gen_day_empty_000.wav")
+        self.assertInvalid("gen_day_empty_000.wav is no PCM wav")
+
+    def test_a_data_chunk_that_runs_past_the_file_is_invalid(self):
+        take = riff(FMT, (b"data", 64, b"\0" * 32))
+        (self.dir / "cand" / "gen_day_empty_000.wav").write_bytes(take)
+        self.assertInvalid("'data' chunk runs past the file")
+
+    def test_data_that_isnt_whole_frames_is_invalid(self):
+        take = riff(FMT, (b"data", 6, b"\0" * 6))
+        (self.dir / "cand" / "gen_day_empty_000.wav").write_bytes(take)
+        self.assertInvalid("data isn't whole frames")
+
+    def test_a_stub_after_the_last_chunk_is_invalid(self):
+        take = riff(FMT, (b"data", 8, b"\0" * 8))
+        take = take[:4] + struct.pack("<I", len(take) + 3 - 8) + take[8:] + b"LIS"
+        (self.dir / "cand" / "gen_day_empty_000.wav").write_bytes(take)
+        self.assertInvalid("ends inside a chunk header")
 
 
 if __name__ == "__main__":

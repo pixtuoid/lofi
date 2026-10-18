@@ -22,6 +22,11 @@ from ab_listen import NAME
 
 COMMIT = re.compile(r"[0-9a-f]{40}\n?")
 
+# the fmt chunk's format code for PCM, "0x0001 WAVE_FORMAT_PCM"
+# (https://www.mmsp.ece.mcgill.ca/Documents/AudioFormats/WAVE/WAVE.html):
+# checked here, since a newer `wave` reads IEEE float too
+WAVE_FORMAT_PCM = 1
+
 
 class Invalid(Exception):
     pass
@@ -40,7 +45,7 @@ def check_wav(path):
         raise Invalid(f"{path.parent.name}/{path.name} is not a RIFF WAVE file")
     if struct.unpack_from("<I", raw, 4)[0] != len(raw) - 8:
         raise Invalid(f"{path.parent.name}/{path.name}'s RIFF size isn't its length")
-    data, at = None, 12
+    data, code, at = None, None, 12
     while at < len(raw):
         if at + 8 > len(raw):
             raise Invalid(f"{path.parent.name}/{path.name} ends inside a chunk header")
@@ -52,7 +57,11 @@ def check_wav(path):
             raise Invalid(f"{path.parent.name}/{path.name}'s {tag!r} chunk runs past the file")
         if tag == b"data":
             data = size
+        if tag == b"fmt " and size >= 2:
+            code = struct.unpack_from("<H", raw, at + 8)[0]
         at = end
+    if code != WAVE_FORMAT_PCM:
+        raise Invalid(f"{path.parent.name}/{path.name} is no PCM wav: format code {code}")
     try:
         with wave.open(str(path)) as w:
             frame = w.getnchannels() * w.getsampwidth()
