@@ -8,10 +8,11 @@ use std::f64::consts::{FRAC_PI_2, TAU};
 
 use super::biquad::{Cascade, butter_lowpass, cookbook_bandpass};
 use super::delay::DelayLine;
+use super::hiss::Hiss;
 use super::onepole::Tilt;
 use super::schedule::BLOCK;
 use crate::compose::Mood;
-use crate::dsp::{NoiseStream, white_noise_gain};
+use crate::dsp::NoiseStream;
 use crate::synth::{
     DRIVE, DUCK_DB, DUCK_RELEASE_S, HEAD_BUMP_HZ, HEAD_BUMP_MIX, HISS_HZ, HISS_LEVEL, HUM_HZ,
     HUM_SWELL_HZ, Lane, PadTone, Part, ROLLOFF_HZ, TILT_HZ, TILT_LIFT, WARPS, lane_recipe,
@@ -209,8 +210,7 @@ impl Tape {
 /// tilt.
 #[derive(Debug)]
 pub(crate) struct Room {
-    hiss: Cascade,
-    white: f64,
+    hiss: Hiss,
     /// The hiss over a step.
     hissed: Vec<f64>,
     gains: [f64; 2],
@@ -233,8 +233,7 @@ pub(crate) struct Room {
 impl Room {
     fn new(len: usize, kicks: &[usize], gains: [f64; 2], sr: u32) -> Self {
         Self {
-            hiss: butter_lowpass(HISS_HZ, ORDER, sr),
-            white: f64::from(white_noise_gain(sr)),
+            hiss: Hiss::new(HISS_HZ, sr),
             hissed: Vec::with_capacity(BLOCK),
             gains,
             kicks: kicks.to_vec(),
@@ -262,10 +261,7 @@ impl Room {
         let bed = end.saturating_sub(self.frame).min(buf.len());
         self.hissed.clear();
         self.hissed.resize(buf.len(), 0.0);
-        for h in &mut self.hissed[..bed] {
-            *h = f64::from(noise.norm()) * self.white;
-        }
-        self.hiss.process(&mut self.hissed[..bed]);
+        self.hiss.fill(&mut self.hissed[..bed], noise);
         for (i, n) in (self.frame..self.frame + buf.len()).enumerate() {
             buf[i] = if n < end {
                 let sum = self.hissed[i] * f64::from(HISS_LEVEL) + self.hum(n) + buf[i];
@@ -321,7 +317,7 @@ impl Room {
     }
 
     fn at_rest(&self) -> bool {
-        self.frame >= self.end() && self.tilt.at_rest() && self.hiss.at_rest()
+        self.frame >= self.end() && self.tilt.at_rest()
     }
 }
 

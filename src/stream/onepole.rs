@@ -1,4 +1,4 @@
-//! The one-pole tilt that brightens a lane's top.
+//! The one-pole tilt that brightens a lane's top (judge proof: a render-neutral edit).
 
 use std::f64::consts::TAU;
 

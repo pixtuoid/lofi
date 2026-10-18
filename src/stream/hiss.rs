@@ -4,14 +4,6 @@
 //! noise is drawn ahead in blocks of its own, so no chunking of the render
 //! moves a draw.
 
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the leak proof plays the hiss through the cascade instead"
-    )
-)]
-
 use std::f64::consts::{PI, TAU};
 
 use crate::dsp::{NoiseStream, Twiddles, fft, twiddles, white_noise_gain};
