@@ -3,7 +3,7 @@ name: judge
 # Posts `ab_judge.py`'s score for a PR that changes the render, as codecov
 # posts coverage: nothing requires it. `render` runs the PR's code with no
 # secret; `judge` holds the Modal token and runs only the base branch's
-# scripts over the batch as bytes; `verdict` comments with the issues
+# scripts over the batch as bytes; `verdict` comments with the pull-requests
 # permission alone.
 on:
   pull_request:
@@ -133,11 +133,14 @@ jobs:
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        # the default shell is "bash -e {0}"
+        # (https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsshell),
+        # so the exit code is caught, not left to end the step
         run: |
           set -uo pipefail
+          code=0
           "$RUNNER_TEMP/modal/bin/modal" run .claude/skills/procedural-lofi/judge/modal_judge.py::judge \
-            --batch "$RUNNER_TEMP/ab-batch" --out "$RUNNER_TEMP/verdict"
-          code=$?
+            --batch "$RUNNER_TEMP/ab-batch" --out "$RUNNER_TEMP/verdict" || code=$?
           # 1 is REGRESSION or INSUFFICIENT, a score `verdict` reports; anything
           # higher stopped before one
           [ "$code" -le 1 ]
@@ -154,8 +157,13 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # the comment endpoints are listed under Pull requests as well as Issues
+    # (https://docs.github.com/en/rest/authentication/permissions-required-for-github-apps),
+    # and on a PR `issues: write` alone is refused. The token posts only the
+    # comment this job builds: it runs no PR code and checks nothing out,
+    # takes the outcome from a fixed list, and passes the body by file
     permissions:
-      issues: write
+      pull-requests: write
     steps:
       - if: needs.judge.result == 'success'
         uses: actions/download-artifact@v8
