@@ -121,7 +121,7 @@ class Batches(unittest.TestCase):
         # the fmt chunk's format tag, after "RIFF", the size, "WAVE", "fmt " and its size
         struct.pack_into("<H", raw, 20, 3)
         path.write_bytes(raw)
-        self.assertInvalid("gen_day_empty_000.wav is no PCM wav")
+        self.assertInvalid("is no PCM wav: format code 3")
 
     def test_a_data_chunk_that_runs_past_the_file_is_invalid(self):
         take = riff(FMT, (b"data", 64, b"\0" * 32))

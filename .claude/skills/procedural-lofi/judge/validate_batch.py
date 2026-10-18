@@ -24,7 +24,9 @@ COMMIT = re.compile(r"[0-9a-f]{40}\n?")
 
 # the fmt chunk's format code for PCM, "0x0001 WAVE_FORMAT_PCM"
 # (https://www.mmsp.ece.mcgill.ca/Documents/AudioFormats/WAVE/WAVE.html):
-# checked here, since a newer `wave` reads IEEE float too
+# checked here, since `wave` reads IEEE float too from 3.15 ("Support for
+# reading and writing WAVE_FORMAT_IEEE_FLOAT files was added",
+# https://docs.python.org/3.15/library/wave.html)
 WAVE_FORMAT_PCM = 1
 
 
