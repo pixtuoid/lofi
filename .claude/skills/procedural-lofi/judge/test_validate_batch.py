@@ -123,10 +123,20 @@ class Batches(unittest.TestCase):
         path.write_bytes(raw)
         self.assertInvalid("is no PCM wav: format code 3")
 
-    def test_a_second_data_chunk_wave_doesnt_read_is_invalid(self):
+    def test_a_second_data_chunk_is_invalid(self):
         take = riff(FMT, (b"data", 16, b"\0" * 16), (b"data", 8, b"\0" * 8))
         (self.dir / "cand" / "gen_day_empty_000.wav").write_bytes(take)
-        self.assertInvalid("two data chunks disagree")
+        self.assertInvalid("has more than one 'data' chunk")
+
+    def test_a_second_fmt_chunk_is_invalid(self):
+        take = riff(FMT, FMT, (b"data", 8, b"\0" * 8))
+        (self.dir / "cand" / "gen_day_empty_000.wav").write_bytes(take)
+        self.assertInvalid("has more than one 'fmt ' chunk")
+
+    def test_a_fmt_chunk_after_the_data_is_invalid(self):
+        take = riff((b"data", 8, b"\0" * 8), FMT)
+        (self.dir / "cand" / "gen_day_empty_000.wav").write_bytes(take)
+        self.assertInvalid("'fmt ' chunk follows its 'data'")
 
     def test_a_data_chunk_that_runs_past_the_file_is_invalid(self):
         take = riff(FMT, (b"data", 64, b"\0" * 32))

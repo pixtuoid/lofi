@@ -40,14 +40,15 @@ def plain(path):
 
 
 def check_wav(path):
-    """Raises unless `path` is a PCM wav whose chunks fill the file exactly and
-    whose data chunk holds a whole number of frames."""
+    """Raises unless `path` is a PCM wav whose chunks fill the file exactly:
+    one fmt chunk, then one data chunk of whole frames, so `wave` can read no
+    other data than the walk measured."""
     raw = path.read_bytes()
     if len(raw) < 12 or raw[:4] != b"RIFF" or raw[8:12] != b"WAVE":
         raise Invalid(f"{path.parent.name}/{path.name} is not a RIFF WAVE file")
     if struct.unpack_from("<I", raw, 4)[0] != len(raw) - 8:
         raise Invalid(f"{path.parent.name}/{path.name}'s RIFF size isn't its length")
-    data, code, at = None, None, 12
+    fmt, data, at = None, None, 12
     while at < len(raw):
         if at + 8 > len(raw):
             raise Invalid(f"{path.parent.name}/{path.name} ends inside a chunk header")
@@ -57,21 +58,24 @@ def check_wav(path):
         end = at + 8 + size + size % 2
         if end > len(raw):
             raise Invalid(f"{path.parent.name}/{path.name}'s {tag!r} chunk runs past the file")
+        if tag == b"fmt ":
+            if fmt is not None:
+                raise Invalid(f"{path.parent.name}/{path.name} has more than one 'fmt ' chunk")
+            if data is not None:
+                raise Invalid(f"{path.parent.name}/{path.name}'s 'fmt ' chunk follows its 'data'")
+            fmt = struct.unpack_from("<H", raw, at + 8)[0] if size >= 2 else None
         if tag == b"data":
+            if data is not None:
+                raise Invalid(f"{path.parent.name}/{path.name} has more than one 'data' chunk")
             data = size
-        if tag == b"fmt " and size >= 2:
-            code = struct.unpack_from("<H", raw, at + 8)[0]
         at = end
-    if code != WAVE_FORMAT_PCM:
-        raise Invalid(f"{path.parent.name}/{path.name} is no PCM wav: format code {code}")
+    if fmt != WAVE_FORMAT_PCM:
+        raise Invalid(f"{path.parent.name}/{path.name} is no PCM wav: format code {fmt}")
     try:
         with wave.open(str(path)) as w:
             frame = w.getnchannels() * w.getsampwidth()
-            if data is None or data % frame:
+            if data % frame:
                 raise Invalid(f"{path.parent.name}/{path.name}'s data isn't whole frames")
-            # `wave` reads the first data chunk, the walk the last
-            if w.getnframes() * frame != data:
-                raise Invalid(f"{path.parent.name}/{path.name}'s two data chunks disagree")
     except (wave.Error, EOFError) as e:
         raise Invalid(f"{path.parent.name}/{path.name} is no PCM wav: {e}") from None
 
