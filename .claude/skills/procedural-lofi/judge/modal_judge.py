@@ -36,7 +36,7 @@ SCRIPTS = HERE.parent / "scripts" if modal.is_local() else Path(REMOTE_SCRIPTS)
 JUDGE = HERE if modal.is_local() else Path(REMOTE_JUDGE)
 MODELS, REFS, BATCH = "/models", "/refs", "/batch"
 sys.path.insert(0, str(JUDGE))
-from judge_local import exit_code, redact, select
+from judge_local import exit_code, published, redact, select
 from validate_batch import Invalid
 
 # the uv the image installs with, the release judge-requirements.txt was
@@ -206,13 +206,7 @@ def score(score_identical=False):
     if not written.is_file():
         print(redact(run.stdout + run.stderr, known))
         return {"outcome": "infra failure", "message": "the judge stopped before a verdict; its log, names masked, is Modal's", **took}
-    record = json.loads(written.read_text())
-    record.pop("dir", None)
-    record.get("judges", {}).get("fad", {}).pop("refs", None)
-    if "fad_calibration" in record:
-        record["fad_calibration"] = sorted(record["fad_calibration"].values())
-    table = "\n".join(line for line in run.stdout.splitlines() if not line.startswith("scored "))
-    return {"outcome": record["overall"], "table": redact(table, known), "record": record, **took}
+    return {**published(json.loads(written.read_text()), known), **took}
 
 
 @app.local_entrypoint()

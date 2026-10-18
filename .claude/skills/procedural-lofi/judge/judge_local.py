@@ -1,5 +1,5 @@
-"""What `modal_judge.py` decides on this side of the call, in the standard
-library alone so `test_judge_local.py` runs it without the Modal client."""
+"""What `modal_judge.py` decides, in the standard library alone so
+`test_judge_local.py` runs it without the Modal client."""
 
 import sys
 from pathlib import Path
@@ -38,3 +38,15 @@ def redact(text, tracks):
     for i, t in sorted(enumerate(tracks), key=lambda it: -len(it[1]["file"])):
         text = text.replace(t["file"], f"ref#{i}").replace(Path(t["file"]).stem, f"ref#{i}")
     return text
+
+
+def published(record, tracks):
+    """`ab_judge.py`'s judge.json as `score` returns it: the outcome, the
+    table it printed with every reference name masked, and the rest without
+    the corpus's paths and names."""
+    table = redact(record.pop("table"), tracks)
+    record.pop("dir", None)
+    record.get("judges", {}).get("fad", {}).pop("refs", None)
+    if "fad_calibration" in record:
+        record["fad_calibration"] = sorted(record["fad_calibration"].values())
+    return {"outcome": record["overall"], "table": table, "record": record}

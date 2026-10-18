@@ -7,7 +7,7 @@ describes each pair, and writes the verdict.
 
 Usage: $J/bin/python ab_judge.py DIR --refs REFS [--fad-cache CACHE] [--score-identical]
   DIR holds base/ and cand/, each with the COMMIT it rendered at; writes
-  DIR/judge.json and prints a table.
+  DIR/judge.json and prints its table.
   REFS is the reference corpus: audio/ and its manifest.json of sha256s.
   CACHE holds the corpus's FAD statistics, built on a miss.
   --score-identical scores byte-identical pairs too: the proof that they tie.
@@ -547,17 +547,17 @@ def main():
         verdict=verdict,
         overall=result["overall"],
     )
-    (args.dir / "judge.json").write_text(json.dumps(record, indent=1) + "\n")
-
-    print(f"\n{'take':<24} {'dCE':>6} {'dPQ':>6} {'dMI':>6} {'dFAD':>6} {'max|dB|':>8} {'@Hz':>6}"
+    # built once, so judge.json's table is the one printed
+    table = []
+    table.append(f"\n{'take':<24} {'dCE':>6} {'dPQ':>6} {'dMI':>6} {'dFAD':>6} {'max|dB|':>8} {'@Hz':>6}"
           f" {'centroid b/c':>13} {'crest b/c':>11} {'LR b/c':>11} {'clk/min b/c':>11} {'hat b/c':>11}")
     for p in pairs:
         if p["identical"]:
-            print(f"{p['take'].removeprefix('gen_'):<24} identical")
+            table.append(f"{p['take'].removeprefix('gen_'):<24} identical")
             continue
         b, c = p["base"], p["cand"]
         worst = int(np.argmax(np.abs(p["bands_delta_db"])))
-        print(
+        table.append(
             f"{p['take'].removeprefix('gen_'):<24}"
             f" {c['audiobox']['CE'] - b['audiobox']['CE']:+6.2f}"
             f" {c['audiobox']['PQ'] - b['audiobox']['PQ']:+6.2f}"
@@ -570,24 +570,24 @@ def main():
             f" {b['clicks_per_min']:5.0f}/{c['clicks_per_min']:<5.0f}"
             f" {b[HAT_FLUX_KEY]:5.2f}/{c[HAT_FLUX_KEY]:<5.2f}"
         )
-    print(f"\n{'group':<6} {'pairs':>5} {'same':>4}  {'Audiobox CE w/l/t':>17} {'p':>7} {'mean dCE':>8} {'mean dPQ':>8}"
+    table.append(f"\n{'group':<6} {'pairs':>5} {'same':>4}  {'Audiobox CE w/l/t':>17} {'p':>7} {'mean dCE':>8} {'mean dPQ':>8}"
           f"  {'MuQ-Eval MI w/l/t':>17} {'p':>7} {'mean dMI':>8}  {'FAD w/l/t':>9} {'p':>7} {'mean dFAD':>9}  verdict")
     for group, v in verdict.items():
         label = v["verdict"] if v["gates"] else f"({v['verdict']}, not gating)"
         if not v["pairs"]:
-            print(f"{group:<6} {0:>5} {v['identical']:>4}  {label}")
+            table.append(f"{group:<6} {0:>5} {v['identical']:>4}  {label}")
             continue
         ce, mi, fd = v["audiobox_ce"], v["muq_eval_mi"], v["fad"]
-        print(
+        table.append(
             f"{group:<6} {v['pairs']:>5} {v['identical']:>4}  {ce['wins']:>7}/{ce['losses']}/{ce['ties']:<5} {ce['p']:7.4f}"
             f" {ce['mean_delta']:+8.3f} {v['audiobox_mean_delta_pq']:+8.3f}"
             f"  {mi['wins']:>7}/{mi['losses']}/{mi['ties']:<5} {mi['p']:7.4f} {mi['mean_delta']:+8.3f}"
             f"  {fd['wins']:>3}/{fd['losses']}/{fd['ties']:<3} {fd['p']:7.4f} {fd['mean_delta']:+9.3f}  {label}"
         )
     if changed:
-        print(f"alpha {result['alpha']:.4g} a test, so one needs {result['min_untied']} untied pairs to ever reject")
+        table.append(f"alpha {result['alpha']:.4g} a test, so one needs {result['min_untied']} untied pairs to ever reject")
         held = np.array(list(fad.calibration.values()))
-        print(
+        table.append(
             f"\nFAD calibration, {len(held)} held-out references: median {np.median(held):.3f}"
             f" ({held.min():.3f}..{held.max():.3f}); takes: base median"
             f" {np.median([p['base']['fad'] for p in pairs if not p['identical']]):.3f},"
@@ -595,10 +595,13 @@ def main():
         )
     for group, v in verdict.items():
         for t in v.get("to_explain", []):
-            print(
+            table.append(
                 f"TO-EXPLAIN {group}: {t['band_hz']} Hz, {t['pairs_over']} of {v['pairs']} pairs past"
                 f" ±{TO_EXPLAIN_DB:g} dB, median {t['median_db']:+.1f} ({t['min_db']:+.1f}..{t['max_db']:+.1f})"
             )
+    record["table"] = "\n".join(table)
+    (args.dir / "judge.json").write_text(json.dumps(record, indent=1) + "\n")
+    print(record["table"])
     print(f"\nverdict: {result['overall']}  ({args.dir / 'judge.json'})")
     if failure := exit_message(result):
         sys.exit(failure)
