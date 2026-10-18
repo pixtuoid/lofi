@@ -97,16 +97,17 @@ impl Named {
     }
 }
 
-/// A sweep `--sweep` plays: the controls each of its takes starts under, and
-/// the calls it makes after, each in the middle of a bar. A latch falls at a
-/// bar line, so a call on one lands on either side of it by the latch's
-/// timing; in the middle, it lands in the bar it names under any latch.
+/// A sweep `--sweep` asks for: the controls each of its takes starts under,
+/// and the calls it makes after, each heard when [`Performance::set_controls`]
+/// latches it. A call sits in the middle of a bar: a latch falls at a bar
+/// line, which a call on it lands on either side of by the latch's timing.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Sweep {
-    /// Empty, Busy over the take's middle half, then Empty again, at full day.
+    /// Asks for Empty, Busy over the take's middle half, then Empty again,
+    /// at full day.
     Intensity,
-    /// Daylight from day to night across the first song, a step every bar;
-    /// the songs after it, [`DUSK_SONGS`] in all, play at night.
+    /// Asks for daylight from day to night across the first song, a step
+    /// every bar, and night for the songs after it, [`DUSK_SONGS`] in all.
     Dusk,
     /// Daylight held at each of [`TWILIGHT`]'s, between night and day.
     Twilight,
@@ -337,8 +338,8 @@ impl Batch {
         Ok(true)
     }
 
-    /// The batches of one mood and one tier the run plays: this one, or each
-    /// of its named batch's, through its engine.
+    /// The batches the run plays: one per start of its sweep, each of its
+    /// named batch's, or this one, through its engine.
     pub(crate) fn runs(&self) -> Vec<Batch> {
         if let Some(sweep) = self.sweep {
             return (0..sweep.starts().len())
@@ -692,6 +693,19 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn the_twilight_sweep_plays_one_take_in_each_family() {
+        let runs = parsed("--sweep", "twilight")
+            .expect("the sweep parses")
+            .runs();
+        let [quarter, threequarters] =
+            [0, 1].map(|i| audition::song_score(0, 0, runs[i].controls()));
+        assert!(
+            quarter != threequarters,
+            "both twilight takes compose one family's song"
+        );
     }
 
     #[test]
