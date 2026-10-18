@@ -19,6 +19,9 @@ pub struct Controls {
     pub daylight: f32,
     /// 0 = an empty room … 1 = a busy one.
     pub intensity: f32,
+    /// 0 = dry … 1 = raining: the playing song darkens and softens, its
+    /// tempo, key, harmony and melody kept. lofi plays no rain itself.
+    pub rain: f32,
 }
 
 impl Default for Controls {
@@ -28,6 +31,7 @@ impl Default for Controls {
         Self {
             daylight: 1.0,
             intensity: moderate,
+            rain: 0.0,
         }
     }
 }
@@ -45,6 +49,12 @@ impl Controls {
         Self { intensity, ..self }
     }
 
+    /// These controls with `rain` replaced.
+    #[must_use]
+    pub const fn with_rain(self, rain: f32) -> Self {
+        Self { rain, ..self }
+    }
+
     fn clamped(self) -> Self {
         let default = Self::default();
         let unit = |v: f32, default: f32| {
@@ -57,6 +67,7 @@ impl Controls {
         Self {
             daylight: unit(self.daylight, default.daylight),
             intensity: unit(self.intensity, default.intensity),
+            rain: unit(self.rain, default.rain),
         }
     }
 }
@@ -637,25 +648,31 @@ mod tests {
         let wild = Controls {
             daylight: f32::NAN,
             intensity: 7.0,
+            rain: f32::NAN,
         };
         assert_eq!(
             wild.clamped(),
             Controls {
                 daylight: 1.0,
                 intensity: 1.0,
+                rain: 0.0,
             }
         );
         let wild = Controls {
             daylight: -0.5,
             intensity: f32::NAN,
+            rain: 3.0,
         };
         assert_eq!(
             wild.clamped(),
             Controls {
                 daylight: 0.0,
                 intensity: 0.5,
+                rain: 1.0,
             }
         );
+        assert_eq!(Controls::default().rain, 0.0, "the default rains");
+        assert_eq!(Controls::default().with_rain(0.3).rain, 0.3);
     }
 
     #[test]
