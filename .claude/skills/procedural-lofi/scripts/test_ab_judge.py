@@ -3,13 +3,14 @@
 $J set up as SKILL.md's GENERATOR loop step 5 says."""
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import numpy as np
-from ab_judge import FLOOR_CALIBRATED_DBFS, FLOOR_CALIBRATED_LUFS, floored, mono_lufs
+from ab_judge import FLOOR_CALIBRATED_DBFS, FLOOR_CALIBRATED_LUFS, floored, mono_lufs, refuse_read_only
 
 SR = 44100
 NAME = "gen_day_empty_000.wav"
@@ -38,6 +39,27 @@ class Floor(unittest.TestCase):
         x = take()
         self.assertTrue(np.array_equal(floored(x, NAME, -20.0), floored(x, NAME, -20.0)))
         self.assertFalse(np.array_equal(floored(x, NAME, -20.0), floored(x, "gen_day_empty_001.wav", -20.0)))
+
+
+class FadCache(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.caches = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.caches.chmod(0o755)
+        self.tmp.cleanup()
+
+    def test_statistics_a_read_only_cache_lacks_are_refused_with_the_reason(self):
+        self.caches.chmod(0o555)
+        with self.assertRaises(SystemExit) as refused:
+            refuse_read_only(self.caches, -21.5)
+        self.assertIn("no FAD statistics at -21.50 LUFS", str(refused.exception.code))
+        self.assertIn("quieter than the corpus's quietest reference", str(refused.exception.code))
+
+    def test_a_writable_cache_builds_and_keeps_no_probe(self):
+        refuse_read_only(self.caches, -21.5)
+        self.assertEqual(list(self.caches.iterdir()), [])
 
 
 if __name__ == "__main__":

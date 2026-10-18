@@ -67,6 +67,7 @@ import argparse
 import hashlib
 import json
 import sys
+import tempfile
 from importlib.metadata import version
 from pathlib import Path
 
@@ -275,6 +276,22 @@ class MuqEval:
         return float((mi * weights).sum() / weights.sum())
 
 
+def refuse_read_only(caches, lufs):
+    """Exits when no statistics at `lufs` can be built into `caches`, before
+    the build: a batch quieter than the corpus's quietest reference needs its
+    own, and the remote judge's cache is read-only. Tried rather than asked,
+    since Modal promises a read-only mount only as "read only from within
+    containers" (modal 1.6.1 `volume.py`:598)."""
+    try:
+        tempfile.TemporaryFile(dir=caches).close()
+    except OSError:
+        sys.exit(
+            f"no FAD statistics at {lufs:.2f} LUFS, and the cache is read-only: the batch is"
+            " quieter than the corpus's quietest reference, or the cache predates this judge;"
+            " judge it locally, or provision statistics at its level"
+        )
+
+
 class Fad:
     """Per-song FAD from a take to the reference corpus, over fadtk's
     LAION-CLAP embedding: the Fréchet distance between the corpus's frame
@@ -324,6 +341,7 @@ class Fad:
                 self.mu, self.cov = stats["mu"], stats["cov"]
                 self.calibration = dict(zip(stats["held"].tolist(), stats["held_fad"].tolist()))
             return
+        refuse_read_only(caches, self.lufs)
         # the lowest sha256s, a choice no file order moves
         held = {t["file"] for t in sorted(tracks, key=lambda t: t["sha256"])[:HOLDOUT]}
         frames = np.concatenate([self.embed(*self.read(refs, t)) for t in tracks if t["file"] not in held])
