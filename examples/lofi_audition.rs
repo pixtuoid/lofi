@@ -67,7 +67,7 @@ fn main() -> ExitCode {
 fn run() -> io::Result<()> {
     let args = Args::parse(std::env::args().skip(1))?;
     std::fs::create_dir_all(&args.out)?;
-    let takes = args.takes();
+    let takes = args.takes()?;
     let files = match args.key {
         Some(_) => shuffled_names(takes.len()),
         None => takes.iter().map(|take| take.name.clone()).collect(),
@@ -152,9 +152,12 @@ impl Args {
             }
         }
         if parsed.solo.is_some() {
-            if parsed.batch.tier.is_some() || parsed.batch.named.is_some() {
+            if parsed.batch.tier.is_some()
+                || parsed.batch.sweep.is_some()
+                || parsed.batch.named.is_some()
+            {
                 return Err(usage_error(
-                    "--solo plays one lane, so it takes no --tier or --batch".into(),
+                    "--solo plays one lane, so it takes no --tier, --sweep or --batch".into(),
                 ));
             }
             if parsed.batch.engine != Engine::WholeLane {
@@ -167,8 +170,9 @@ impl Args {
     }
 
     /// Every take of every run. No engine changes a name, so `ab_listen.py`
-    /// pairs a whole-lane batch with a stream batch.
-    fn takes(&self) -> Vec<Take> {
+    /// pairs a whole-lane batch with a stream batch; an error if two share
+    /// one, since the second would overwrite the first's file.
+    fn takes(&self) -> io::Result<Vec<Take>> {
         let runs = self.batch.runs();
         let takes = runs.iter().flat_map(|run| {
             let mix = match self.solo {
@@ -182,7 +186,16 @@ impl Args {
                 name: format!("gen_{mood}_{mix}_{seed:03}.wav"),
             })
         });
-        takes.collect()
+        let takes: Vec<Take> = takes.collect();
+        let mut names: Vec<&str> = takes.iter().map(|take| take.name.as_str()).collect();
+        names.sort_unstable();
+        match names.windows(2).find(|pair| pair[0] == pair[1]) {
+            Some(pair) => Err(usage_error(format!(
+                "two takes would both write {}",
+                pair[0]
+            ))),
+            None => Ok(takes),
+        }
     }
 
     /// `seed`'s take in `run` at its target loudness; an error if that clips
@@ -329,7 +342,9 @@ mod tests {
     #[test]
     fn a_take_keeps_its_name_under_either_engine() {
         let [whole, stream] = ["whole", "stream"].map(|engine| {
-            parsed(&["--engine", engine, "--mood", "night", "--tier", "empty"]).takes()
+            parsed(&["--engine", engine, "--mood", "night", "--tier", "empty"])
+                .takes()
+                .expect("the takes' names are distinct")
         });
         let names = |takes: Vec<Take>| {
             takes
@@ -345,7 +360,9 @@ mod tests {
 
     #[test]
     fn the_judge_batch_names_each_take_once_by_its_mood_tier_and_seed() {
-        let takes = parsed(&["--batch", "judge"]).takes();
+        let takes = parsed(&["--batch", "judge"])
+            .takes()
+            .expect("the takes' names are distinct");
         let mut names: Vec<&str> = takes.iter().map(|t| t.name.as_str()).collect();
         for take in &takes {
             let (mood, tier) = (take.run.mood_name(), take.run.tier().name());
@@ -437,6 +454,21 @@ mod tests {
             let take = rendered(&["--engine", engine, "--songs", "2"], 3);
             assert_eq!(take.map(|t| t.len()).ok(), Some(want), "{engine}");
         }
+    }
+
+    #[test]
+    fn a_solo_takes_no_sweep() {
+        let solo = ["--engine", "whole", "--solo", "pad", "--sweep", "twilight"];
+        assert!(Args::parse(solo.map(str::to_owned).into_iter()).is_err());
+    }
+
+    #[test]
+    fn a_run_whose_takes_share_a_file_name_is_refused() {
+        // the twilight takes, both named for the lane past the parse's guard
+        let mut args = parsed(&["--engine", "whole", "--sweep", "twilight"]);
+        args.solo = Some(0);
+        assert!(args.takes().is_err());
+        assert!(parsed(&["--sweep", "twilight"]).takes().is_ok());
     }
 
     #[test]

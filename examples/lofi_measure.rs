@@ -45,19 +45,9 @@ const LTAS_BANDS_PER_OCTAVE: f64 = 3.0;
 /// differences.
 const SEAM_QUANTILE: f64 = 0.999;
 
-fn main() -> ExitCode {
-    match run() {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(e) => {
-            eprintln!("lofi_measure: {e}");
-            ExitCode::FAILURE
-        }
-    }
-}
-
-fn run() -> std::io::Result<()> {
+/// The batch `args` select.
+fn parse(mut args: impl Iterator<Item = String>) -> std::io::Result<Batch> {
     let mut batch = Batch::default();
-    let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         if !batch.parse_flag(&a, &mut args)? {
             return Err(usage_error(format!(
@@ -72,6 +62,21 @@ fn run() -> std::io::Result<()> {
                 .into(),
         ));
     }
+    Ok(batch)
+}
+
+fn main() -> ExitCode {
+    match run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("lofi_measure: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run() -> std::io::Result<()> {
+    let batch = parse(std::env::args().skip(1))?;
     let bands = bands();
     let header: Vec<String> = bands.iter().map(|&b| band_label(b)).collect();
     let row = |name: &str, buf: &[f32], seam: String, took: Duration| {
@@ -349,6 +354,16 @@ mod tests {
         (0..n)
             .map(|i| (std::f64::consts::TAU * hz * i as f64 / SR).sin() as f32)
             .collect()
+    }
+
+    #[test]
+    fn a_sweep_or_more_songs_is_refused() {
+        for args in [["--sweep", "dusk"], ["--songs", "2"]] {
+            assert!(
+                parse(args.into_iter().map(str::to_owned)).is_err(),
+                "{args:?} parsed"
+            );
+        }
     }
 
     #[test]
