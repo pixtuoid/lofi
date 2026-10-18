@@ -2,9 +2,11 @@
 """ab_judge.py's tests that need its venv: `$J/bin/python -I test_ab_judge.py`,
 $J set up as SKILL.md's GENERATOR loop step 5 says."""
 
+import errno
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 sys.dont_write_bytecode = True
@@ -47,18 +49,23 @@ class FadCache(unittest.TestCase):
         self.caches = Path(self.tmp.name)
 
     def tearDown(self):
-        self.caches.chmod(0o755)
         self.tmp.cleanup()
 
-    def test_statistics_a_read_only_cache_lacks_are_refused_with_the_reason(self):
-        self.caches.chmod(0o555)
-        with self.assertRaises(SystemExit) as refused:
-            refuse_read_only(self.caches, -21.5)
-        self.assertIn("no FAD statistics at -21.50 LUFS", str(refused.exception.code))
-        self.assertIn("quieter than the corpus's quietest reference", str(refused.exception.code))
+    def refused(self, too_quiet):
+        """`refuse_read_only`'s message over a cache that refuses every write."""
+        with mock.patch("tempfile.TemporaryFile", side_effect=OSError(errno.EROFS, "Read-only file system")):
+            with self.assertRaises(SystemExit) as refused:
+                refuse_read_only(self.caches, too_quiet)
+        return str(refused.exception.code)
 
-    def test_a_writable_cache_builds_and_keeps_no_probe(self):
-        refuse_read_only(self.caches, -21.5)
+    def test_a_read_only_cache_without_the_corpus_statistics_asks_for_provision(self):
+        self.assertIn("run provision", self.refused(too_quiet=False))
+
+    def test_a_read_only_cache_refuses_a_batch_quieter_than_the_corpus_locally(self):
+        self.assertIn("quieter than the corpus's quietest reference, so judge it locally", self.refused(too_quiet=True))
+
+    def test_a_writable_cache_is_let_through_and_keeps_no_probe(self):
+        refuse_read_only(self.caches, too_quiet=True)
         self.assertEqual(list(self.caches.iterdir()), [])
 
 

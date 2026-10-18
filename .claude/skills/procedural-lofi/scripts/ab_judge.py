@@ -276,20 +276,22 @@ class MuqEval:
         return float((mi * weights).sum() / weights.sum())
 
 
-def refuse_read_only(caches, lufs):
-    """Exits when no statistics at `lufs` can be built into `caches`, before
-    the build: a batch quieter than the corpus's quietest reference needs its
-    own, and the remote judge's cache is read-only. Tried rather than asked,
-    since Modal promises a read-only mount only as "read only from within
-    containers" (modal 1.6.1 `volume.py`:598)."""
+def refuse_read_only(caches, too_quiet):
+    """Exits, before any build, when `caches` lacks statistics this run needs
+    and can't take them, as the remote judge's read-only cache can't: with the
+    corpus's own missing, provisioning builds them; a batch quieter than the
+    quietest reference needs its own level, which only a local run builds.
+    Tried rather than asked, since Modal promises a read-only mount only as
+    "read only from within containers" (modal 1.6.1 `volume.py`:598)."""
     try:
         tempfile.TemporaryFile(dir=caches).close()
     except OSError:
-        sys.exit(
-            f"no FAD statistics at {lufs:.2f} LUFS, and the cache is read-only: the batch is"
-            " quieter than the corpus's quietest reference, or the cache predates this judge;"
-            " judge it locally, or provision statistics at its level"
-        )
+        if too_quiet:
+            sys.exit(
+                "no FAD statistics at this batch's level, and the cache is read-only: the batch"
+                " is quieter than the corpus's quietest reference, so judge it locally"
+            )
+        sys.exit("the FAD cache lacks this corpus's statistics and is read-only: run provision")
 
 
 class Fad:
@@ -324,24 +326,29 @@ class Fad:
         caches.mkdir(parents=True, exist_ok=True)
         # the corpus alone sets it, and measuring it decodes every track
         quietest_file = caches / f"{manifest_sha}-quietest.json"
-        if quietest_file.exists():
-            quietest = json.loads(quietest_file.read_text())["lufs"]
-        else:
+        # keyed by everything the statistics are built from; the level is one
+        # any batch louder than the quietest reference shares
+        built = json.dumps([LAION_CLAP, FAD_EMBEDDING, HOLDOUT, RESAMPLE])
+        prefix = f"{manifest_sha}-{hashlib.sha256(built.encode()).hexdigest()[:16]}"
+
+        def stats_file(lufs):
+            return caches / f"{prefix}-{lufs:.2f}.npz"
+
+        quietest = json.loads(quietest_file.read_text())["lufs"] if quietest_file.exists() else None
+        if quietest is None or not stats_file(min(takes_lufs, quietest)).exists():
+            refuse_read_only(caches, quietest is not None and takes_lufs < quietest)
+        if quietest is None:
             quietest = min(mono_lufs(*self.read(refs, t)) for t in tracks)
             quietest_file.write_text(json.dumps({"lufs": quietest}) + "\n")
         # one level for every input, the takes' unless a reference is
         # quieter, so no reference is ever raised and clipped
         self.lufs = min(takes_lufs, quietest)
-        # keyed by everything the statistics are built from; the level is one
-        # any batch louder than the quietest reference shares
-        built = json.dumps([LAION_CLAP, FAD_EMBEDDING, HOLDOUT, RESAMPLE])
-        cache = caches / f"{manifest_sha}-{hashlib.sha256(built.encode()).hexdigest()[:16]}-{self.lufs:.2f}.npz"
+        cache = stats_file(self.lufs)
         if cache.exists():
             with np.load(cache) as stats:
                 self.mu, self.cov = stats["mu"], stats["cov"]
                 self.calibration = dict(zip(stats["held"].tolist(), stats["held_fad"].tolist()))
             return
-        refuse_read_only(caches, self.lufs)
         # the lowest sha256s, a choice no file order moves
         held = {t["file"] for t in sorted(tracks, key=lambda t: t["sha256"])[:HOLDOUT]}
         frames = np.concatenate([self.embed(*self.read(refs, t)) for t in tracks if t["file"] not in held])
