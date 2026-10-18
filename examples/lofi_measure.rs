@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 use pixtuoid_lofi::audition::{self, LOOPS_PER_SONG};
 use pixtuoid_lofi::dsp::SAMPLE_RATE;
 
-use batch::{Batch, Engine, LANE_NAMES, render_take, soak_mix, usage_error};
+use batch::{Batch, Engine, LANE_NAMES, lane_gains, render_take, soak_mix, usage_error};
 use loudness::gated_lufs;
 
 const SR: f64 = SAMPLE_RATE as f64;
@@ -45,6 +45,26 @@ const LTAS_BANDS_PER_OCTAVE: f64 = 3.0;
 /// differences.
 const SEAM_QUANTILE: f64 = 0.999;
 
+/// The batch `args` select.
+fn parse(mut args: impl Iterator<Item = String>) -> std::io::Result<Batch> {
+    let mut batch = Batch::default();
+    while let Some(a) = args.next() {
+        if !batch.parse_flag(&a, &mut args)? {
+            return Err(usage_error(format!(
+                "unknown argument {a:?}; valid: --engine --mood --seeds --start --tier --batch"
+            )));
+        }
+    }
+    // its whole-lane rows measure one song's lanes under fixed controls
+    if batch.sweep.is_some() || batch.songs.is_some() {
+        return Err(usage_error(
+            "lofi_measure measures one song under fixed controls, so it takes no --sweep or --songs"
+                .into(),
+        ));
+    }
+    Ok(batch)
+}
+
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
@@ -56,15 +76,7 @@ fn main() -> ExitCode {
 }
 
 fn run() -> std::io::Result<()> {
-    let mut batch = Batch::default();
-    let mut args = std::env::args().skip(1);
-    while let Some(a) = args.next() {
-        if !batch.parse_flag(&a, &mut args)? {
-            return Err(usage_error(format!(
-                "unknown argument {a:?}; valid: --engine --mood --seeds --start --tier --batch"
-            )));
-        }
-    }
+    let batch = parse(std::env::args().skip(1))?;
     let bands = bands();
     let header: Vec<String> = bands.iter().map(|&b| band_label(b)).collect();
     let row = |name: &str, buf: &[f32], seam: String, took: Duration| {
@@ -81,7 +93,6 @@ fn run() -> std::io::Result<()> {
         (lufs, spectrum)
     };
     for batch in batch.runs() {
-        let tier = batch.tier();
         let mut mix_lufs = Vec::new();
         for seed in batch.seeds() {
             let score = batch.score(seed);
@@ -89,7 +100,7 @@ fn run() -> std::io::Result<()> {
             let (lanes, mix, took, rendered) = match batch.engine {
                 Engine::WholeLane => {
                     let (beds, took) = render_take(&score);
-                    let mix = soak_mix(&beds, &batch.lane_gains());
+                    let mix = soak_mix(&beds, &lane_gains(batch.controls()));
                     let rendered = beds[0].len();
                     (Some((beds, took)), mix, took.iter().sum(), rendered)
                 }
@@ -130,7 +141,7 @@ fn run() -> std::io::Result<()> {
             let sub = BAND_EDGES_HZ[0];
             println!(
                 "  {} mix through {}: below {sub} Hz {}; centroid {}; LTAS density slope {}-{} Hz {:.1} dB/oct; autocorrelation at the loop {:.4}; rendered at {:.4} of real time",
-                tier.name(),
+                batch.mix_name(),
                 batch.engine.name(),
                 rail(100.0 * spectrum.share(0.0, sub), SUB_SHARE_RAIL_PCT, "%"),
                 rail(spectrum.centroid(), CENTROID_RAIL_HZ, " Hz"),
@@ -146,7 +157,7 @@ fn run() -> std::io::Result<()> {
             println!(
                 "{} {} mix through {}, seeds {:?}: gated loudness sd {:.4} LU",
                 batch.mood_name(),
-                tier.name(),
+                batch.mix_name(),
                 batch.engine.name(),
                 batch.seeds(),
                 audition::lufs_sd(&mix_lufs)
@@ -346,6 +357,16 @@ mod tests {
     }
 
     #[test]
+    fn a_sweep_or_more_songs_is_refused() {
+        for args in [["--sweep", "dusk"], ["--songs", "2"]] {
+            assert!(
+                parse(args.into_iter().map(str::to_owned)).is_err(),
+                "{args:?} parsed"
+            );
+        }
+    }
+
+    #[test]
     fn the_guard_rails_are_lofi_bibles_tempo_and_spectral_rows() {
         let bible = include_str!("../.claude/skills/procedural-lofi/reference/LOFI-BIBLE.md");
         let [bpm_lo, bpm_hi] = BPM_RAIL;
@@ -398,7 +419,7 @@ mod tests {
     fn the_whole_lane_mix_reads_at_the_stage_the_streams_does() {
         let (batch, seed) = (Batch::default(), 0);
         let (beds, _) = render_take(&batch.score(seed));
-        let whole = gated_lufs(&soak_mix(&beds, &batch.lane_gains()), SAMPLE_RATE);
+        let whole = gated_lufs(&soak_mix(&beds, &lane_gains(batch.controls())), SAMPLE_RATE);
         let stream = gated_lufs(&batch.perform(seed).expect("the stream plays"), SAMPLE_RATE);
         // half the staging in dB, which a mix staged once less or once more
         // reads past

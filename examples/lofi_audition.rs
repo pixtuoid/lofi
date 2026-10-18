@@ -1,16 +1,17 @@
 //! The generator's STATISTICAL gate: render N random-seed takes to wav so
-//! `ab_judge.py` judges the COMPOSER, not one take. A take is the first song of
-//! a seed's run at one of pixtuoid's tiers. `--engine stream`, the default,
-//! renders it as a `Performance` plays it, so what you hear is what lofi ships;
-//! `--engine whole` renders the same score's lanes whole and loops their mix, as
-//! pixtuoid's office played lofi before the stream. Either take is mono and a
-//! song long.
+//! `ab_judge.py` judges the COMPOSER, not one take. A take is the first
+//! `--songs` songs of a seed's run at one of pixtuoid's tiers, or under a named
+//! `--sweep` of control calls. `--engine stream`, the default, renders it as a
+//! `Performance` plays it, so what you hear is what lofi ships; `--engine whole`
+//! renders each song's lanes whole and loops their mix, under the controls its
+//! first bar latches, as pixtuoid's office played lofi before the stream. Either
+//! take is mono.
 //!
 //! Usage:
 //!   cargo run --release --example lofi_audition -- \
 //!     [--engine whole|stream] [--mood day|night] [--seeds N] [--start S] [--out DIR] \
 //!     [--tier empty|moderate|busy | --solo pad|sparkle|keys|drums|texture|bass] \
-//!     [--batch judge] [--shuffle KEYFILE]
+//!     [--sweep intensity|dusk|twilight] [--songs N] [--batch judge] [--shuffle KEYFILE]
 //!   `--solo` renders a lane whole, so it takes `--engine whole`. `--batch judge`
 //!   renders what `ab_judge.py` scores in place of the mood, tier and seeds.
 
@@ -26,10 +27,12 @@ use std::io::{self, BufWriter, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use pixtuoid_lofi::audition::Lane;
+use pixtuoid_lofi::audition::{self, Lane};
 use pixtuoid_lofi::dsp::{NoiseStream, SAMPLE_RATE};
 
-use batch::{Batch, Engine, LANE_NAMES, parse_choice, render_take, soak_mix, usage_error};
+use batch::{
+    Batch, Engine, LANE_NAMES, lane_gains, parse_choice, render_take, soak_mix, usage_error,
+};
 use loudness::gated_lufs;
 
 /// Every take renders at ONE gated loudness, so a blind A/B compares takes, not
@@ -64,7 +67,7 @@ fn main() -> ExitCode {
 fn run() -> io::Result<()> {
     let args = Args::parse(std::env::args().skip(1))?;
     std::fs::create_dir_all(&args.out)?;
-    let takes = args.takes();
+    let takes = args.takes()?;
     let files = match args.key {
         Some(_) => shuffled_names(takes.len()),
         None => takes.iter().map(|take| take.name.clone()).collect(),
@@ -143,15 +146,18 @@ impl Args {
                 },
                 other => {
                     return Err(usage_error(format!(
-                        "unknown argument {other:?}; valid: --engine --mood --seeds --start --out --tier --batch --solo --shuffle"
+                        "unknown argument {other:?}; valid: --engine --mood --seeds --start --out --tier --sweep --songs --batch --solo --shuffle"
                     )));
                 }
             }
         }
         if parsed.solo.is_some() {
-            if parsed.batch.tier.is_some() || parsed.batch.named.is_some() {
+            if parsed.batch.tier.is_some()
+                || parsed.batch.sweep.is_some()
+                || parsed.batch.named.is_some()
+            {
                 return Err(usage_error(
-                    "--solo plays one lane, so it takes no --tier or --batch".into(),
+                    "--solo plays one lane, so it takes no --tier, --sweep or --batch".into(),
                 ));
             }
             if parsed.batch.engine != Engine::WholeLane {
@@ -164,13 +170,14 @@ impl Args {
     }
 
     /// Every take of every run. No engine changes a name, so `ab_listen.py`
-    /// pairs a whole-lane batch with a stream batch.
-    fn takes(&self) -> Vec<Take> {
+    /// pairs a whole-lane batch with a stream batch; an error if two share
+    /// one, since the second would overwrite the first's file.
+    fn takes(&self) -> io::Result<Vec<Take>> {
         let runs = self.batch.runs();
         let takes = runs.iter().flat_map(|run| {
             let mix = match self.solo {
                 Some(s) => LANE_NAMES[s],
-                None => run.tier().name(),
+                None => run.mix_name(),
             };
             let mood = run.mood_name();
             (run.seeds()).map(move |seed| Take {
@@ -179,7 +186,16 @@ impl Args {
                 name: format!("gen_{mood}_{mix}_{seed:03}.wav"),
             })
         });
-        takes.collect()
+        let takes: Vec<Take> = takes.collect();
+        let mut names: Vec<&str> = takes.iter().map(|take| take.name.as_str()).collect();
+        names.sort_unstable();
+        match names.windows(2).find(|pair| pair[0] == pair[1]) {
+            Some(pair) => Err(usage_error(format!(
+                "two takes would both write {}",
+                pair[0]
+            ))),
+            None => Ok(takes),
+        }
     }
 
     /// `seed`'s take in `run` at its target loudness; an error if that clips
@@ -187,16 +203,20 @@ impl Args {
     fn render(&self, run: &Batch, seed: u64) -> io::Result<Vec<f32>> {
         let mut take = match run.engine {
             Engine::WholeLane => {
-                let gains = match self.solo {
-                    Some(s) => {
-                        let mut gains = [0.0; Lane::ALL.len()];
-                        gains[s] = 1.0;
-                        gains
-                    }
-                    None => run.lane_gains(),
-                };
-                let (beds, _) = render_take(&run.score(seed));
-                soak_mix(&beds, &gains)
+                let mut take = Vec::new();
+                for (k, &(controls, _)) in (0..).zip(&run.timeline(seed).songs) {
+                    let gains = match self.solo {
+                        Some(s) => {
+                            let mut gains = [0.0; Lane::ALL.len()];
+                            gains[s] = 1.0;
+                            gains
+                        }
+                        None => lane_gains(controls),
+                    };
+                    let (beds, _) = render_take(&audition::song_score(seed, k, controls));
+                    take.extend(soak_mix(&beds, &gains));
+                }
+                take
             }
             Engine::Stream => run.perform(seed)?,
         };
@@ -288,6 +308,7 @@ fn write_wav(path: &Path, mono: &[f32]) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use batch::Sweep;
 
     fn parsed(args: &[&str]) -> Args {
         Args::parse(args.iter().map(|&a| a.to_owned())).expect("the arguments parse")
@@ -321,7 +342,9 @@ mod tests {
     #[test]
     fn a_take_keeps_its_name_under_either_engine() {
         let [whole, stream] = ["whole", "stream"].map(|engine| {
-            parsed(&["--engine", engine, "--mood", "night", "--tier", "empty"]).takes()
+            parsed(&["--engine", engine, "--mood", "night", "--tier", "empty"])
+                .takes()
+                .expect("the takes' names are distinct")
         });
         let names = |takes: Vec<Take>| {
             takes
@@ -337,7 +360,9 @@ mod tests {
 
     #[test]
     fn the_judge_batch_names_each_take_once_by_its_mood_tier_and_seed() {
-        let takes = parsed(&["--batch", "judge"]).takes();
+        let takes = parsed(&["--batch", "judge"])
+            .takes()
+            .expect("the takes' names are distinct");
         let mut names: Vec<&str> = takes.iter().map(|t| t.name.as_str()).collect();
         for take in &takes {
             let (mood, tier) = (take.run.mood_name(), take.run.tier().name());
@@ -381,6 +406,69 @@ mod tests {
             let edges = take.map(|t| [t[0], t[t.len() - 1]].map(pcm)).ok();
             assert_eq!(edges, Some([0, 0]), "{engine}'s first and last samples");
         }
+    }
+
+    #[test]
+    fn every_sweep_renders_alike_twice_and_as_long_under_either_engine() {
+        for sweep in Sweep::ALL {
+            for engine in ["whole", "stream"] {
+                let args = parsed(&["--engine", engine, "--sweep", sweep.name(), "--seeds", "1"]);
+                for run in args.batch.runs() {
+                    let take = args.render(&run, 0).expect("the sweep renders");
+                    let again = args.render(&run, 0).expect("the sweep renders");
+                    assert!(take == again, "{sweep:?} under {engine} renders apart");
+                    let songs = run.timeline(0).songs;
+                    let len: usize = songs.iter().map(|&(_, len)| len).sum();
+                    assert_eq!(take.len(), len, "{sweep:?} under {engine}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_intensity_sweeps_calls_reach_either_engine() {
+        let start = |args: &[&str]| parsed(args).batch.controls();
+        assert_eq!(
+            start(&["--sweep", "intensity"]),
+            start(&["--tier", "empty"])
+        );
+        for engine in ["whole", "stream"] {
+            // the second song's first bar latches the busy call under any latch
+            let swept = rendered(
+                &["--engine", engine, "--sweep", "intensity", "--songs", "2"],
+                0,
+            );
+            let held = rendered(&["--engine", engine, "--tier", "empty", "--songs", "2"], 0);
+            assert!(
+                swept.is_ok() && swept.ok() != held.ok(),
+                "{engine} played no call"
+            );
+        }
+    }
+
+    #[test]
+    fn songs_writes_that_many_songs_under_either_engine() {
+        let c = Batch::default().controls();
+        let want: usize = (0..2).map(|k| audition::song_len(3, k, c)).sum();
+        for engine in ["whole", "stream"] {
+            let take = rendered(&["--engine", engine, "--songs", "2"], 3);
+            assert_eq!(take.map(|t| t.len()).ok(), Some(want), "{engine}");
+        }
+    }
+
+    #[test]
+    fn a_solo_takes_no_sweep() {
+        let solo = ["--engine", "whole", "--solo", "pad", "--sweep", "twilight"];
+        assert!(Args::parse(solo.map(str::to_owned).into_iter()).is_err());
+    }
+
+    #[test]
+    fn a_run_whose_takes_share_a_file_name_is_refused() {
+        // the twilight takes, both named for the lane past the parse's guard
+        let mut args = parsed(&["--engine", "whole", "--sweep", "twilight"]);
+        args.solo = Some(0);
+        assert!(args.takes().is_err());
+        assert!(parsed(&["--sweep", "twilight"]).takes().is_ok());
     }
 
     #[test]

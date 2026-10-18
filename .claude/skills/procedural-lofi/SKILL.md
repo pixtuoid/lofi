@@ -233,7 +233,7 @@ constraint and re-batch), and every taste axis is a data table or named const wi
    The owner's blind listen is optional and, when given, overrides the judge:
    `python3 .claude/skills/procedural-lofi/scripts/ab_listen.py DIR/base DIR/cand --out DIR/verdict.json`.
    A change of engine renders `--engine whole --out DIR/base` and `--engine stream --out DIR/cand`
-   on one commit: a take keeps its name and score.
+   on one commit: a take keeps its name and score, under a `--sweep NAME` too.
 
 Mix LANES stay instrument-blind (`stream::master::lane_gain` sees lanes, never voices; a
 consumer sets `Controls` and receives `Frame`s) — a lane is a busy-ness ROLE, an instrument a
