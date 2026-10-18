@@ -67,8 +67,11 @@ def check_wav(path):
     try:
         with wave.open(str(path)) as w:
             frame = w.getnchannels() * w.getsampwidth()
-            if data is None or data % frame or w.getnframes() * frame != data:
+            if data is None or data % frame:
                 raise Invalid(f"{path.parent.name}/{path.name}'s data isn't whole frames")
+            # `wave` reads the first data chunk, the walk the last
+            if w.getnframes() * frame != data:
+                raise Invalid(f"{path.parent.name}/{path.name}'s two data chunks disagree")
     except (wave.Error, EOFError) as e:
         raise Invalid(f"{path.parent.name}/{path.name} is no PCM wav: {e}") from None
 
