@@ -58,6 +58,19 @@ CPU = 2.0
 MEMORY_MIB = 12288
 JUDGE_TIMEOUT_S = 1800
 
+# the warm-up pair `build` judges: a take at lofi's own rate (`SAMPLE_RATE`
+# in src/dsp.rs), the one a batch's takes arrive at
+WARMUP_RATE = 44100
+# a few of ab_judge.py's `WINDOW_S` windows, so every judge scores whole ones
+# (opinion)
+WARMUP_S = 30
+# the noise's RMS: the pair sits louder than any reference, so `Fad` builds
+# its statistics at the quietest reference's level, which every real batch's
+# takes are over
+WARMUP_LEVEL = 0.25
+# the cand side's gain, so the pair differs: an identical one is never scored
+WARMUP_CAND_GAIN = 0.5
+
 
 def muq_eval_commit():
     """`ab_judge.py`'s `MUQ_EVAL_COMMIT`, the one authority for the clone."""
@@ -148,12 +161,10 @@ def build():
 
     warm = Path("/tmp/warm")
     rng = np.random.default_rng(0)
-    # noise louder than any reference, so the statistics are built at the
-    # quietest reference's level, which every real batch's takes are over
-    take = 0.25 * rng.standard_normal((30 * 44100, 2))
-    for side, gain in (("base", 1.0), ("cand", 0.5)):
+    take = WARMUP_LEVEL * rng.standard_normal((WARMUP_S * WARMUP_RATE, 2))
+    for side, gain in (("base", 1.0), ("cand", WARMUP_CAND_GAIN)):
         (warm / side).mkdir(parents=True)
-        sf.write(warm / side / "gen_day_empty_000.wav", take * gain, 44100, subtype="PCM_16")
+        sf.write(warm / side / "gen_day_empty_000.wav", take * gain, WARMUP_RATE, subtype="PCM_16")
         (warm / side / "COMMIT").write_text("0" * 40 + "\n")
     started = time.time()
     run = subprocess.run(
