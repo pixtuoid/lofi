@@ -188,16 +188,24 @@ pub(crate) struct Timeline {
 
 /// `verdict.py`'s `MIN_UNTIED`, which `test_verdict.py` reads here: the
 /// untied pairs each mood of the judge batch is built to reach.
-pub(crate) const JUDGE_MIN_UNTIED: usize = 7;
+pub(crate) const JUDGE_MIN_UNTIED: usize = 8;
 
 /// The judge batch's seeds at `empty`, per mood in [`MOODS`] order: the fewest
 /// from 0 that give every lead voice the mood draws [`JUDGE_MIN_UNTIED`] takes,
 /// since `empty` is the one tier the lead plays at.
-const JUDGE_EMPTY_SEEDS: [u64; MOODS.len()] = [27, 26];
+const JUDGE_EMPTY_SEEDS: [u64; MOODS.len()] = [29, 28];
 
 /// The judge batch's seeds at each louder tier: [`JUDGE_MIN_UNTIED`] or more
 /// between them, so a change to a lane `empty` mutes still reaches the floor.
 const JUDGE_TIER_SEEDS: u64 = JUDGE_MIN_UNTIED.div_ceil(2) as u64;
+
+/// The sweeps the judge batch plays, each a group of its own: those only a
+/// listener can judge, which no closed-form test pins.
+const JUDGE_SWEEPS: [Sweep; 1] = [Sweep::Twilight];
+
+/// The seeds each judged sweep spreads over its takes: room above
+/// [`JUDGE_MIN_UNTIED`] for the pairs a change leaves tied (opinion).
+const JUDGE_SWEEP_SEEDS: u64 = 12;
 
 /// The lanes' noise seed: any fixed value, so a take renders alike on every run
 /// and a base and a candidate render differ only by their change.
@@ -351,8 +359,13 @@ impl Batch {
         }
         match self.named {
             None => vec![*self],
-            Some(Named::Judge) => (0..MOODS.len())
-                .flat_map(|mood| {
+            Some(Named::Judge) => {
+                let at = Batch {
+                    named: None,
+                    picked: true,
+                    ..*self
+                };
+                let tiers = (0..MOODS.len()).flat_map(|mood| {
                     [
                         (Tier::Empty, JUDGE_EMPTY_SEEDS[mood]),
                         (Tier::Moderate, JUDGE_TIER_SEEDS),
@@ -363,12 +376,23 @@ impl Batch {
                         seeds,
                         start: 0,
                         tier: Some(tier),
-                        named: None,
-                        picked: true,
-                        ..*self
+                        ..at
                     })
-                })
-                .collect(),
+                });
+                // a sweep's takes split its seeds, so its group holds each once
+                let sweeps = JUDGE_SWEEPS.into_iter().flat_map(move |sweep| {
+                    let starts = sweep.starts().len();
+                    let seeds = JUDGE_SWEEP_SEEDS / starts as u64;
+                    (0..starts).map(move |sweep_start| Batch {
+                        sweep: Some(sweep),
+                        sweep_start,
+                        seeds,
+                        start: sweep_start as u64 * seeds,
+                        ..at
+                    })
+                });
+                tiers.chain(sweeps).collect()
+            }
         }
     }
 
@@ -578,6 +602,35 @@ mod tests {
                 "{name} has spare seeds at empty"
             );
         }
+    }
+
+    #[test]
+    fn the_judge_batch_plays_each_of_its_sweeps_over_its_own_seeds() {
+        let judge = parsed("--batch", "judge").expect("the batch parses").runs();
+        for sweep in JUDGE_SWEEPS {
+            let mut seeds: Vec<u64> = (judge.iter())
+                .filter(|run| run.sweep == Some(sweep))
+                .flat_map(Batch::seeds)
+                .collect();
+            seeds.sort_unstable();
+            seeds.dedup();
+            assert_eq!(
+                seeds.len() as u64,
+                JUDGE_SWEEP_SEEDS,
+                "{sweep:?}'s distinct seeds"
+            );
+            let takes = judge.iter().filter(|run| run.sweep == Some(sweep));
+            assert_eq!(
+                takes.map(|run| run.seeds().count() as u64).sum::<u64>(),
+                JUDGE_SWEEP_SEEDS,
+                "{sweep:?}'s takes"
+            );
+        }
+        assert!(
+            judge
+                .iter()
+                .all(|run| run.sweep.is_none_or(|s| JUDGE_SWEEPS.contains(&s)))
+        );
     }
 
     #[test]

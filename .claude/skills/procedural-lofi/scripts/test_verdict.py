@@ -9,9 +9,9 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from verdict import ALPHA, JUDGES, MIN_UNTIED, MOODS, exit_message, grouped, judged, min_untied, sign_test
+from verdict import ALPHA, GROUPS, JUDGES, MIN_UNTIED, exit_message, grouped, judged, min_untied, sign_test
 
-# where the judge batch's matrix and the moods are spelled in Rust
+# where the judge batch's matrix and its groups are spelled in Rust
 BATCH_RS = HERE.parents[3] / "examples" / "common" / "batch.rs"
 
 
@@ -57,7 +57,7 @@ class SignTest(unittest.TestCase):
             self.assertTrue(sign_test(losses(n), alpha)["significant"])
 
     def test_min_untied_is_the_fewest_at_every_gating_test(self):
-        self.assertEqual(MIN_UNTIED, min_untied(ALPHA / (len(JUDGES) * len(MOODS))))
+        self.assertEqual(MIN_UNTIED, min_untied(ALPHA / (len(JUDGES) * len(GROUPS))))
 
 
 class Grouping(unittest.TestCase):
@@ -105,7 +105,9 @@ class Verdicts(unittest.TestCase):
         self.assertEqual(judged(pairs("day", [0.0] * 12))["overall"], "INSUFFICIENT")
 
     def test_a_detected_regression_outranks_too_few_pairs(self):
-        batch = pairs("day", losses(MIN_UNTIED)) + pairs("night", [1.0] * (MIN_UNTIED - 1))
+        # two changed groups test six
+        two = min_untied(ALPHA / (2 * len(JUDGES)))
+        batch = pairs("day", losses(two)) + pairs("night", [1.0] * (two - 1))
         result = judged(batch)
         self.assertEqual(result["groups"]["night"]["verdict"], "INSUFFICIENT")
         self.assertEqual(result["overall"], "REGRESSION")
@@ -124,10 +126,18 @@ class RustCopies(unittest.TestCase):
         self.assertIsNotNone(rust, f"no JUDGE_MIN_UNTIED in {BATCH_RS}")
         self.assertEqual(int(rust[1]), MIN_UNTIED)
 
-    def test_the_moods_are_the_ones_lofi_renders(self):
-        rust = re.search(r"const MOODS: \[\(&str, f32\); \d+\] = \[(.*)\];", BATCH_RS.read_text())
-        self.assertIsNotNone(rust, f"no MOODS in {BATCH_RS}")
-        self.assertEqual(tuple(re.findall(r'"([a-z]+)"', rust[1])), MOODS)
+    def test_the_groups_are_the_judge_batchs_moods_then_sweeps(self):
+        text = BATCH_RS.read_text()
+        moods = re.search(r"const MOODS: \[\(&str, f32\); \d+\] = \[(.*)\];", text)
+        sweeps = re.search(r"const JUDGE_SWEEPS: \[Sweep; \d+\] = \[(.*)\];", text)
+        self.assertIsNotNone(moods, f"no MOODS in {BATCH_RS}")
+        self.assertIsNotNone(sweeps, f"no JUDGE_SWEEPS in {BATCH_RS}")
+        names = re.findall(r'"([a-z]+)"', moods[1])
+        for variant in re.findall(r"Sweep::(\w+)", sweeps[1]):
+            name = re.search(rf'Sweep::{variant} => "([a-z]+)"', text)
+            self.assertIsNotNone(name, f"Sweep::{variant} has no name in {BATCH_RS}")
+            names.append(name[1])
+        self.assertEqual(tuple(names), GROUPS)
 
 
 if __name__ == "__main__":
