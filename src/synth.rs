@@ -27,6 +27,11 @@ fn onset(at_s: f32, sr: u32) -> usize {
     (at_s * sr as f32) as usize
 }
 
+/// The sample bar `bar` of a loop starts on, at `sr`: where its chord strikes.
+pub(crate) fn bar_onset(bar: usize, bar_s: f32, sr: u32) -> usize {
+    onset(bar as f32 * bar_s, sr)
+}
+
 fn env_ar(n: usize, attack_s: f32, release_s: f32, sr: u32) -> impl Fn(usize) -> f32 {
     let na = samples_at(attack_s, sr).min(n).max(1);
     let nr = samples_at(release_s, sr).min(n).max(1);
@@ -956,7 +961,7 @@ impl Part<'_> {
     pub(crate) fn onsets(&self, sr: u32) -> Vec<usize> {
         match *self {
             Part::Chords { chords, bar_s, .. } => (0..chords.len())
-                .map(|bar| onset(bar as f32 * bar_s, sr))
+                .map(|bar| bar_onset(bar, bar_s, sr))
                 .collect(),
             Part::Notes { events, .. } => events.iter().map(|&(at, ..)| onset(at, sr)).collect(),
             Part::Hits(hits) => hits.iter().map(|&(at, ..)| onset(at, sr)).collect(),

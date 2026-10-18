@@ -39,6 +39,11 @@ const MEAN_RTF: f64 = 0.05;
 /// The seeds the slowest chunk is sought over.
 const SEEDS: Range<u64> = 0..3;
 
+/// The daylight the timeline's day song grades to: halfway from
+/// [`audition::DUSK`] to full day, so the song grades within the day family
+/// rather than past it.
+const MID_SONG_DAYLIGHT: f32 = f32::midpoint(audition::DUSK, 1.0);
+
 /// How long each room plays, in seconds, to the end of its last song.
 /// The mean settles within minutes, and this spans many song transitions.
 const ROOM_S: u32 = 20 * 60;
@@ -60,7 +65,7 @@ fn main() -> ExitCode {
     };
     let share = worst / CHUNK_S;
     say(&format!(
-        "slowest {CHUNK_S} s chunk over two songs and their transition, at intensity 1: {:.2} ms, {:.1} % of the chunk (gate {:.0} %), seed {seed} at {:.1} s",
+        "slowest {CHUNK_S} s chunk over two songs, a mid-song timeline and their transition, from intensity 1: {:.2} ms, {:.1} % of the chunk (gate {:.0} %), seed {seed} at {:.1} s",
         worst * 1e3,
         share * 1e2,
         WORST_CHUNK_SHARE * 1e2,
@@ -83,23 +88,34 @@ fn main() -> ExitCode {
 }
 
 /// The longest one `render` of a `buf`-long chunk took, in seconds, over each
-/// of [`SEEDS`]' first two songs: a busy day's, then a night's, whose
-/// first bars the day's tails ring over. With it, the seed and the frame the
-/// chunk started at, which tell a cold start from a transition. Errs unless
-/// the run played those two songs.
+/// of [`SEEDS`]' first two songs: a busy day's, whose bars empty the room,
+/// fill it again and grade toward night, then a night's, whose first bars the
+/// day's tails ring over. With it, the seed and the frame the chunk started
+/// at, which tell a cold start from a transition. Errs unless the run played
+/// those two songs.
 fn slowest_chunk(buf: &mut [Frame]) -> Result<(f64, u64, u64), String> {
     let day = Controls::default().with_intensity(1.0);
     let night = day.with_daylight(0.0);
     let mut worst = (0.0, SEEDS.start, 0);
     for seed in SEEDS {
         let span = audition::song_len(seed, 0, day) + audition::song_len(seed, 1, night);
+        // each mid-bar, so it latches at the next bar line: the night is asked
+        // for in song 0's second-to-last bar, so its last bar grades toward
+        // night and song 1 starts a night song
+        let bars = audition::bar_frames(seed, 0, day);
+        let mid = |bar: usize| bars[bar].midpoint(bars[bar + 1]);
+        let calls = [
+            (mid(8), day.with_intensity(TIER_INTENSITIES[0])),
+            (mid(16), day.with_daylight(MID_SONG_DAYLIGHT)),
+            (mid(bars.len() - 2), night),
+        ];
+        let mut calls = calls.iter().peekable();
         let mut music = Performance::new(seed, day);
         let (mut opening, mut last) = (Vec::new(), 0);
         while music.position() < span as u64 {
-            let (at, n) = (
-                music.position(),
-                buf.len().min(span - music.position() as usize),
-            );
+            let at = music.position();
+            let until = calls.peek().map_or(span, |&&(call, _)| call);
+            let n = buf.len().min(until - at as usize);
             let clock = Clock::start();
             music.render(&mut buf[..n]);
             let took = clock.secs();
@@ -109,16 +125,19 @@ fn slowest_chunk(buf: &mut [Frame]) -> Result<(f64, u64, u64), String> {
             }
             if at == 0 {
                 opening = buf[..n].to_vec();
-                // a song latches the controls asked for before its first
-                // frame, so the night is asked for once the day's plays
-                music.set_controls(night);
+            }
+            if let Some(&&(call, controls)) = calls.peek()
+                && music.position() == call as u64
+            {
+                music.set_controls(controls);
+                calls.next();
             }
             last = n;
         }
         let mut day_alone = vec![Frame::default(); opening.len()];
         Performance::new(seed, day).render(&mut day_alone);
         // past its first loop, song 1 plays as it does alone
-        let night_alone = audition::song(seed, 1, night);
+        let night_alone = audition::song(seed, 1, night, &[]);
         if day_alone != opening || night_alone[night_alone.len() - last..] != buf[..last] {
             return Err(format!(
                 "seed {seed} didn't play a day's song, then a night's"

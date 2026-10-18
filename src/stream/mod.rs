@@ -8,6 +8,7 @@ pub(crate) mod hiss;
 pub(crate) mod lanes;
 pub(crate) mod master;
 pub(crate) mod onepole;
+pub(crate) mod ramp;
 pub(crate) mod schedule;
 
 /// Below this a feedback state is silence: "a number whose absolute value is

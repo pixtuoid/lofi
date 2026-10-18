@@ -52,8 +52,9 @@ fn fingerprint(frames: &[Frame]) -> u64 {
     hasher.finish()
 }
 
-/// The most heap a `Performance` holds playing song 0 of `seed`'s run under
-/// `a`, then song 1 under `b`; panics unless it played those two songs.
+/// The most heap a `Performance` holds playing song 0 of `seed`'s run from
+/// `a`, `b` from its second bar, then song 1 under `b`; panics unless it
+/// played those two songs.
 fn high_water(seed: u64, a: Controls, b: Controls) -> usize {
     let span = audition::song_len(seed, 0, a) + audition::song_len(seed, 1, b);
     // a chunk as a player renders ahead, allocated before the count starts
@@ -68,8 +69,8 @@ fn high_water(seed: u64, a: Controls, b: Controls) -> usize {
         music.render(&mut chunk[..n]);
         if at == 0 {
             opening = (n, fingerprint(&chunk[..n]));
-            // a song latches the controls asked for before its first frame,
-            // so `b` is asked for once `a`'s song plays
+            // latched at song 0's next bar, so its bars grade or re-level
+            // toward `b` before song 1 starts under it
             music.set_controls(b);
         }
         closing = (n, fingerprint(&chunk[..n]));
@@ -79,7 +80,7 @@ fn high_water(seed: u64, a: Controls, b: Controls) -> usize {
     let mut first_alone = vec![Frame::default(); opening.0];
     Performance::new(seed, a).render(&mut first_alone);
     // past its first loop, song 1 plays as it does alone
-    let second_alone = audition::song(seed, 1, b);
+    let second_alone = audition::song(seed, 1, b, &[]);
     assert_eq!(
         (
             fingerprint(&first_alone),

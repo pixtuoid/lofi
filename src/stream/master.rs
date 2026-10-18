@@ -38,6 +38,20 @@ pub fn lane_gain(lane: Lane, intensity: f32) -> f32 {
     gains[k] * (1.0 - t) + gains[k + 1] * t
 }
 
+/// `lane`'s level at `intensity` where it plays no note: its gain at the
+/// nearest of [`TIER_INTENSITIES`] at which it plays, so the tails it rings
+/// out, and the entry it next makes, sound at a level it plays at.
+pub(crate) fn resting_gain(lane: Lane, intensity: f32) -> f32 {
+    let gain = lane_gain(lane, intensity);
+    if gain > 0.0 {
+        return gain;
+    }
+    (TIER_INTENSITIES.iter().zip(tier_gains(lane)))
+        .filter(|&(_, gain)| gain > 0.0)
+        .min_by(|a, b| (a.0 - intensity).abs().total_cmp(&(b.0 - intensity).abs()))
+        .map_or(gain, |(_, gain)| gain)
+}
+
 /// The mix's gain into the ceiling: lofi's mastering level for a background
 /// bed, the level pixtuoid's office has played the lanes at
 /// (<https://github.com/pixtuoid/pixtuoid/blob/a63f1782f477c357666e71a9c1147090b47fe17d/crates/pixtuoid-scene/src/audio/mixer.rs#L63-L65>),
@@ -56,7 +70,7 @@ const CEILING_DBFS: f32 = -1.0;
 /// gain takes to fall to a peak's need. Opinion: [Luff]'s example.
 ///
 /// [Luff]: https://signalsmith-audio.co.uk/writing/2022/limiter/
-const LOOKAHEAD_S: f64 = 0.005;
+pub(crate) const LOOKAHEAD_S: f64 = 0.005;
 
 /// How much longer than the lookahead a peak holds the gain down, which keeps
 /// it from fluttering between peaks close together. Opinion: [Luff]'s
@@ -183,6 +197,24 @@ mod tests {
     use super::*;
     use crate::dsp::{NoiseStream, SAMPLE_RATE};
     use crate::stream::assert_chunk_invariant;
+
+    #[test]
+    fn a_lane_rests_at_its_nearest_playing_tier() {
+        let [empty, moderate, busy] = TIER_INTENSITIES;
+        for (lane, intensity, want) in [
+            (Lane::Drums, empty, lane_gain(Lane::Drums, moderate)),
+            (Lane::Keys, empty, lane_gain(Lane::Keys, moderate)),
+            (Lane::Sparkle, busy, lane_gain(Lane::Sparkle, empty)),
+            (Lane::Sparkle, moderate, lane_gain(Lane::Sparkle, empty)),
+            (Lane::Pad, busy, lane_gain(Lane::Pad, busy)),
+        ] {
+            assert_eq!(
+                resting_gain(lane, intensity),
+                want,
+                "{lane:?} at {intensity}"
+            );
+        }
+    }
 
     /// `amplitude` cos at `hz` for `secs`, from its crest.
     fn tone(amplitude: f64, hz: f64, secs: f64) -> Vec<f64> {
