@@ -15,7 +15,21 @@ use crate::{Controls, Frame, Performance};
 /// from `controls` with no earlier song ringing into it, each of `calls`
 /// made to [`Performance::set_controls`] once its frame of the song has
 /// played.
+///
+/// # Panics
+///
+/// If `calls` aren't in order, or one falls at or past the song's end, which
+/// would render a frame twice or another song's.
 pub fn song(seed: u64, k: u64, controls: Controls, calls: &[(usize, Controls)]) -> Vec<Frame> {
+    assert!(
+        calls.windows(2).all(|pair| pair[0].0 <= pair[1].0),
+        "calls out of order"
+    );
+    let len = Performance::song_len(seed, k, controls);
+    assert!(
+        calls.iter().all(|&(at, _)| at < len),
+        "a call at or past the song's {len} frames"
+    );
     let mut performance = Performance::from_song(seed, k, controls);
     let mut played = Vec::new();
     for &(at, controls) in calls {
@@ -66,4 +80,23 @@ pub fn lufs_sd(lufs: &[f64]) -> f64 {
     let n = lufs.len() as f64;
     let mean = lufs.iter().sum::<f64>() / n;
     (lufs.iter().map(|l| (l - mean).powi(2)).sum::<f64>() / (n - 1.0)).sqrt()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[should_panic(expected = "calls out of order")]
+    fn a_song_refuses_calls_out_of_order() {
+        let c = Controls::default();
+        song(1, 0, c, &[(2000, c), (1000, c)]);
+    }
+
+    #[test]
+    #[should_panic(expected = "a call at or past the song's")]
+    fn a_song_refuses_a_call_past_its_end() {
+        let c = Controls::default();
+        song(1, 0, c, &[(song_len(1, 0, c), c)]);
+    }
 }
