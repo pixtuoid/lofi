@@ -40,9 +40,9 @@ const MEAN_RTF: f64 = 0.05;
 const SEEDS: Range<u64> = 0..3;
 
 /// The daylight the timeline's day song grades to: halfway from
-/// [`audition::DUSK`] to full day, so the song grades within the day family
+/// [`Controls::DUSK`] to full day, so the song grades within the day family
 /// rather than past it.
-const MID_SONG_DAYLIGHT: f32 = f32::midpoint(audition::DUSK, 1.0);
+const MID_SONG_DAYLIGHT: f32 = f32::midpoint(Controls::DUSK, 1.0);
 
 /// How long each room plays, in seconds, to the end of its last song.
 /// The mean settles within minutes, and this spans many song transitions.

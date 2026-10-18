@@ -37,6 +37,10 @@ impl Default for Controls {
 }
 
 impl Controls {
+    /// The daylight below which a song is composed for the night, picked at
+    /// the next song's first bar; within a song, any daylight grades its colour.
+    pub const DUSK: f32 = 0.5;
+
     /// These controls with `daylight` replaced.
     #[must_use]
     pub const fn with_daylight(self, daylight: f32) -> Self {
