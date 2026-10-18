@@ -221,7 +221,8 @@ constraint and re-batch), and every taste axis is a data table or named const wi
    each from a clean tree with its `git rev-parse HEAD` in `DIR/{base,cand}/COMMIT`, and
    `ab_judge.py` gates them (its header holds the verdict rule and each measure's blind spots)
    against REFS, the private reference corpus (`audio/` and its `manifest.json` of sha256s, never
-   committed), from a venv outside the repo, set up once; `judge/modal_judge.py` runs it on Modal:
+   committed), from a venv outside the repo, set up once; CI's `judge.yml` renders the same batch and
+   judges it on Modal (`judge/modal_judge.py`) for every PR that changes the render:
    ```bash
    J=~/.cache/lofi-judge; S=.claude/skills/procedural-lofi; uv venv --python 3.12 $J
    uv pip install --python $J/bin/python --require-hashes -r $S/judge/judge-requirements.txt

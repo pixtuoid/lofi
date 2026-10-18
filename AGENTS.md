@@ -8,7 +8,7 @@ Lofi that sounds better without leaving the genre. The A/B judge holds the genre
 
 ## Changing the sound
 
-Measurement steers a change toward a target; `ab_judge.py` says whether it sounds worse, and the owner's blind listen, when given, overrides it. A music change ends in an A/B batch the judge scores (the `procedural-lofi` skill's "GENERATOR loop" step 5), and its commit records the verdict. Where each taste axis lives and how to add an instrument: the `procedural-lofi` skill's "GENERATOR loop". The taste anchor is in [`docs/phase0-ratification.md`](docs/phase0-ratification.md).
+Measurement steers a change toward a target; CI's [`judge.yml`](.github/workflows/judge.yml) posts `ab_judge.py`'s score on every PR that changes the render, and the owner's blind listen, when given, overrides it. A music change ends in an A/B batch the judge scores (the `procedural-lofi` skill's "GENERATOR loop" step 5), and its commit records the verdict. Where each taste axis lives and how to add an instrument: the `procedural-lofi` skill's "GENERATOR loop". The taste anchor is in [`docs/phase0-ratification.md`](docs/phase0-ratification.md).
 
 ## Map
 

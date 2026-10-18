@@ -8,7 +8,7 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from judge_local import exit_code, redact, select
+from judge_local import exit_code, published, redact, select
 from test_validate_batch import write_wav
 from validate_batch import Invalid
 
@@ -66,6 +66,23 @@ class Redaction(unittest.TestCase):
             " Some-Artist-Some-Title decoded; Some-Artist-Some-Title.mp3 too"
         )
         self.assertEqual(redact(text, self.TRACKS), "/refs/audio/ref#1 failed; ref#0 decoded; ref#0 too")
+
+
+class Publishing(unittest.TestCase):
+    TRACKS = Redaction.TRACKS
+
+    def test_the_record_publishes_its_own_table_masked_and_no_corpus_name(self):
+        record = {
+            "dir": "/batch",
+            "judges": {"fad": {"refs": "/refs", "lufs": -20.0}},
+            "fad_calibration": {"Some-Artist-Some-Title.mp3": 0.4, "Some-Artist-Some-Title-Extended.mp3": 0.2},
+            "table": "take dCE\nday_empty_000 +0.01\nnearest Some-Artist-Some-Title",
+            "overall": "PASS",
+        }
+        got = published(record, self.TRACKS)
+        self.assertEqual(got["outcome"], "PASS")
+        self.assertEqual(got["table"], "take dCE\nday_empty_000 +0.01\nnearest ref#0")
+        self.assertEqual(got["record"], {"judges": {"fad": {"lufs": -20.0}}, "fad_calibration": [0.2, 0.4], "overall": "PASS"})
 
 
 if __name__ == "__main__":

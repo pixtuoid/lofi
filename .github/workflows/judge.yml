@@ -1,0 +1,265 @@
+name: judge
+
+# Posts `ab_judge.py`'s score for a PR that changes the render, as codecov
+# posts coverage: nothing requires it. `render` runs the PR's code with no
+# secret; `judge` holds the Modal token and runs only the base branch's
+# scripts over the batch as bytes; `verdict` comments with the pull-requests
+# permission alone.
+on:
+  pull_request:
+    paths:
+      - "src/**"
+      - "examples/**"
+      - Cargo.toml
+      - Cargo.lock
+
+permissions: {}
+
+concurrency:
+  group: judge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      changed: ${{ steps.compare.outputs.changed }}
+      merge-base: ${{ steps.merge-base.outputs.sha }}
+    steps:
+      # the PR's head: a pull_request run's own checkout is the "Last merge
+      # commit on the GITHUB_REF branch"
+      # (https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request)
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pixtuoid/.github/.github/actions/setup-rust@main
+      - id: merge-base
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: echo "sha=$(git merge-base "origin/$BASE_REF" HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Render the judge batch at the merge-base and at the head
+        env:
+          MERGE_BASE: ${{ steps.merge-base.outputs.sha }}
+        run: |
+          set -euo pipefail
+          git worktree add --detach "$RUNNER_TEMP/base-tree" "$MERGE_BASE"
+          for side in base cand; do
+            if [ "$side" = base ]; then tree="$RUNNER_TEMP/base-tree"; else tree="$GITHUB_WORKSPACE"; fi
+            out="$RUNNER_TEMP/batch/$side"
+            # a dirty tree would render a take no commit names
+            test -z "$(git -C "$tree" status --porcelain)"
+            (cd "$tree" && cargo run --locked --release --example lofi_audition -- --batch judge --out "$out" > /dev/null)
+            test -z "$(git -C "$tree" status --porcelain)"
+            git -C "$tree" rev-parse HEAD > "$out/COMMIT"
+          done
+      # the judge's own validator, so a take on one side only, as a rename
+      # leaves, fails the render instead of reading "no sound change"
+      - name: Validate the rendered batch
+        env:
+          MERGE_BASE: ${{ steps.merge-base.outputs.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -uo pipefail
+          if ! why=$(python3 -I .claude/skills/procedural-lofi/judge/validate_batch.py "$RUNNER_TEMP/batch" \
+            --base "$MERGE_BASE" --cand "$HEAD_SHA" 2>&1); then
+            printf '%s\n' "$why" >> "$GITHUB_STEP_SUMMARY"
+            printf '::error::%s\n' "$why"
+            exit 1
+          fi
+      # a byte-identical pair can only tie, so only the pairs that differ go up
+      - id: compare
+        run: |
+          set -euo pipefail
+          batch="$RUNNER_TEMP/batch" up="$RUNNER_TEMP/ab-batch"
+          mkdir -p "$up/base" "$up/cand"
+          cp "$batch/base/COMMIT" "$up/base/COMMIT"
+          cp "$batch/cand/COMMIT" "$up/cand/COMMIT"
+          pairs=$(find "$batch/base" -name '*.wav' | wc -l | tr -d ' ')
+          differ=0
+          for take in "$batch"/base/*.wav; do
+            name=$(basename "$take")
+            if ! cmp -s "$take" "$batch/cand/$name"; then
+              mv "$take" "$up/base/$name"
+              mv "$batch/cand/$name" "$up/cand/$name"
+              differ=$((differ + 1))
+            fi
+          done
+          echo "$differ of $pairs pairs differ" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$differ" -gt 0 ]; then echo changed=true; else echo changed=false; fi >> "$GITHUB_OUTPUT"
+      # `judge` skips a fork's PR, whose run gets no secret
+      # (https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflows-in-forked-repositories),
+      # so no job would read it
+      - if: steps.compare.outputs.changed == 'true' && github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/upload-artifact@v7
+        with:
+          name: ab-batch
+          path: ${{ runner.temp }}/ab-batch
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+
+  judge:
+    needs: render
+    if: needs.render.outputs.changed == 'true' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      # the base branch's judge, so no file the PR wrote runs where the token is
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .claude/skills/procedural-lofi/judge
+            .claude/skills/procedural-lofi/scripts
+      # before the download, so nothing the PR rendered is on disk yet
+      - name: Install the hash-pinned Modal client
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/modal"
+          "$RUNNER_TEMP/modal/bin/pip" install --quiet --require-hashes --only-binary :all: \
+            -r .claude/skills/procedural-lofi/judge/modal-requirements.txt
+      - uses: actions/download-artifact@v8
+        with:
+          name: ab-batch
+          path: ${{ runner.temp }}/ab-batch
+      - name: Validate the batch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          merge_base=$(gh api "repos/$REPO/compare/$BASE_SHA...$HEAD_SHA" --jq .merge_base_commit.sha)
+          python3 -I .claude/skills/procedural-lofi/judge/validate_batch.py "$RUNNER_TEMP/ab-batch" \
+            --base "$merge_base" --cand "$HEAD_SHA"
+      - name: Judge on Modal
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        # the default shell is "bash -e {0}"
+        # (https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsshell),
+        # so the exit code is caught, not left to end the step
+        run: |
+          set -uo pipefail
+          code=0
+          "$RUNNER_TEMP/modal/bin/modal" run .claude/skills/procedural-lofi/judge/modal_judge.py::judge \
+            --batch "$RUNNER_TEMP/ab-batch" --out "$RUNNER_TEMP/verdict" || code=$?
+          # 1 is REGRESSION or INSUFFICIENT, a score `verdict` reports; anything
+          # higher stopped before one
+          [ "$code" -le 1 ]
+      - id: upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: verdict
+          path: ${{ runner.temp }}/verdict/verdict.json
+          retention-days: 1
+          if-no-files-found: error
+
+  verdict:
+    needs: [render, judge]
+    # not on a run `cancel-in-progress` superseded: cancelling "re-evaluates
+    # if conditions for all currently running jobs", and `always()` keeps a
+    # job running
+    # (https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-cancellation),
+    # which would post "infra failure" over the newer run's score
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # the comment endpoints are listed under Pull requests as well as Issues
+    # (https://docs.github.com/en/rest/authentication/permissions-required-for-github-apps),
+    # and on a PR `issues: write` alone is refused. The token posts only the
+    # comment this job builds: it runs no PR code and checks nothing out,
+    # takes the outcome from a fixed list, and passes the body by file
+    permissions:
+      pull-requests: write
+    steps:
+      - if: needs.judge.result == 'success'
+        uses: actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ needs.judge.outputs.artifact-id }}
+          path: ${{ runner.temp }}/verdict
+      - name: Post the score
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          JUDGE_AT: ${{ github.event.pull_request.base.sha }}
+          MERGE_BASE: ${{ needs.render.outputs.merge-base }}
+          RENDER: ${{ needs.render.result }}
+          CHANGED: ${{ needs.render.outputs.changed }}
+          JUDGE: ${{ needs.judge.result }}
+          SAME_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+        run: |
+          set -euo pipefail
+          verdict="$RUNNER_TEMP/verdict/verdict.json"
+          table=""
+          # an output of the job that ran the PR's code
+          [[ "$MERGE_BASE" =~ ^[0-9a-f]{40}$ ]] || MERGE_BASE=unknown
+          if [ "$SAME_REPO" != true ]; then
+            outcome="fork PR: no score"
+          elif [ "$RENDER" != success ]; then
+            outcome="infra failure"
+          elif [ "$CHANGED" = false ]; then
+            outcome="no sound change"
+          elif [ "$JUDGE" != success ] || [ ! -f "$verdict" ]; then
+            outcome="infra failure"
+          else
+            # the record is the PR's render scored, so only the known outcomes
+            # are taken from it, and the table loses every backtick, which
+            # could close its fence
+            got=$(jq -r .outcome "$verdict")
+            case "$got" in
+              PASS | REGRESSION | INSUFFICIENT | UNCHANGED)
+                outcome="$got"
+                table=$(jq -r '.table // ""' "$verdict" | tr -d '`')
+                ;;
+              *) outcome="infra failure" ;;
+            esac
+          fi
+          body="$RUNNER_TEMP/comment.md"
+          {
+            echo "<!-- lofi-judge -->"
+            echo "**lofi judge: $outcome**"
+            echo
+            echo "head \`$HEAD_SHA\` · merge-base \`$MERGE_BASE\` · judge at \`$JUDGE_AT\`"
+            if [ -n "$table" ]; then
+              echo
+              echo "<details><summary>scores</summary>"
+              echo
+              echo '```'
+              echo "$table"
+              echo '```'
+              echo "</details>"
+            fi
+            echo
+            echo "Unscored: no take renders a song seam or a mid-song control ramp."
+          } > "$body"
+          cat "$body" >> "$GITHUB_STEP_SUMMARY"
+          # "The GITHUB_TOKEN has read-only permissions in pull requests from
+          # forked repositories" (the events reference above), so a fork's
+          # notice is the summary alone
+          if [ "$SAME_REPO" = true ]; then
+            ids=$(gh api --paginate "repos/$REPO/issues/$PR/comments" \
+              --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | contains("<!-- lofi-judge -->"))) | .id')
+            comment=$(printf '%s\n' "$ids" | sed -n 1p)
+            if [ -n "$comment" ]; then
+              gh api --method PATCH "repos/$REPO/issues/comments/$comment" -F "body=@$body" > /dev/null
+            else
+              gh api --method POST "repos/$REPO/issues/$PR/comments" -F "body=@$body" > /dev/null
+            fi
+          fi
+          case "$outcome" in
+            REGRESSION | INSUFFICIENT | "infra failure") exit 1 ;;
+          esac
