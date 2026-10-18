@@ -11,7 +11,7 @@
 //!   cargo run --release --example lofi_audition -- \
 //!     [--engine whole|stream] [--mood day|night] [--seeds N] [--start S] [--out DIR] \
 //!     [--tier empty|moderate|busy | --solo pad|sparkle|keys|drums|texture|bass] \
-//!     [--sweep intensity|dusk|twilight] [--songs N] [--batch judge] [--shuffle KEYFILE]
+//!     [--sweep intensity|dusk|twilight|rain] [--songs N] [--batch judge] [--shuffle KEYFILE]
 //!   `--solo` renders a lane whole, so it takes `--engine whole`. `--batch judge`
 //!   renders what `ab_judge.py` scores in place of the mood, tier and seeds.
 

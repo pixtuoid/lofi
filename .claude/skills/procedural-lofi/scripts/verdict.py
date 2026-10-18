@@ -13,7 +13,7 @@ JUDGES = ("audiobox_ce", "muq_eval_mi", "fad")
 
 # the groups the judge batch holds, a take's first name: `examples/common/batch.rs`'s
 # `MOODS`, then its `JUDGE_SWEEPS`
-GROUPS = ("day", "night", "twilight")
+GROUPS = ("day", "night", "twilight", "rain")
 
 # from worst: a group's verdict, and the batch's
 RANKS = ("REGRESSION", "INSUFFICIENT", "PASS", "UNCHANGED")

@@ -23,10 +23,17 @@ impl Tilt {
     }
 
     pub(crate) fn process(&mut self, buf: &mut [f64]) {
+        let lift = self.lift;
+        self.process_lifted(buf, |_| lift);
+    }
+
+    /// [`process`](Self::process) with the lift on `buf[i]` at `lift(i)`: the
+    /// lift is memoryless, so it may move per sample.
+    pub(crate) fn process_lifted(&mut self, buf: &mut [f64], lift: impl Fn(usize) -> f64) {
         let mut lp = self.lp;
-        for x in buf {
+        for (i, x) in buf.iter_mut().enumerate() {
             lp = super::flush(self.pole * lp + (1.0 - self.pole) * *x);
-            *x += self.lift * (*x - lp);
+            *x += lift(i) * (*x - lp);
         }
         self.lp = lp;
     }

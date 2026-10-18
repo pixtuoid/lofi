@@ -11,8 +11,10 @@ use super::biquad::{Cascade, butter_lowpass, cookbook_bandpass};
 use super::delay::DelayLine;
 use super::hiss::Hiss;
 use super::onepole::Tilt;
+use super::rain;
 use super::ramp::{Ramp, Shape};
 use super::schedule::BLOCK;
+use crate::Controls;
 use crate::compose::Mood;
 use crate::dsp::NoiseStream;
 use crate::synth::{
@@ -74,21 +76,22 @@ pub(crate) enum Chain {
 impl Chain {
     /// `lane`'s chain in a `mood` song `len` frames long at `sr`, picked by
     /// its `part` as `render_lane` picks its whole-lane core, its colour
-    /// graded to `daylight`; the texture ducks under each onset in `kicks`.
+    /// graded to the daylight and darkened by the rain `controls` start at;
+    /// the texture ducks under each onset in `kicks`.
     pub(crate) fn new(
         mood: Mood,
         lane: Lane,
         part: &Part<'_>,
         len: usize,
         kicks: &[usize],
-        daylight: f32,
+        controls: Controls,
         sr: u32,
     ) -> Self {
         let gains = staging(mood, lane);
         let [(night0, night1, _), (day0, day1, _)] =
             [Mood::Night, Mood::Day].map(|mood| lane_recipe(mood, lane));
-        let t = f64::from(daylight);
-        match part {
+        let t = f64::from(controls.daylight);
+        let mut chain = match part {
             Part::Chords { .. } => {
                 let pad = PadTone::of(mood);
                 Self::Tape(Tape::new(pad.cutoff_hz, Some(pad), DRIVE, gains, sr))
@@ -102,6 +105,35 @@ impl Chain {
                 Self::Tape(Tape::graded(grade, gains, sr))
             }
             Part::Bed => Self::Room(Room::new(len, kicks, gains, sr)),
+        };
+        if let Self::Tape(tape) = &mut chain
+            && rain::darkens(lane)
+        {
+            tape.rain = Some(Ramp::held(f64::from(controls.rain), Shape::Linear));
+        }
+        chain
+    }
+
+    /// Darkens the lane from frame `at` toward `rain` over `over` frames, if
+    /// rain darkens it.
+    pub(crate) fn rain(&mut self, at: usize, rain: f64, over: usize) {
+        if let Self::Tape(Tape {
+            rain: Some(ramp), ..
+        }) = self
+        {
+            ramp.toward(at, rain, over);
+        }
+    }
+
+    /// Holds the lane's colour where it is on frame `at`, the song's end.
+    pub(crate) fn freeze(&mut self, at: usize) {
+        if let Self::Tape(tape) = self {
+            if let Some(grade) = &mut tape.grade {
+                grade.clock.t.hold(at);
+            }
+            if let Some(ramp) = &mut tape.rain {
+                ramp.hold(at);
+            }
         }
     }
 
@@ -113,6 +145,17 @@ impl Chain {
         }) = self
         {
             grade.clock.t.toward(at, f64::from(daylight), over);
+        }
+    }
+
+    /// The frame the lane's rain holds from, if rain darkens it.
+    #[cfg(test)]
+    pub(crate) fn rained_until(&self) -> Option<usize> {
+        match self {
+            Self::Tape(Tape {
+                rain: Some(ramp), ..
+            }) => Some(ramp.end()),
+            _ => None,
         }
     }
 
@@ -251,6 +294,8 @@ pub(crate) struct Tape {
     tone: Cascade,
     /// How its corner and drive grade with the daylight, if they do.
     grade: Option<Grade>,
+    /// The rain that darkens its tilt, if rain does.
+    rain: Option<Ramp>,
     /// The pad's slow swell.
     pad: Option<PadTone>,
     gains: [f64; 2],
@@ -284,6 +329,7 @@ impl Tape {
         Self {
             tone: butter_lowpass(cutoff_hz, ORDER, sr),
             grade: None,
+            rain: None,
             pad,
             gains,
             warp: DelayLine::new(2.0 * reach),
@@ -348,7 +394,17 @@ impl Tape {
             *x += f64::from(HEAD_BUMP_MIX) * b;
         }
         self.rolloff.process(buf);
-        self.tilt.process(buf);
+        match self.rain {
+            Some(rain) if rain.end() > from => {
+                self.tilt
+                    .process_lifted(buf, |i| rain::lift(rain.at(from + i)));
+            }
+            Some(rain) => {
+                let lift = rain::lift(rain.to());
+                self.tilt.process_lifted(buf, |_| lift);
+            }
+            None => self.tilt.process(buf),
+        }
         for x in buf.iter_mut() {
             *x *= gain_out;
         }
@@ -540,7 +596,7 @@ mod tests {
                 &part,
                 drums.len(),
                 &[],
-                controls(mood).daylight,
+                controls(mood),
                 sr,
             );
             chain.process(&mut drums, &mut NoiseStream::new(0));
@@ -555,6 +611,11 @@ mod tests {
 
     /// `lane`'s tape in a `mood` song at `daylight`, a minute long.
     fn graded_tape(mood: Mood, lane: Lane, daylight: f32) -> Tape {
+        tape(mood, lane, Controls::default().with_daylight(daylight))
+    }
+
+    /// `lane`'s tape in a `mood` song under `controls`, a minute long.
+    fn tape(mood: Mood, lane: Lane, controls: Controls) -> Tape {
         let score = crate::compose::compose(mood, 0);
         let len = samples_at(60.0, SAMPLE_RATE);
         match Chain::new(
@@ -563,12 +624,82 @@ mod tests {
             &part(&score, lane),
             len,
             &[],
-            daylight,
+            controls,
             SAMPLE_RATE,
         ) {
             Chain::Tape(tape) => tape,
             Chain::Room(_) => panic!("{lane:?} plays through a room"),
         }
+    }
+
+    #[test]
+    fn rain_darkens_the_sparkle_keys_and_drums_top_and_leaves_the_rest() {
+        let n = samples_at(2.0, SAMPLE_RATE);
+        let mut rng = NoiseStream::new(21);
+        let noise: Vec<f64> = (0..n).map(|_| f64::from(rng.norm()) * 0.3).collect();
+        for lane in [
+            Lane::Pad,
+            Lane::Sparkle,
+            Lane::Keys,
+            Lane::Drums,
+            Lane::Bass,
+        ] {
+            let [dry, wet] = [0.0, 1.0].map(|rain| {
+                let mut tape = tape(Mood::Day, lane, Controls::default().with_rain(rain));
+                let mut buf = noise.clone();
+                tape.process(&mut buf);
+                buf.iter().map(|&v| v as f32).collect::<Vec<f32>>()
+            });
+            if !rain::DARKENED.contains(&lane) {
+                assert_eq!(dry, wet, "rain tilts {lane:?}");
+                continue;
+            }
+            // a ratio, as the tape's own tilt row reads its lift
+            let top = |b: &[f32]| {
+                band_energy_share(b, 2000.0, 4000.0) / band_energy_share(b, 300.0, 500.0)
+            };
+            let drop = 10.0 * (top(&wet) / top(&dry)).log10();
+            assert!(
+                drop < -3.0,
+                "rain darkens {lane:?}'s top by only {drop:.2} dB"
+            );
+        }
+    }
+
+    #[test]
+    fn a_rain_ramp_darkens_the_tilt_a_sample_at_a_time() {
+        let n = samples_at(1.0, SAMPLE_RATE);
+        let mut rng = NoiseStream::new(8);
+        let noise: Vec<f64> = (0..n).map(|_| f64::from(rng.norm()) * 0.3).collect();
+        let latch = n / 2;
+        let play = |rain: f64, ramp: bool| {
+            let mut tape = tape(
+                Mood::Day,
+                Lane::Drums,
+                Controls::default().with_rain(rain as f32),
+            );
+            if ramp && let Some(r) = &mut tape.rain {
+                r.toward(latch, 1.0, samples_at(4.0, SAMPLE_RATE));
+            }
+            let mut buf = noise.clone();
+            tape.process(&mut buf);
+            buf
+        };
+        let [dry, wet, ramped] = [play(0.0, false), play(1.0, false), play(0.0, true)];
+        assert_eq!(
+            &ramped[..latch],
+            &dry[..latch],
+            "the ramp moved before its latch"
+        );
+        let off = |window: Range<usize>, b: &[f64]| -> f64 {
+            window.map(|i| (ramped[i] - b[i]).powi(2)).sum()
+        };
+        // a tenth of the way in, it has left dry but sits far nearer it
+        let early = latch + samples_at(0.4, SAMPLE_RATE);
+        let window = early..early + samples_at(0.01, SAMPLE_RATE);
+        let (from_dry, from_wet) = (off(window.clone(), &dry), off(window, &wet));
+        assert!(from_dry > 0.0, "the tilt never moved off dry");
+        assert!(from_dry < from_wet, "the tilt jumped toward its target");
     }
 
     /// The lanes whose colour grades with the daylight.
@@ -620,7 +751,7 @@ mod tests {
                 &part(&score, lane),
                 1,
                 &[],
-                0.5,
+                Controls::default().with_daylight(0.5),
                 SAMPLE_RATE,
             );
             assert!(

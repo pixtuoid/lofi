@@ -262,7 +262,7 @@ jobs:
             unscored "New" "$new"
             unscored "Gone" "$gone"
             echo
-            echo "Unscored: no take renders a song seam, a mid-song control change or rain."
+            echo "Unscored: no take renders a song seam or a mid-song daylight or intensity change."
           } > "$body"
           cat "$body" >> "$GITHUB_STEP_SUMMARY"
           # "The GITHUB_TOKEN has read-only permissions in pull requests from

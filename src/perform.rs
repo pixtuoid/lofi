@@ -19,6 +19,9 @@ pub struct Controls {
     pub daylight: f32,
     /// 0 = an empty room … 1 = a busy one.
     pub intensity: f32,
+    /// 0 = dry … 1 = raining: the playing song darkens and softens, its
+    /// tempo, key, harmony and melody kept. lofi plays no rain itself.
+    pub rain: f32,
 }
 
 impl Default for Controls {
@@ -28,6 +31,7 @@ impl Default for Controls {
         Self {
             daylight: 1.0,
             intensity: moderate,
+            rain: 0.0,
         }
     }
 }
@@ -45,6 +49,12 @@ impl Controls {
         Self { intensity, ..self }
     }
 
+    /// These controls with `rain` replaced.
+    #[must_use]
+    pub const fn with_rain(self, rain: f32) -> Self {
+        Self { rain, ..self }
+    }
+
     fn clamped(self) -> Self {
         let default = Self::default();
         let unit = |v: f32, default: f32| {
@@ -57,6 +67,7 @@ impl Controls {
         Self {
             daylight: unit(self.daylight, default.daylight),
             intensity: unit(self.intensity, default.intensity),
+            rain: unit(self.rain, default.rain),
         }
     }
 }
@@ -448,7 +459,12 @@ mod tests {
     fn render_plays_the_same_frames_however_the_calls_chunk_them() {
         let seed = 3;
         let busy = Controls::default().with_intensity(1.0);
-        let order = [Controls::default(), night(), busy];
+        // rain asked mid-song, so its phrase-long ramps cross a seam
+        let order = [
+            Controls::default(),
+            night().with_rain(1.0),
+            busy.with_rain(0.5),
+        ];
         let lens = [0, 1, 2].map(|k| audition::song_len(seed, k, order[k as usize]));
         let bounds = [lens[0], lens[0] + lens[1]];
         // each song asks for the next one's controls halfway through
@@ -637,25 +653,31 @@ mod tests {
         let wild = Controls {
             daylight: f32::NAN,
             intensity: 7.0,
+            rain: f32::NAN,
         };
         assert_eq!(
             wild.clamped(),
             Controls {
                 daylight: 1.0,
                 intensity: 1.0,
+                rain: 0.0,
             }
         );
         let wild = Controls {
             daylight: -0.5,
             intensity: f32::NAN,
+            rain: 3.0,
         };
         assert_eq!(
             wild.clamped(),
             Controls {
                 daylight: 0.0,
                 intensity: 0.5,
+                rain: 1.0,
             }
         );
+        assert_eq!(Controls::default().rain, 0.0, "the default rains");
+        assert_eq!(Controls::default().with_rain(0.3).rain, 0.3);
     }
 
     #[test]
@@ -764,9 +786,9 @@ mod tests {
         let anticipation = crate::synth::samples_at(ANTICIPATION_S, SAMPLE_RATE);
         let boundary = audition::song_len(seed, 0, c);
         // asked at song 0's last latch, so its last bar plays `into` and song
-        // 1 starts under it
+        // 1 starts under it, while song 0's phrase of rain still ramps
         let last = k0[k0.len() - 1] - anticipation;
-        let into = night().with_intensity(0.2);
+        let into = night().with_intensity(0.2).with_rain(1.0);
         let mut playing = Performance::new(seed, c);
         next(&mut playing, last);
         playing.set_controls(into);
@@ -775,6 +797,7 @@ mod tests {
         let calls = [
             (k1[3], into.with_intensity(1.0)),
             (k1[9], c.with_daylight(0.3)),
+            (k1[12], c.with_rain(0.4)),
         ];
         let mut reached = Vec::new();
         for &(at, controls) in &calls {
@@ -818,7 +841,8 @@ mod tests {
                                 p.set_controls(
                                     Controls::default()
                                         .with_daylight(rng.unit())
-                                        .with_intensity(rng.unit()),
+                                        .with_intensity(rng.unit())
+                                        .with_rain(rng.unit()),
                                 );
                                 next_call += 1 + (rng.unit() * 4.0 * SAMPLE_RATE as f32) as usize;
                             }

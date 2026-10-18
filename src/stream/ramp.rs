@@ -46,8 +46,13 @@ impl Ramp {
         }
     }
 
-    /// Ramps from the value on frame `n` to `to` over `len` frames.
+    /// Ramps from the value on frame `n` to `to` over `len` frames; one
+    /// already headed for `to` keeps its course, so a latch asking for
+    /// nothing new starts no ramp and a ramp longer than a bar still lands.
     pub(crate) fn toward(&mut self, n: usize, to: f64, len: usize) {
+        if self.to == to {
+            return;
+        }
         self.from = self.at(n);
         self.to = to;
         self.start = n;
@@ -98,6 +103,21 @@ mod tests {
         let db: Vec<f64> = (0..=4).map(|n| 20.0 * ramp.at(n).log10()).collect();
         for step in db.windows(2) {
             assert!((step[1] - step[0] - 5.0).abs() < 1e-9, "{db:?}");
+        }
+    }
+
+    #[test]
+    fn a_ramp_asked_for_its_own_target_keeps_its_course() {
+        for shape in [Shape::Linear, Shape::Db] {
+            let mut ramp = Ramp::held(0.35, shape);
+            ramp.toward(100, 0.6, 1000);
+            ramp.toward(600, 0.6, 1000);
+            assert_eq!(ramp.end(), 1100, "{shape:?} restarted in flight");
+            ramp.toward(5000, 0.6, 1000);
+            assert_eq!(ramp.end(), 1100, "{shape:?} restarted settled");
+            // asked elsewhere, it moves
+            ramp.toward(6000, 0.2, 10);
+            assert_eq!(ramp.end(), 6010, "{shape:?}");
         }
     }
 
