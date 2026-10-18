@@ -39,6 +39,11 @@ const MEAN_RTF: f64 = 0.05;
 /// The seeds the slowest chunk is sought over.
 const SEEDS: Range<u64> = 0..3;
 
+/// The daylight the timeline's day song grades to: halfway from
+/// [`audition::DUSK`] to full day, so the song grades within the day family
+/// rather than past it.
+const MID_SONG_DAYLIGHT: f32 = f32::midpoint(audition::DUSK, 1.0);
+
 /// How long each room plays, in seconds, to the end of its last song.
 /// The mean settles within minutes, and this spans many song transitions.
 const ROOM_S: u32 = 20 * 60;
@@ -94,13 +99,14 @@ fn slowest_chunk(buf: &mut [Frame]) -> Result<(f64, u64, u64), String> {
     let mut worst = (0.0, SEEDS.start, 0);
     for seed in SEEDS {
         let span = audition::song_len(seed, 0, day) + audition::song_len(seed, 1, night);
-        // each mid-bar, so it latches at the next bar line; the night is
-        // asked for in song 0's last bar, which latches it at song 1's first
+        // each mid-bar, so it latches at the next bar line: the night is asked
+        // for in song 0's second-to-last bar, so its last bar grades toward
+        // night and song 1 starts a night song
         let bars = audition::bar_frames(seed, 0, day);
         let mid = |bar: usize| bars[bar].midpoint(bars[bar + 1]);
         let calls = [
             (mid(8), day.with_intensity(TIER_INTENSITIES[0])),
-            (mid(16), day.with_daylight(0.6)),
+            (mid(16), day.with_daylight(MID_SONG_DAYLIGHT)),
             (mid(bars.len() - 2), night),
         ];
         let mut calls = calls.iter().peekable();
