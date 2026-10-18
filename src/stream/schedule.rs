@@ -195,8 +195,8 @@ struct Song {
     grade_ramp: usize,
     /// Whether each lane plays the notes struck in the latched bar.
     present: [bool; LANES],
-    /// Each lane's gain into the mix. Its last bar is longer than a level's
-    /// ramp, so its tails ring on at the level it ended on.
+    /// Each lane's gain into the mix, whose ramps all end within the song,
+    /// so its tails ring on at the level it ended on.
     levels: [Ramp; LANES],
 }
 
@@ -638,6 +638,27 @@ mod tests {
             .map(|lane| (![Lane::Pad, Lane::Texture].contains(lane)).then_some(latch + bar))
             .collect();
         assert_eq!(ends, want);
+    }
+
+    #[test]
+    fn the_last_bars_grade_and_level_ramps_end_within_the_song() {
+        for seed in 0..8 {
+            for start in [Controls::default(), Controls::default().with_daylight(0.0)] {
+                let bars = bar_frames(seed, 0, start);
+                let last = bars[bars.len() - 1] - samples_at(ANTICIPATION_S, SAMPLE_RATE);
+                let into = start.with_daylight(0.4).with_intensity(1.0);
+                let (run, _) = latched(seed, start, &[(last, into)], last + 1);
+                let song = run.song.as_ref().expect("a song plays");
+                let ends = song.chains.iter().filter_map(Chain::graded_until);
+                let ends = ends.chain(song.levels.iter().map(Ramp::end));
+                assert!(
+                    ends.clone().all(|end| end <= song.len),
+                    "seed {seed} from {start:?}: ramps end at {:?}, past {}",
+                    ends.collect::<Vec<_>>(),
+                    song.len
+                );
+            }
+        }
     }
 
     #[test]

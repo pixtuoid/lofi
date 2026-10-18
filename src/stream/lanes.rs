@@ -94,11 +94,11 @@ impl Chain {
                 Self::Tape(Tape::new(pad.cutoff_hz, Some(pad), DRIVE, gains, sr))
             }
             Part::Notes { .. } => {
-                let grade = Grade::new([night1, day1], [DRIVE, DRIVE], t, len);
+                let grade = Grade::new([night1, day1], [DRIVE, DRIVE], t);
                 Self::Tape(Tape::graded(grade, gains, sr))
             }
             Part::Hits(_) => {
-                let grade = Grade::new([night0, day0], [night1, day1], t, len);
+                let grade = Grade::new([night0, day0], [night1, day1], t);
                 Self::Tape(Tape::graded(grade, gains, sr))
             }
             Part::Bed => Self::Room(Room::new(len, kicks, gains, sr)),
@@ -171,15 +171,12 @@ pub(crate) struct Grade {
 struct GradeClock {
     /// The daylight, ramping from each latch.
     t: Ramp,
-    /// The song's length, past which the grade holds its value there.
-    len: usize,
 }
 
 impl GradeClock {
     /// The daylight frame `n` plays at: the ramp's at the start of `n`'s
     /// coefficient block, or its target exactly from its end on.
     fn at(&self, n: usize) -> f64 {
-        let n = n.min(self.len);
         if n >= self.t.end() {
             self.t.to()
         } else {
@@ -190,7 +187,7 @@ impl GradeClock {
     /// The frame after `n` from which [`at`](Self::at) may differ, or `None`
     /// once it holds.
     fn next_change(&self, n: usize) -> Option<usize> {
-        let end = self.t.end().min(self.len);
+        let end = self.t.end();
         (n < end).then(|| (n - n % COEFF_BLOCK + COEFF_BLOCK).min(end))
     }
 
@@ -213,13 +210,12 @@ impl GradeClock {
 }
 
 impl Grade {
-    fn new(corners_hz: [f32; 2], drives: [f32; 2], daylight: f64, len: usize) -> Self {
+    fn new(corners_hz: [f32; 2], drives: [f32; 2], daylight: f64) -> Self {
         Self {
             corners_hz,
             drives,
             clock: GradeClock {
                 t: Ramp::held(daylight, Shape::Linear),
-                len,
             },
             tuned: daylight,
         }
@@ -656,21 +652,6 @@ mod tests {
         assert_eq!(grade.clock.at(latch + over), 1.0);
         assert_eq!(grade.tuned, 1.0, "no recompute at the ramp's end");
         assert_eq!(tape.drive, recipe(Mood::Day, Lane::Drums).1);
-    }
-
-    #[test]
-    fn a_grade_ramping_past_the_songs_end_holds_its_value_there() {
-        let len = samples_at(60.0, SAMPLE_RATE);
-        let mut tape = graded_tape(Mood::Day, Lane::Keys, 1.0);
-        let grade = tape.grade.as_mut().expect("the lane grades");
-        grade.clock.t.toward(len - 100, 0.0, 10_000);
-        let at_end = grade.clock.at(len);
-        assert!(at_end > 0.0 && at_end < 1.0);
-        assert!(
-            [len + 1, len + 5000, len + 100_000]
-                .iter()
-                .all(|&n| grade.clock.at(n) == at_end)
-        );
     }
 
     #[test]
