@@ -56,7 +56,7 @@ FETCH_TIMEOUT_S = 120
 # commit that set them records; the timeout is twice the slowest batch
 CPU = 2.0
 MEMORY_MIB = 12288
-JUDGE_TIMEOUT_S = 1800
+JUDGE_TIMEOUT_S = 3600
 
 # the warm-up pair `build` judges: a take at lofi's own rate (`SAMPLE_RATE`
 # in src/dsp.rs), the one a batch's takes arrive at

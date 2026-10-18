@@ -113,7 +113,7 @@ jobs:
     needs: render
     if: needs.render.outputs.changed == 'true' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 70
     permissions:
       contents: read
     outputs:
