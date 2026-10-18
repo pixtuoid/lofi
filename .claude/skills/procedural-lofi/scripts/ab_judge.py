@@ -94,7 +94,8 @@ from verdict import JUDGES, exit_message, judged
 # its model code is no package
 MUQ_EVAL = Path(sys.prefix) / "MuQ-Eval"
 MUQ_EVAL_COMMIT = "60a88f8ac0909ca1fd1a78af3660f1fc376977a1"
-# a detached checkout's HEAD holds its commit
+# a detached checkout's HEAD holds its commit: "HEAD can also record a
+# specific commit directly" (https://git-scm.com/docs/gitrepository-layout)
 head = MUQ_EVAL / ".git" / "HEAD"
 if not head.is_file() or head.read_text().strip() != MUQ_EVAL_COMMIT:
     sys.exit(f"{MUQ_EVAL} isn't a MuQ-Eval checkout at {MUQ_EVAL_COMMIT}")

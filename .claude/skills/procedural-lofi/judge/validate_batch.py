@@ -45,7 +45,8 @@ def check_wav(path):
         if at + 8 > len(raw):
             raise Invalid(f"{path.parent.name}/{path.name} ends inside a chunk header")
         tag, size = raw[at : at + 4], struct.unpack_from("<I", raw, at + 4)[0]
-        # RIFF pads an odd chunk to a whole word
+        # a "Padding byte if n is odd" follows an odd chunk
+        # (https://www.mmsp.ece.mcgill.ca/Documents/AudioFormats/WAVE/WAVE.html)
         end = at + 8 + size + size % 2
         if end > len(raw):
             raise Invalid(f"{path.parent.name}/{path.name}'s {tag!r} chunk runs past the file")
