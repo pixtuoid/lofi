@@ -57,6 +57,20 @@ jobs:
             test -z "$(git -C "$tree" status --porcelain)"
             git -C "$tree" rev-parse HEAD > "$out/COMMIT"
           done
+      # the judge's own validator, so a take on one side only, as a rename
+      # leaves, fails the render instead of reading "no sound change"
+      - name: Validate the rendered batch
+        env:
+          MERGE_BASE: ${{ steps.merge-base.outputs.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -uo pipefail
+          if ! why=$(python3 -I .claude/skills/procedural-lofi/judge/validate_batch.py "$RUNNER_TEMP/batch" \
+            --base "$MERGE_BASE" --cand "$HEAD_SHA" 2>&1); then
+            printf '%s\n' "$why" >> "$GITHUB_STEP_SUMMARY"
+            printf '::error::%s\n' "$why"
+            exit 1
+          fi
       # a byte-identical pair can only tie, so only the pairs that differ go up
       - id: compare
         run: |
@@ -69,7 +83,7 @@ jobs:
           differ=0
           for take in "$batch"/base/*.wav; do
             name=$(basename "$take")
-            if [ -f "$batch/cand/$name" ] && ! cmp -s "$take" "$batch/cand/$name"; then
+            if ! cmp -s "$take" "$batch/cand/$name"; then
               mv "$take" "$up/base/$name"
               mv "$batch/cand/$name" "$up/cand/$name"
               differ=$((differ + 1))
@@ -154,7 +168,12 @@ jobs:
 
   verdict:
     needs: [render, judge]
-    if: always()
+    # not on a run `cancel-in-progress` superseded: cancelling "re-evaluates
+    # if conditions for all currently running jobs", and `always()` keeps a
+    # job running
+    # (https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-cancellation),
+    # which would post "infra failure" over the newer run's score
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     # the comment endpoints are listed under Pull requests as well as Issues

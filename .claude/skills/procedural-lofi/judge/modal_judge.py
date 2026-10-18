@@ -247,6 +247,7 @@ def judge(batch: str, out: str = "", force_score: bool = False):
                 }
             ).remote(score_identical=force_score)
         print(result.get("table", result.get("message")))
+        print(f"\nverdict: {result['outcome']}")
         print(f"\nwall {result['wall_s']:.0f} s, judge CPU {result['cpu_s']:.0f} s, peak RSS {result['peak_rss_mib']:.0f} MiB")
     else:
         result = {"outcome": "UNCHANGED"}
