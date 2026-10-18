@@ -364,7 +364,15 @@ mod tests {
             .takes()
             .expect("the takes' names are distinct");
         for take in &takes {
-            let (group, mix) = (take.run.mood_name(), take.run.mix_name());
+            // the group, apart from `mood_name`, since `ab_judge.py` groups by it
+            let group = match take.run.sweep {
+                Some(sweep) => sweep.name(),
+                None => take.run.mood_name(),
+            };
+            let mix = match take.run.sweep {
+                Some(_) => take.run.mix_name(),
+                None => take.run.tier().name(),
+            };
             assert_eq!(take.name, format!("gen_{group}_{mix}_{:03}.wav", take.seed));
         }
         assert!(

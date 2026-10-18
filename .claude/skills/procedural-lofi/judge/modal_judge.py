@@ -229,7 +229,7 @@ def judge(batch: str, out: str = "", force_score: bool = False):
     identical ones tie."""
     root = Path(batch)
     try:
-        pairs, differ = select(root, force_score)
+        takes, differ = select(root, force_score)
     except Invalid as e:
         raise SystemExit(f"invalid batch: {e}") from None
     if differ:
@@ -251,8 +251,12 @@ def judge(batch: str, out: str = "", force_score: bool = False):
         print(f"\nwall {result['wall_s']:.0f} s, judge CPU {result['cpu_s']:.0f} s, peak RSS {result['peak_rss_mib']:.0f} MiB")
     else:
         result = {"outcome": "UNCHANGED"}
-        print(f"verdict: UNCHANGED, all {pairs} pairs byte-identical; nothing was sent or scored")
-    result["identical_not_sent"] = pairs - len(differ)
+        print(f"verdict: UNCHANGED, all {len(takes.paired)} pairs byte-identical; nothing was sent or scored")
+    result["identical_not_sent"] = len(takes.paired) - len(differ)
+    for side in ("new", "gone"):
+        result[side] = getattr(takes, side)
+        if result[side]:
+            print(f"{side} at cand, unscored: {' '.join(result[side])}")
     if out:
         Path(out).mkdir(parents=True, exist_ok=True)
         (Path(out) / "verdict.json").write_text(json.dumps(result, indent=1) + "\n")
