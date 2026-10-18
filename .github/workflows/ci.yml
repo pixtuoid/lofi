@@ -41,6 +41,8 @@ jobs:
         run: python3 -I .claude/skills/procedural-lofi/scripts/test_verdict.py
       - name: the remote judge's batch validator holds its tests
         run: python3 -I .claude/skills/procedural-lofi/judge/test_validate_batch.py
+      - name: the remote judge's local logic holds its tests
+        run: python3 -I .claude/skills/procedural-lofi/judge/test_judge_local.py
 
   test:
     strategy:

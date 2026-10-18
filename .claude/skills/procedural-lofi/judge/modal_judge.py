@@ -28,10 +28,16 @@ from pathlib import Path
 
 import modal
 
-# where the image keeps ab_judge.py and the scripts it imports
-REMOTE_SCRIPTS = "/root/scripts"
-SCRIPTS = Path(__file__).resolve().parent.parent / "scripts" if modal.is_local() else Path(REMOTE_SCRIPTS)
+# where the image keeps ab_judge.py and the scripts it imports, and this
+# directory beside them, so judge_local's validate_batch finds ab_listen
+REMOTE_SCRIPTS, REMOTE_JUDGE = "/root/scripts", "/root/judge"
+HERE = Path(__file__).resolve().parent
+SCRIPTS = HERE.parent / "scripts" if modal.is_local() else Path(REMOTE_SCRIPTS)
+JUDGE = HERE if modal.is_local() else Path(REMOTE_JUDGE)
 MODELS, REFS, BATCH = "/models", "/refs", "/batch"
+sys.path.insert(0, str(JUDGE))
+from judge_local import exit_code, redact, select
+from validate_batch import Invalid
 
 # the uv the image installs with, the release judge-requirements.txt was
 # compiled by
@@ -76,6 +82,7 @@ image = (
     )
     .env({"HF_HOME": MODELS})
     .add_local_dir(SCRIPTS, REMOTE_SCRIPTS, ignore=["**/__pycache__"])
+    .add_local_dir(JUDGE, REMOTE_JUDGE, ignore=["**/__pycache__"])
 )
 app = modal.App("lofi-judge", image=image)
 models = modal.Volume.from_name("lofi-judge-models", create_if_missing=True)
@@ -88,14 +95,6 @@ def tracks():
 
 def sha256(data):
     return hashlib.sha256(data).hexdigest()
-
-
-def redact(text, tracks):
-    """`text` with every reference's file name, and its stem, replaced by its
-    manifest index."""
-    for i, t in sorted(enumerate(tracks), key=lambda it: -len(it[1]["file"])):
-        text = text.replace(t["file"], f"ref#{i}").replace(Path(t["file"]).stem, f"ref#{i}")
-    return text
 
 
 def fetch(url):
@@ -220,12 +219,14 @@ def provision():
 def judge(batch: str, out: str = "", force_score: bool = False):
     """Judges `batch`'s base/ and cand/ through a Volume that lives as long
     as the run, prints the table, and writes the result to `out`. Only the
-    pairs that differ go up, since a byte-identical pair can only tie, so a
-    batch of none makes no remote call; `force_score` sends and scores every
-    pair, the proof that identical ones tie."""
+    pairs `judge_local.select` picks go up, so a batch with none makes no
+    remote call; `force_score` sends and scores every pair, the proof that
+    identical ones tie."""
     root = Path(batch)
-    names = sorted({p.name for p in (root / "base").glob("*.wav")} & {p.name for p in (root / "cand").glob("*.wav")})
-    differ = [n for n in names if force_score or (root / "base" / n).read_bytes() != (root / "cand" / n).read_bytes()]
+    try:
+        pairs, differ = select(root, force_score)
+    except Invalid as e:
+        raise SystemExit(f"invalid batch: {e}") from None
     if differ:
         with modal.Volume.ephemeral() as vol:
             with vol.batch_upload() as upload:
@@ -244,12 +245,12 @@ def judge(batch: str, out: str = "", force_score: bool = False):
         print(f"\nwall {result['wall_s']:.0f} s, judge CPU {result['cpu_s']:.0f} s, peak RSS {result['peak_rss_mib']:.0f} MiB")
     else:
         result = {"outcome": "UNCHANGED"}
-        print(f"verdict: UNCHANGED, all {len(names)} pairs byte-identical; nothing was sent or scored")
-    result["identical_not_sent"] = len(names) - len(differ)
+        print(f"verdict: UNCHANGED, all {pairs} pairs byte-identical; nothing was sent or scored")
+    result["identical_not_sent"] = pairs - len(differ)
     if out:
         Path(out).mkdir(parents=True, exist_ok=True)
         (Path(out) / "verdict.json").write_text(json.dumps(result, indent=1) + "\n")
-    code = {"PASS": 0, "UNCHANGED": 0, "REGRESSION": 1, "INSUFFICIENT": 1}.get(result["outcome"], 2)
+    code = exit_code(result["outcome"])
     if code:
         raise SystemExit(code)
 
