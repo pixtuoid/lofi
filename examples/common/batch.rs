@@ -199,9 +199,9 @@ const JUDGE_EMPTY_SEEDS: [u64; MOODS.len()] = [29, 28];
 /// between them, so a change to a lane `empty` mutes still reaches the floor.
 const JUDGE_TIER_SEEDS: u64 = JUDGE_MIN_UNTIED.div_ceil(2) as u64;
 
-/// The sweeps the judge batch plays, each a group of its own, once the
-/// engine they move is on the base they are judged against.
-const JUDGE_SWEEPS: [Sweep; 2] = [Sweep::Dusk, Sweep::Twilight];
+/// The sweeps the judge batch plays, each a group of its own: those only a
+/// listener can judge, which no closed-form test pins.
+const JUDGE_SWEEPS: [Sweep; 1] = [Sweep::Twilight];
 
 /// The seeds each judged sweep spreads over its takes: room above
 /// [`JUDGE_MIN_UNTIED`] for the pairs a change leaves tied (opinion).

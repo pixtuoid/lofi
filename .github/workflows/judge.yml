@@ -113,7 +113,7 @@ jobs:
     needs: render
     if: needs.render.outputs.changed == 'true' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 70
+    timeout-minutes: 55
     permissions:
       contents: read
     outputs:
@@ -262,7 +262,7 @@ jobs:
             unscored "New" "$new"
             unscored "Gone" "$gone"
             echo
-            echo "Unscored: no take renders rain or an intensity change."
+            echo "Unscored: no take renders a song seam, a mid-song control change or rain."
           } > "$body"
           cat "$body" >> "$GITHUB_STEP_SUMMARY"
           # "The GITHUB_TOKEN has read-only permissions in pull requests from
