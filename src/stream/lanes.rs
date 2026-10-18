@@ -42,13 +42,13 @@ fn phase(hz: f32, n: usize, sr: u32) -> f32 {
 /// sweep, which the commit that set them records.
 fn staging(mood: Mood, lane: Lane) -> [f64; 2] {
     match (mood, lane) {
-        (Mood::Day, Lane::Pad) => [0.1376, 0.7424],
+        (Mood::Day, Lane::Pad) => [0.1376, 0.7424 * 0.944_060_9],
         (Mood::Day, Lane::Sparkle) => [1.1440, 0.5299],
         (Mood::Day, Lane::Keys) => [0.5419, 0.7848],
         (Mood::Day, Lane::Drums) => [0.6785, 0.6305],
         (Mood::Day, Lane::Texture) => [3.1570, 0.5869],
         (Mood::Day, Lane::Bass) => [0.8075, 0.7210],
-        (Mood::Night, Lane::Pad) => [0.2049, 0.7833],
+        (Mood::Night, Lane::Pad) => [0.2049, 0.7833 * 0.944_060_9],
         (Mood::Night, Lane::Sparkle) => [1.2683, 0.5361],
         (Mood::Night, Lane::Keys) => [1.0453, 0.6983],
         (Mood::Night, Lane::Drums) => [1.0628, 0.7487],
