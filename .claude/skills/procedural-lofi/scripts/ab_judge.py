@@ -13,14 +13,14 @@ Usage: $J/bin/python ab_judge.py DIR --refs REFS [--fad-cache CACHE] [--score-id
   --score-identical scores byte-identical pairs too: the proof that they tie.
 
 The verdict is the controller's proposal (opinion), `verdict.judged`: per
-mood, an exact one-sided sign test on each judge, ties dropped, that cand
-scores LOWER than base on its headline score, or sits FARTHER from the corpus
-by per-song FAD. Byte-identical pairs are never scored, and a mood with only
-those is UNCHANGED. The batch takes its worst mood's verdict, a detected
-regression first, and exits non-zero on REGRESSION or INSUFFICIENT. The
-owner's blind listen, when given, overrides this verdict. Every third-octave
-band whose difference passes TO_EXPLAIN_DB is listed TO-EXPLAIN: a PR names
-its cause, but it fails nothing.
+group, a take's mood or sweep, an exact one-sided sign test on each judge,
+ties dropped, that cand scores LOWER than base on its headline score, or sits
+FARTHER from the corpus by per-song FAD. Byte-identical pairs are never
+scored, and a group with only those is UNCHANGED. The batch takes its worst
+group's verdict, a detected regression first, and exits non-zero on
+REGRESSION or INSUFFICIENT. The owner's blind listen, when given, overrides
+this verdict. Every third-octave band whose difference passes TO_EXPLAIN_DB
+is listed TO-EXPLAIN: a PR names its cause, but it fails nothing.
 
 A score is a guard against regression from a base batch to a candidate,
 never an objective to maximize: lofi's character (hiss, crackle, roll-off) is
