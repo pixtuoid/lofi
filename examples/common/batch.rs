@@ -10,7 +10,7 @@ use pixtuoid_lofi::audition::{
     self, LOOPS_PER_SONG, Lane, MASTER_GAIN, Score, TIER_INTENSITIES, lane_gain, render_lane,
 };
 use pixtuoid_lofi::dsp::NoiseStream;
-use pixtuoid_lofi::{Controls, Frame};
+use pixtuoid_lofi::{Controls, Frame, Performance};
 
 /// The `--mood` vocabulary paired with the daylight it plays at, so the parse
 /// and the error message can't list different spellings.
@@ -97,6 +97,94 @@ impl Named {
     }
 }
 
+/// A sweep `--sweep` plays: the controls each of its takes starts under, and
+/// the calls it makes after, each in the middle of a bar. A latch falls at a
+/// bar line, so a call on one lands on either side of it by the latch's
+/// timing; in the middle, it lands in the bar it names under any latch.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Sweep {
+    /// Empty, Busy over the take's middle half, then Empty again, at full day.
+    Intensity,
+    /// Daylight from day to night across the first song, a step every bar;
+    /// the songs after it, [`DUSK_SONGS`] in all, play at night.
+    Dusk,
+    /// Daylight held at each of [`TWILIGHT`]'s, between night and day.
+    Twilight,
+}
+
+/// The songs the dusk sweep spans: a night song follows its dusk, since a
+/// song's family latches at its first bar.
+const DUSK_SONGS: u64 = 2;
+
+/// The twilight sweep's daylights, named for their takes: one in each
+/// family, between its ends.
+const TWILIGHT: [(&str, f32); 2] = [("quarter", 0.25), ("threequarters", 0.75)];
+
+impl Sweep {
+    pub(crate) const ALL: [Sweep; 3] = [Sweep::Intensity, Sweep::Dusk, Sweep::Twilight];
+
+    /// The `--sweep` spelling.
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Sweep::Intensity => "intensity",
+            Sweep::Dusk => "dusk",
+            Sweep::Twilight => "twilight",
+        }
+    }
+
+    /// Each take's controls to start under, named for what the sweep holds
+    /// still in it.
+    fn starts(self) -> Vec<(&'static str, Controls)> {
+        let (day, moderate) = (MOODS[0], Tier::Moderate);
+        let at_day = Controls::default().with_daylight(day.1);
+        match self {
+            Sweep::Intensity => vec![(day.0, at_day.with_intensity(Tier::Empty.intensity()))],
+            Sweep::Dusk => vec![(moderate.name(), at_day.with_intensity(moderate.intensity()))],
+            Sweep::Twilight => (TWILIGHT.iter())
+                .map(|&(name, daylight)| (name, at_day.with_daylight(daylight)))
+                .collect(),
+        }
+    }
+
+    /// The songs a take spans unless `--songs` says.
+    fn songs(self) -> u64 {
+        match self {
+            Sweep::Dusk => DUSK_SONGS,
+            Sweep::Intensity | Sweep::Twilight => 1,
+        }
+    }
+
+    /// What the sweep asks for in the middle of bar `bar` of a take `bars`
+    /// long, of songs `song_bars` long, `now` being what it asked for last.
+    fn call(self, bar: usize, song_bars: usize, bars: usize, now: Controls) -> Option<Controls> {
+        match self {
+            Sweep::Intensity => {
+                let quarter = bars / 4;
+                let tier = match bar {
+                    b if b == quarter => Tier::Busy,
+                    b if b == bars - quarter => Tier::Empty,
+                    _ => return None,
+                };
+                Some(now.with_intensity(tier.intensity()))
+            }
+            Sweep::Dusk => (bar < song_bars).then(|| {
+                let [(_, day), (_, night)] = MOODS;
+                let done = (bar + 1) as f32 / song_bars as f32;
+                now.with_daylight(day + (night - day) * done)
+            }),
+            Sweep::Twilight => None,
+        }
+    }
+}
+
+/// What a take plays: each song's controls, which its first bar latches, and
+/// its length; then each call its sweep makes, at its frame in the take.
+#[derive(Default)]
+pub(crate) struct Timeline {
+    pub(crate) songs: Vec<(Controls, usize)>,
+    pub(crate) calls: Vec<(usize, Controls)>,
+}
+
 /// `verdict.py`'s `MIN_UNTIED`, which `test_verdict.py` reads here: the
 /// untied pairs each mood of the judge batch is built to reach.
 pub(crate) const JUDGE_MIN_UNTIED: usize = 7;
@@ -109,9 +197,6 @@ const JUDGE_EMPTY_SEEDS: [u64; MOODS.len()] = [27, 26];
 /// The judge batch's seeds at each louder tier: [`JUDGE_MIN_UNTIED`] or more
 /// between them, so a change to a lane `empty` mutes still reaches the floor.
 const JUDGE_TIER_SEEDS: u64 = JUDGE_MIN_UNTIED.div_ceil(2) as u64;
-
-/// The song of a seed's run that its take plays, whichever engine renders it.
-const SONG: u64 = 0;
 
 /// The lanes' noise seed: any fixed value, so a take renders alike on every run
 /// and a base and a candidate render differ only by their change.
@@ -139,8 +224,9 @@ pub(crate) fn parse_choice(v: Option<String>, flag: &str, names: &[&str]) -> io:
         .ok_or_else(|| usage_error(format!("unknown {flag} {v:?}; valid: {}", names.join("|"))))
 }
 
-/// The takes a run selects: `--seeds` seeds of one `--mood` from `--start`,
-/// heard at `--tier` through `--engine`, or the `--batch` named.
+/// The takes a run selects: `--seeds` seeds from `--start`, each `--songs`
+/// songs from the run's first, of one `--mood` heard at `--tier` or under a
+/// `--sweep`, through `--engine`; or the `--batch` named.
 #[derive(Clone, Copy)]
 pub(crate) struct Batch {
     mood: usize,
@@ -151,9 +237,16 @@ pub(crate) struct Batch {
     pub(crate) engine: Engine,
     /// The `--batch` given.
     pub(crate) named: Option<Named>,
+    /// The `--sweep` given, and which of its takes' starts this batch plays.
+    pub(crate) sweep: Option<Sweep>,
+    sweep_start: usize,
+    /// The `--songs` given.
+    pub(crate) songs: Option<u64>,
     /// Whether `--mood`, `--seeds`, `--start` or `--tier` was given, which a
     /// named batch picks itself.
     picked: bool,
+    /// Whether `--mood` or `--tier` was given, which a sweep sets itself.
+    controlled: bool,
 }
 
 impl Default for Batch {
@@ -165,7 +258,11 @@ impl Default for Batch {
             tier: None,
             engine: Engine::default(),
             named: None,
+            sweep: None,
+            sweep_start: 0,
+            songs: None,
             picked: false,
+            controlled: false,
         }
     }
 }
@@ -180,6 +277,9 @@ impl Batch {
     ) -> io::Result<bool> {
         if matches!(flag, "--mood" | "--seeds" | "--start" | "--tier") {
             self.picked = true;
+        }
+        if matches!(flag, "--mood" | "--tier") {
+            self.controlled = true;
         }
         match flag {
             "--mood" => self.mood = parse_choice(args.next(), flag, &MOODS.map(|(name, _)| name))?,
@@ -203,6 +303,18 @@ impl Batch {
                     Named::ALL[parse_choice(args.next(), flag, &Named::ALL.map(Named::name))?],
                 );
             }
+            "--sweep" => {
+                self.sweep = Some(
+                    Sweep::ALL[parse_choice(args.next(), flag, &Sweep::ALL.map(Sweep::name))?],
+                );
+            }
+            "--songs" => {
+                let songs = parse_count(args.next(), flag)?;
+                if songs == 0 {
+                    return Err(usage_error("--songs must be at least 1".into()));
+                }
+                self.songs = Some(songs);
+            }
             _ => return Ok(false),
         }
         if self.picked && self.named.is_some() {
@@ -211,12 +323,31 @@ impl Batch {
                     .into(),
             ));
         }
+        if self.named.is_some() && (self.sweep.is_some() || self.songs.is_some()) {
+            return Err(usage_error(
+                "--batch plays each take's first song under fixed controls, so it takes no --sweep or --songs"
+                    .into(),
+            ));
+        }
+        if self.controlled && self.sweep.is_some() {
+            return Err(usage_error(
+                "--sweep sets its own controls, so it takes no --mood or --tier".into(),
+            ));
+        }
         Ok(true)
     }
 
     /// The batches of one mood and one tier the run plays: this one, or each
     /// of its named batch's, through its engine.
     pub(crate) fn runs(&self) -> Vec<Batch> {
+        if let Some(sweep) = self.sweep {
+            return (0..sweep.starts().len())
+                .map(|sweep_start| Batch {
+                    sweep_start,
+                    ..*self
+                })
+                .collect();
+        }
         match self.named {
             None => vec![*self],
             Some(Named::Judge) => (0..MOODS.len())
@@ -240,8 +371,16 @@ impl Batch {
         }
     }
 
+    /// The take's first name: its sweep's, or else its mood's.
     pub(crate) fn mood_name(&self) -> &'static str {
-        MOODS[self.mood].0
+        self.sweep.map_or(MOODS[self.mood].0, Sweep::name)
+    }
+
+    /// The take's second name: what its sweep holds still, or else its tier.
+    pub(crate) fn mix_name(&self) -> &'static str {
+        self.sweep.map_or(self.tier().name(), |sweep| {
+            sweep.starts()[self.sweep_start].0
+        })
     }
 
     pub(crate) fn seeds(&self) -> Range<u64> {
@@ -253,29 +392,72 @@ impl Batch {
         self.tier.unwrap_or_default()
     }
 
-    /// What every take plays under: the mood's daylight, the tier's intensity.
+    /// What every take starts under: its sweep's start, or else the mood's
+    /// daylight and the tier's intensity.
     pub(crate) fn controls(&self) -> Controls {
-        Controls::default()
-            .with_daylight(MOODS[self.mood].1)
-            .with_intensity(self.tier().intensity())
+        match self.sweep {
+            Some(sweep) => sweep.starts()[self.sweep_start].1,
+            None => Controls::default()
+                .with_daylight(MOODS[self.mood].1)
+                .with_intensity(self.tier().intensity()),
+        }
     }
 
-    /// Each lane's gain in the take's mix, in [`Lane::ALL`] order: lofi's, at
-    /// the intensity a `Performance` mixes it at.
-    pub(crate) fn lane_gains(&self) -> [f32; Lane::ALL.len()] {
-        let intensity = self.controls().intensity;
-        Lane::ALL.map(|lane| lane_gain(lane, intensity))
+    /// The songs a take plays.
+    pub(crate) fn songs(&self) -> u64 {
+        (self.songs.or(self.sweep.map(Sweep::songs))).unwrap_or(1)
     }
 
-    /// The score `seed`'s take plays, whichever engine renders it.
+    /// The score of `seed`'s take's first song, the run's first, whichever
+    /// engine renders it.
     pub(crate) fn score(&self, seed: u64) -> Score {
-        audition::song_score(seed, SONG, self.controls())
+        audition::song_score(seed, 0, self.controls())
     }
 
-    /// `seed`'s take as a `Performance` plays it: one channel of it, since it
-    /// plays both alike.
+    /// What `seed`'s take plays: each song under the controls asked for last
+    /// before its first bar, and each call at its bar's middle frame.
+    pub(crate) fn timeline(&self, seed: u64) -> Timeline {
+        let songs = self.songs();
+        let mut asked = self.controls();
+        let mut timeline = Timeline::default();
+        let mut song_start = 0;
+        for k in 0..songs {
+            let bars = audition::bar_frames(seed, k, asked);
+            let len = audition::song_len(seed, k, asked);
+            timeline.songs.push((asked, len));
+            // every song has as many bars, whatever its tempo
+            let take_bars = bars.len() * songs as usize;
+            for (j, &onset) in bars.iter().enumerate() {
+                let end = bars.get(j + 1).copied().unwrap_or(len);
+                let bar = k as usize * bars.len() + j;
+                if let Some(next) =
+                    (self.sweep).and_then(|sweep| sweep.call(bar, bars.len(), take_bars, asked))
+                {
+                    timeline
+                        .calls
+                        .push((song_start + onset.midpoint(end), next));
+                    asked = next;
+                }
+            }
+            song_start += len;
+        }
+        timeline
+    }
+
+    /// `seed`'s take as a `Performance` plays it, each call made at its
+    /// frame: one channel of it, since it plays both alike.
     pub(crate) fn perform(&self, seed: u64) -> io::Result<Vec<f32>> {
-        audition::song(seed, SONG, self.controls())
+        let timeline = self.timeline(seed);
+        let mut frames = vec![Frame::default(); timeline.songs.iter().map(|&(_, len)| len).sum()];
+        let mut performance = Performance::new(seed, self.controls());
+        let mut done = 0;
+        for &(at, controls) in &timeline.calls {
+            performance.render(&mut frames[done..at]);
+            performance.set_controls(controls);
+            done = at;
+        }
+        performance.render(&mut frames[done..]);
+        frames
             .into_iter()
             .map(|[left, right]: Frame| {
                 (left.to_bits() == right.to_bits())
@@ -288,6 +470,12 @@ impl Batch {
             })
             .collect()
     }
+}
+
+/// Each lane's gain under `controls`, in [`Lane::ALL`] order: lofi's, at the
+/// intensity a `Performance` mixes it at.
+pub(crate) fn lane_gains(controls: Controls) -> [f32; Lane::ALL.len()] {
+    Lane::ALL.map(|lane| lane_gain(lane, controls.intensity))
 }
 
 /// Every lane of `score` in [`Lane::ALL`] order, drawn from one rng stream as a
@@ -342,7 +530,11 @@ mod tests {
             let batch = parsed("--tier", name).expect("the tier parses");
             assert_eq!(batch.controls().intensity, intensity, "{name}");
             let gains = Lane::ALL.map(|lane| lane_gain(lane, intensity));
-            assert_eq!(batch.lane_gains(), gains, "{name}'s whole-lane mix");
+            assert_eq!(
+                lane_gains(batch.controls()),
+                gains,
+                "{name}'s whole-lane mix"
+            );
         }
         assert!(parsed("--tier", "loud").is_err());
         let [day, night] =
@@ -404,6 +596,146 @@ mod tests {
                 }
                 assert!(outcome.is_err(), "{order:?} parsed");
             }
+        }
+    }
+
+    /// Every take each sweep renders, with its seed.
+    fn sweep_takes() -> Vec<(Sweep, Batch, u64)> {
+        (Sweep::ALL.iter())
+            .flat_map(|&sweep| {
+                let runs = parsed("--sweep", sweep.name())
+                    .expect("the sweep parses")
+                    .runs();
+                runs.into_iter()
+                    .flat_map(move |run| run.seeds().map(move |seed| (sweep, run, seed)))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn every_sweep_calls_in_the_middle_of_a_bar_for_every_seed() {
+        for (sweep, run, seed) in sweep_takes() {
+            let timeline = run.timeline(seed);
+            let mut song_start = 0;
+            let mut calls = timeline.calls.iter().peekable();
+            for (k, &(controls, len)) in timeline.songs.iter().enumerate() {
+                let bars = audition::bar_frames(seed, k as u64, controls);
+                while let Some(&&(at, _)) = calls.peek()
+                    && at < song_start + len
+                {
+                    let at = at - song_start;
+                    let bar = bars
+                        .iter()
+                        .rposition(|&start| start <= at)
+                        .expect("a call before the song's first bar");
+                    let end = bars.get(bar + 1).copied().unwrap_or(len);
+                    assert!(
+                        bars[bar] < at,
+                        "{sweep:?} seed {seed}: a call on bar {bar}'s line"
+                    );
+                    assert!(
+                        (at - bars[bar]).abs_diff(end - at) <= 1,
+                        "{sweep:?} seed {seed}: a call off bar {bar}'s middle"
+                    );
+                    calls.next();
+                }
+                song_start += len;
+            }
+            assert_eq!(
+                calls.next(),
+                None,
+                "{sweep:?} seed {seed}: a call past the take"
+            );
+        }
+    }
+
+    #[test]
+    fn every_sweep_asks_for_the_controls_it_names() {
+        let [(_, day), (_, night)] = MOODS;
+        let [empty, _, busy] = TIER_INTENSITIES;
+        for (sweep, run, seed) in sweep_takes() {
+            let timeline = run.timeline(seed);
+            let asked: Vec<Controls> = timeline.calls.iter().map(|&(_, c)| c).collect();
+            match sweep {
+                Sweep::Intensity => {
+                    assert_eq!(
+                        run.controls(),
+                        Controls::default().with_daylight(day).with_intensity(empty)
+                    );
+                    let tiers: Vec<f32> = asked.iter().map(|c| c.intensity).collect();
+                    assert_eq!(tiers, [busy, empty], "seed {seed}");
+                    assert!(asked.iter().all(|c| c.daylight == day), "seed {seed}");
+                }
+                Sweep::Dusk => {
+                    assert_eq!(run.controls().daylight, day);
+                    let families: Vec<f32> =
+                        timeline.songs.iter().map(|&(c, _)| c.daylight).collect();
+                    assert_eq!(
+                        families,
+                        [day, night],
+                        "seed {seed}: a day song, then a night one"
+                    );
+                    let daylights: Vec<f32> = asked.iter().map(|c| c.daylight).collect();
+                    assert!(
+                        daylights.windows(2).all(|w| w[1] < w[0]),
+                        "seed {seed}: dusk turns back"
+                    );
+                    assert_eq!(daylights.last(), Some(&night), "seed {seed}");
+                }
+                Sweep::Twilight => {
+                    assert!(asked.is_empty(), "twilight holds its daylight");
+                    let daylight = run.controls().daylight;
+                    assert!(
+                        night < daylight && daylight < day,
+                        "{daylight} is no twilight"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn songs_plays_that_many_songs_of_the_run() {
+        let mut batch = parsed("--songs", "3").expect("--songs parses");
+        batch.engine = Engine::Stream;
+        let c = batch.controls();
+        let lens: Vec<usize> = batch
+            .timeline(1)
+            .songs
+            .iter()
+            .map(|&(_, len)| len)
+            .collect();
+        assert_eq!(
+            lens,
+            (0..3)
+                .map(|k| audition::song_len(1, k, c))
+                .collect::<Vec<_>>()
+        );
+        assert!(parsed("--songs", "0").is_err());
+    }
+
+    #[test]
+    fn a_sweep_sets_its_own_controls_and_a_named_batch_its_own_songs() {
+        for order in [
+            [["--sweep", "dusk"], ["--mood", "night"]],
+            [["--tier", "busy"], ["--sweep", "dusk"]],
+            [["--batch", "judge"], ["--sweep", "dusk"]],
+            [["--songs", "2"], ["--batch", "judge"]],
+        ] {
+            let mut batch = Batch::default();
+            let mut args = order.concat().into_iter().map(str::to_owned);
+            let mut outcome = Ok(true);
+            while let Some(flag) = args.next() {
+                outcome = outcome.and_then(|_| batch.parse_flag(&flag, &mut args));
+            }
+            assert!(outcome.is_err(), "{order:?} parsed");
+        }
+        let mut batch = Batch::default();
+        let mut args = ["--sweep", "dusk", "--seeds", "3", "--songs", "4"]
+            .into_iter()
+            .map(str::to_owned);
+        while let Some(flag) = args.next() {
+            assert!(batch.parse_flag(&flag, &mut args).is_ok(), "{flag} parsed");
         }
     }
 
