@@ -4,16 +4,20 @@ alone: the batch is the PR's render, so nothing in it runs or is trusted.
 
 Usage: python3 -I validate_batch.py DIR --base SHA --cand SHA
   DIR holds base/ and cand/. Valid when every take is an `ab_listen.NAME`
-  name on both sides, a PCM wav whose data the header accounts for byte for
-  byte, beside a COMMIT naming SHA, and there is at least one take.
+  name, a PCM wav whose data the header accounts for byte for byte, beside a
+  COMMIT naming SHA, and at least one take is on both sides. Prints the
+  takes as JSON: the pairs, and those new or gone at cand, which no judge
+  pairs.
 """
 
 import argparse
+import json
 import re
 import stat
 import struct
 import sys
 import wave
+from collections import namedtuple
 from pathlib import Path
 
 sys.dont_write_bytecode = True
@@ -28,6 +32,11 @@ COMMIT = re.compile(r"[0-9a-f]{40}\n?")
 # reading and writing WAVE_FORMAT_IEEE_FLOAT files was added",
 # https://docs.python.org/3.15/library/wave.html)
 WAVE_FORMAT_PCM = 1
+
+
+# a valid batch's take names, each sorted: on both sides, then on cand's or
+# base's alone, as a matrix that grew or shrank leaves them
+Takes = namedtuple("Takes", "paired new gone")
 
 
 class Invalid(Exception):
@@ -81,7 +90,7 @@ def check_wav(path):
 
 
 def validate(batch, base_sha, cand_sha):
-    """The batch's take count; raises `Invalid` on anything else."""
+    """The batch's `Takes`; raises `Invalid` on anything else."""
     names = {}
     for side, sha in (("base", base_sha), ("cand", cand_sha)):
         d = batch / side
@@ -98,14 +107,13 @@ def validate(batch, base_sha, cand_sha):
             if not NAME.fullmatch(name):
                 raise Invalid(f"{side}/{name} is not a lofi_audition take")
         names[side] = set(entries)
-    if names["base"] != names["cand"]:
-        raise Invalid(f"takes on one side only: {', '.join(sorted(names['base'] ^ names['cand']))}")
-    if not names["base"]:
-        raise Invalid("no take in the batch")
+    if not names["base"] & names["cand"]:
+        raise Invalid("no take on both sides")
     for side in ("base", "cand"):
         for name in sorted(names[side]):
             check_wav(batch / side / name)
-    return len(names["base"])
+    base, cand = names["base"], names["cand"]
+    return Takes(sorted(base & cand), sorted(cand - base), sorted(base - cand))
 
 
 def main():
@@ -115,7 +123,7 @@ def main():
     ap.add_argument("--cand", required=True, help="the commit cand/ must have rendered at")
     args = ap.parse_args()
     try:
-        print(f"{validate(args.dir, args.base, args.cand)} pairs, each a PCM wav on both sides")
+        print(json.dumps(validate(args.dir, args.base, args.cand)._asdict()))
     except Invalid as e:
         sys.exit(f"invalid batch: {e}")
 

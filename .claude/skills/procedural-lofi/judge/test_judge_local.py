@@ -39,8 +39,14 @@ class Selection(unittest.TestCase):
         with self.assertRaises(Invalid):
             select(self.dir, force_score=False)
 
-    def test_a_take_on_one_side_only_is_refused(self):
+    def test_a_take_on_one_side_only_is_left_out_and_the_pairs_still_sent(self):
         (self.dir / "cand" / "gen_day_empty_000.wav").unlink()
+        write_wav(self.dir / "cand" / "gen_dusk_moderate_000.wav")
+        self.assertEqual(select(self.dir, force_score=True), (1, ["gen_night_busy_001.wav"]))
+
+    def test_a_batch_whose_takes_are_each_on_one_side_is_refused(self):
+        (self.dir / "cand" / "gen_day_empty_000.wav").unlink()
+        (self.dir / "base" / "gen_night_busy_001.wav").unlink()
         with self.assertRaises(Invalid):
             select(self.dir, force_score=False)
 

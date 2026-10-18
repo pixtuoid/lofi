@@ -28,6 +28,8 @@ jobs:
     outputs:
       changed: ${{ steps.compare.outputs.changed }}
       merge-base: ${{ steps.merge-base.outputs.sha }}
+      new: ${{ steps.validate.outputs.new }}
+      gone: ${{ steps.validate.outputs.gone }}
     steps:
       # the PR's head: a pull_request run's own checkout is the "Last merge
       # commit on the GITHUB_REF branch"
@@ -57,20 +59,23 @@ jobs:
             test -z "$(git -C "$tree" status --porcelain)"
             git -C "$tree" rev-parse HEAD > "$out/COMMIT"
           done
-      # the judge's own validator, so a take on one side only, as a rename
-      # leaves, fails the render instead of reading "no sound change"
+      # the judge's own validator: a take on one side only, as a grown matrix
+      # or a rename leaves, is listed new or gone and left unscored, never
+      # read as "no sound change"
       - name: Validate the rendered batch
+        id: validate
         env:
           MERGE_BASE: ${{ steps.merge-base.outputs.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -uo pipefail
-          if ! why=$(python3 -I .claude/skills/procedural-lofi/judge/validate_batch.py "$RUNNER_TEMP/batch" \
+          if ! takes=$(python3 -I .claude/skills/procedural-lofi/judge/validate_batch.py "$RUNNER_TEMP/batch" \
             --base "$MERGE_BASE" --cand "$HEAD_SHA" 2>&1); then
-            printf '%s\n' "$why" >> "$GITHUB_STEP_SUMMARY"
-            printf '::error::%s\n' "$why"
+            printf '%s\n' "$takes" >> "$GITHUB_STEP_SUMMARY"
+            printf '::error::%s\n' "$takes"
             exit 1
           fi
+          printf '%s\n' "$takes" | jq -r '"new=\(.new | join(" "))", "gone=\(.gone | join(" "))"' >> "$GITHUB_OUTPUT"
       # a byte-identical pair can only tie, so only the pairs that differ go up
       - id: compare
         run: |
@@ -79,10 +84,11 @@ jobs:
           mkdir -p "$up/base" "$up/cand"
           cp "$batch/base/COMMIT" "$up/base/COMMIT"
           cp "$batch/cand/COMMIT" "$up/cand/COMMIT"
-          pairs=$(find "$batch/base" -name '*.wav' | wc -l | tr -d ' ')
-          differ=0
+          pairs=0 differ=0
           for take in "$batch"/base/*.wav; do
             name=$(basename "$take")
+            [ -f "$batch/cand/$name" ] || continue
+            pairs=$((pairs + 1))
             if ! cmp -s "$take" "$batch/cand/$name"; then
               mv "$take" "$up/base/$name"
               mv "$batch/cand/$name" "$up/cand/$name"
@@ -199,14 +205,19 @@ jobs:
           MERGE_BASE: ${{ needs.render.outputs.merge-base }}
           RENDER: ${{ needs.render.result }}
           CHANGED: ${{ needs.render.outputs.changed }}
+          NEW: ${{ needs.render.outputs.new }}
+          GONE: ${{ needs.render.outputs.gone }}
           JUDGE: ${{ needs.judge.result }}
           SAME_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
         run: |
           set -euo pipefail
           verdict="$RUNNER_TEMP/verdict/verdict.json"
           table=""
-          # an output of the job that ran the PR's code
+          # outputs of the job that ran the PR's code: the take lists keep a
+          # take name's characters alone, so none opens markup or a mention
           [[ "$MERGE_BASE" =~ ^[0-9a-f]{40}$ ]] || MERGE_BASE=unknown
+          new=$(printf '%s' "$NEW" | tr -cd 'a-z0-9_. ')
+          gone=$(printf '%s' "$GONE" | tr -cd 'a-z0-9_. ')
           if [ "$SAME_REPO" != true ]; then
             outcome="fork PR: no score"
           elif [ "$RENDER" != success ]; then
@@ -228,6 +239,11 @@ jobs:
               *) outcome="infra failure" ;;
             esac
           fi
+          unscored() {
+            [ -n "$2" ] || return 0
+            echo
+            echo "$1 at head, unscored: $(printf '%s' "$2" | sed -E "s/[^ ]+/\`&\`/g")"
+          }
           body="$RUNNER_TEMP/comment.md"
           {
             echo "<!-- lofi-judge -->"
@@ -243,8 +259,10 @@ jobs:
               echo '```'
               echo "</details>"
             fi
+            unscored "New" "$new"
+            unscored "Gone" "$gone"
             echo
-            echo "Unscored: no take renders a song seam or a mid-song control ramp."
+            echo "Unscored: no take renders rain or an intensity change."
           } > "$body"
           cat "$body" >> "$GITHUB_STEP_SUMMARY"
           # "The GITHUB_TOKEN has read-only permissions in pull requests from

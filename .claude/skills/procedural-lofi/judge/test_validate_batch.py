@@ -11,9 +11,11 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from validate_batch import Invalid, validate
+from validate_batch import Invalid, Takes, validate
 
 BASE, CAND = "a" * 40, "b" * 40
+# the takes `Batches` writes on both sides
+PAIRS = ["gen_day_empty_000.wav", "gen_night_busy_003.wav"]
 
 
 def riff(*chunks):
@@ -42,7 +44,7 @@ class Batches(unittest.TestCase):
         for side, sha in (("base", BASE), ("cand", CAND)):
             (self.dir / side).mkdir()
             (self.dir / side / "COMMIT").write_text(sha + "\n")
-            for name in ("gen_day_empty_000.wav", "gen_night_busy_003.wav"):
+            for name in PAIRS:
                 write_wav(self.dir / side / name)
 
     def tearDown(self):
@@ -55,22 +57,33 @@ class Batches(unittest.TestCase):
         self.assertIn(why, str(caught.exception))
 
     def test_a_batch_of_named_pairs_and_its_commits_is_valid(self):
-        self.assertEqual(validate(self.dir, BASE, CAND), 2)
+        self.assertEqual(validate(self.dir, BASE, CAND), Takes(PAIRS, [], []))
 
     def test_any_subset_of_takes_is_valid(self):
         for side in ("base", "cand"):
             (self.dir / side / "gen_night_busy_003.wav").unlink()
-        self.assertEqual(validate(self.dir, BASE, CAND), 1)
+        self.assertEqual(validate(self.dir, BASE, CAND).paired, PAIRS[:1])
 
     def test_no_pair_is_invalid(self):
         for side in ("base", "cand"):
             for p in (self.dir / side).glob("*.wav"):
                 p.unlink()
-        self.assertInvalid("no take")
+        self.assertInvalid("no take on both sides")
 
-    def test_a_take_on_one_side_only_is_invalid(self):
+    def test_a_take_on_one_side_only_is_listed_new_or_gone(self):
         (self.dir / "cand" / "gen_night_busy_003.wav").unlink()
-        self.assertInvalid("one side")
+        write_wav(self.dir / "cand" / "gen_dusk_moderate_000.wav")
+        got = validate(self.dir, BASE, CAND)
+        self.assertEqual(got, Takes(PAIRS[:1], ["gen_dusk_moderate_000.wav"], ["gen_night_busy_003.wav"]))
+
+    def test_a_batch_whose_takes_are_each_on_one_side_is_invalid(self):
+        (self.dir / "cand" / "gen_night_busy_003.wav").unlink()
+        (self.dir / "base" / "gen_day_empty_000.wav").unlink()
+        self.assertInvalid("no take on both sides")
+
+    def test_a_take_on_one_side_is_still_checked(self):
+        (self.dir / "cand" / "gen_dusk_moderate_000.wav").write_bytes(b"ID3 not a wav")
+        self.assertInvalid("gen_dusk_moderate_000.wav is not a RIFF WAVE file")
 
     def test_a_name_lofi_audition_never_writes_is_invalid(self):
         for side in ("base", "cand"):
