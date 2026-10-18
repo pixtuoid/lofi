@@ -400,8 +400,8 @@ impl Tape {
                     .process_lifted(buf, |i| rain::lift(rain.at(from + i)));
             }
             Some(rain) => {
-                self.tilt.lift = rain::lift(rain.to());
-                self.tilt.process(buf);
+                let lift = rain::lift(rain.to());
+                self.tilt.process_lifted(buf, |_| lift);
             }
             None => self.tilt.process(buf),
         }

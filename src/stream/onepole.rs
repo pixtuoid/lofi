@@ -7,7 +7,7 @@ use std::f64::consts::TAU;
 #[derive(Debug)]
 pub(crate) struct Tilt {
     pole: f64,
-    pub(crate) lift: f64,
+    lift: f64,
     lp: f64,
 }
 
@@ -23,12 +23,8 @@ impl Tilt {
     }
 
     pub(crate) fn process(&mut self, buf: &mut [f64]) {
-        let mut lp = self.lp;
-        for x in buf {
-            lp = super::flush(self.pole * lp + (1.0 - self.pole) * *x);
-            *x += self.lift * (*x - lp);
-        }
-        self.lp = lp;
+        let lift = self.lift;
+        self.process_lifted(buf, |_| lift);
     }
 
     /// [`process`](Self::process) with the lift on `buf[i]` at `lift(i)`: the
