@@ -148,6 +148,17 @@ impl Chain {
         }
     }
 
+    /// The frame the lane's rain holds from, if rain darkens it.
+    #[cfg(test)]
+    pub(crate) fn rained_until(&self) -> Option<usize> {
+        match self {
+            Self::Tape(Tape {
+                rain: Some(ramp), ..
+            }) => Some(ramp.end()),
+            _ => None,
+        }
+    }
+
     /// The frame the lane's colour holds from, if it grades.
     #[cfg(test)]
     pub(crate) fn graded_until(&self) -> Option<usize> {

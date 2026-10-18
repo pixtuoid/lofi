@@ -741,6 +741,37 @@ mod tests {
     }
 
     #[test]
+    fn a_rain_latch_darkens_the_sparkle_keys_and_drums_over_a_phrase() {
+        let (seed, c) = (3, Controls::default());
+        let bars = bar_frames(seed, 0, c);
+        let latch = bars[3] - samples_at(ANTICIPATION_S, SAMPLE_RATE);
+        let (run, _) = latched(seed, c, &[(bars[2], c.with_rain(1.0))], latch + 1);
+        let song = run.song.as_ref().expect("a song plays");
+        let phrase = samples_at(RAIN_RAMP_BARS * song.score.bar_s(), SAMPLE_RATE);
+        for (lane, chain) in Lane::ALL.iter().zip(&song.chains) {
+            let want = rain::darkens(*lane).then_some(latch + phrase);
+            assert_eq!(chain.rained_until(), want, "{lane:?}");
+        }
+    }
+
+    #[test]
+    fn the_pads_rain_level_plays_on_the_lane_it_mixes() {
+        // the pad's tone takes no rain, so its lane is its dry one, louder
+        let pad = Lane::ALL
+            .iter()
+            .position(|&lane| lane == Lane::Pad)
+            .expect("a pad lane");
+        let c = Controls::default();
+        let to = bar_frames(1, 0, c)[2];
+        let [(_, dry), (_, wet)] = [0.0, 1.0].map(|rain| latched(1, c.with_rain(rain), &[], to));
+        let louder = rain::level(Lane::Pad, 1.0);
+        assert!(dry[pad].iter().any(|&x| x != 0.0));
+        let off = (dry[pad].iter().zip(&wet[pad]))
+            .position(|(&d, &w)| (w - d * louder).abs() > 1e-12 * d.abs().max(1e-12));
+        assert_eq!(off, None, "the pad's wet lane isn't its dry one, louder");
+    }
+
+    #[test]
     fn rain_softens_each_drum_hit_as_it_strikes() {
         let seed = 6;
         let [mut dry, mut wet] = [0.0, 1.0]
