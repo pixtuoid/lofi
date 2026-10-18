@@ -6,24 +6,24 @@ use crate::synth::{Lane, TILT_LIFT};
 
 /// The tape tilt's lift on the sparkle, keys and drums at rain 1, from
 /// [`TILT_LIFT`] dry: a darker top from the shelf every tape already has.
-/// Opinion, sized for a background bed (step 1b's design, Rain).
+/// Opinion: dull enough to read as rain under a background bed.
 pub(crate) const RAIN_TILT_LIFT: f32 = -0.098;
 
-/// The sparkle's and the pad's level change at rain 1, in dB, so the texture
-/// carries over the melody. Opinion (step 1b's design, Rain).
+/// The sparkle's and the pad's level change at rain 1, in dB. Opinion: the
+/// melody steps back and the pad's bed swells under it.
 pub(crate) const RAIN_SPARKLE_DB: f64 = -3.0;
 pub(crate) const RAIN_PAD_DB: f64 = 1.0;
 
-/// Each drum hit's gain change at rain 1, in dB, read at its onset. Opinion
-/// (step 1b's design, Rain).
+/// Each drum hit's gain change at rain 1, in dB, read at its onset. Opinion:
+/// a softer touch, short of thinning the groove.
 pub(crate) const RAIN_DRUM_DB: f64 = -2.0;
 
-/// How long, in bars, a latch's rain takes to arrive: a phrase. Opinion
-/// (step 1b's design, Rain).
+/// How long, in bars, a latch's rain takes to arrive. Opinion: a phrase, so
+/// it settles in as weather does rather than cutting in.
 pub(crate) const RAIN_RAMP_BARS: f32 = 4.0;
 
-/// The lanes rain darkens, by step 1b's design: spelled apart from
-/// [`darkens`], so a test of it reads what it should be.
+/// The lanes rain darkens, spelled apart from [`darkens`] so a test checks
+/// the set instead of restating it.
 #[cfg(test)]
 pub(crate) const DARKENED: [Lane; 3] = [Lane::Sparkle, Lane::Keys, Lane::Drums];
 
