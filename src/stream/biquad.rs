@@ -70,6 +70,18 @@ impl Biquad {
 pub(crate) struct Cascade(Vec<Biquad>);
 
 impl Cascade {
+    /// Moves a [`butter_lowpass`]'s corner to `hz`, its state kept: a Direct
+    /// Form 1 section's state is its last inputs and outputs alone, so the new
+    /// coefficients filter on from the signal as it was.
+    pub(crate) fn retune_lowpass(&mut self, hz: f32, sr: u32) {
+        let order = 2 * self.0.len();
+        for (k, section) in (1..).zip(&mut self.0) {
+            let tuned = Biquad::lowpass(hz, butter_q(k, order), sr);
+            (section.b0, section.b1, section.b2) = (tuned.b0, tuned.b1, tuned.b2);
+            (section.a1, section.a2) = (tuned.a1, tuned.a2);
+        }
+    }
+
     pub(crate) fn process(&mut self, buf: &mut [f64]) {
         for s in &mut self.0 {
             s.process(buf);
@@ -91,15 +103,17 @@ pub(crate) fn butter_lowpass(hz: f32, order: usize, sr: u32) -> Cascade {
         order.is_multiple_of(2),
         "an odd order needs a first-order section"
     );
-    let n = order as f64;
     Cascade(
         (1..=order / 2)
-            .map(|k| {
-                let q = -1.0 / (2.0 * ((2.0 * k as f64 + n - 1.0) * PI / (2.0 * n)).cos());
-                Biquad::lowpass(hz, q, sr)
-            })
+            .map(|k| Biquad::lowpass(hz, butter_q(k, order), sr))
             .collect(),
     )
+}
+
+/// The Q of section `k` of a [`butter_lowpass`] of `order`.
+fn butter_q(k: usize, order: usize) -> f64 {
+    let n = order as f64;
+    -1.0 / (2.0 * ((2.0 * k as f64 + n - 1.0) * PI / (2.0 * n)).cos())
 }
 
 /// The cookbook's BPF with "constant 0 dB peak gain", centered between
@@ -208,6 +222,27 @@ mod tests {
             // the first second settles the transient
             let got = buf[sr..].iter().map(|v| v * v).sum::<f64>() / sr as f64;
             assert!((got / want - 1.0).abs() < 1e-6, "{hz} Hz: {got} vs {want}");
+        }
+    }
+
+    #[test]
+    fn a_retuned_low_pass_is_the_low_pass_at_its_new_corner_with_its_state_kept() {
+        for sr in RATES {
+            let mut moved = butter_lowpass(2000.0, 4, sr);
+            let mut signal = vec![0.5; 64];
+            moved.process(&mut signal);
+            let state: Vec<[f64; 4]> = moved.0.iter().map(|s| [s.x1, s.x2, s.y1, s.y2]).collect();
+            moved.retune_lowpass(7500.0, sr);
+            let fresh = butter_lowpass(7500.0, 4, sr);
+            for hz in [100.0, 2000.0, 7500.0, 15_000.0] {
+                assert_eq!(
+                    response(&moved, hz, sr),
+                    response(&fresh, hz, sr),
+                    "{sr} at {hz}"
+                );
+            }
+            let kept: Vec<[f64; 4]> = moved.0.iter().map(|s| [s.x1, s.x2, s.y1, s.y2]).collect();
+            assert_eq!(kept, state, "{sr}");
         }
     }
 

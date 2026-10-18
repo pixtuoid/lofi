@@ -5,10 +5,12 @@
 use std::collections::VecDeque;
 
 use super::lanes::Chain;
+use super::master::{lane_gain, resting_gain};
+use super::ramp::{Ramp, Shape};
 use crate::Controls;
-use crate::compose::{Mood, Score, compose};
+use crate::compose::{GEN_LOOP_BARS, HAT_JITTER_S, Mood, Score, compose};
 use crate::dsp::{NoiseStream, SAMPLE_RATE, splitmix_draw};
-use crate::synth::{CRACKLE_POPS_PER_SEC, Lane, Part, crackle_pop, part, samples_at};
+use crate::synth::{CRACKLE_POPS_PER_SEC, Lane, Part, bar_onset, crackle_pop, part, samples_at};
 
 const LANES: usize = Lane::ALL.len();
 
@@ -20,6 +22,20 @@ pub const LOOPS_PER_SONG: usize = 4;
 
 /// The daylight below which a song is composed for the night.
 const DUSK: f32 = 0.5;
+
+/// How long before its bar line a bar latches the controls asked for: the
+/// composer's earliest anticipation, a downbeat hat's half of
+/// [`HAT_JITTER_S`], so an anticipated downbeat joins the bar it anticipates,
+/// as Wwise's pre-entry does.
+pub(crate) const ANTICIPATION_S: f32 = HAT_JITTER_S / 2.0;
+
+/// How long, in beats, a lane's level takes to reach the one a latch asks
+/// for: no longer than a beat, which gated lanes fade over at most. Opinion.
+const LEVEL_RAMP_BEATS: f32 = 1.0;
+
+/// How long, in bars, a lane's colour takes to grade to the daylight a latch
+/// asks for. Opinion.
+const GRADE_RAMP_BARS: f32 = 1.0;
 
 /// Song `k`'s seed, which composes its score and seeds its noise: any song is
 /// reached without composing the ones before it.
@@ -38,13 +54,21 @@ pub fn song_score(seed: u64, k: u64, controls: Controls) -> Score {
 }
 
 /// The frame each bar of song `k` of `seed`'s run starts on under
-/// `controls`, at [`SAMPLE_RATE`]: where the pad strikes its chords, one a
-/// bar, in every loop.
+/// `controls`, at [`SAMPLE_RATE`]: the song's own bar grid.
 pub fn bar_frames(seed: u64, k: u64, controls: Controls) -> Vec<usize> {
     let score = song_score(seed, k, controls);
-    let loop_len = samples_at(score.loop_secs(), SAMPLE_RATE);
-    let mut frames: Vec<usize> = (part(&score, Lane::Pad).onsets(SAMPLE_RATE).into_iter())
-        .flat_map(|at| every_loop(at, loop_len))
+    bar_grid(
+        &score,
+        samples_at(score.loop_secs(), SAMPLE_RATE),
+        SAMPLE_RATE,
+    )
+}
+
+/// The frame each bar of a `score` song starts on at `sr`, its loop
+/// `loop_len` long: each bar's onset in every loop, in order.
+fn bar_grid(score: &Score, loop_len: usize, sr: u32) -> Vec<usize> {
+    let mut frames: Vec<usize> = (0..GEN_LOOP_BARS)
+        .flat_map(|bar| every_loop(bar_onset(bar, score.bar_s(), sr), loop_len))
         .collect();
     frames.sort_unstable();
     frames
@@ -92,12 +116,43 @@ impl Schedule {
         self.song.as_ref().map(|song| &song.score)
     }
 
-    /// Starts the next song, composed for `controls`, each lane mixed in at
-    /// its gain in `levels`.
-    pub(crate) fn start_song(&mut self, controls: Controls, levels: [f64; LANES]) {
-        let song = Song::new(self.seed, self.next_song, controls, levels, self.sr);
+    /// Starts the next song, composed for `controls`, which its first bar
+    /// latches.
+    pub(crate) fn start_song(&mut self, controls: Controls) {
+        let song = Song::new(self.seed, self.next_song, controls, self.sr);
+        self.start(song);
+    }
+
+    /// Starts the next song, composed for `controls`, with every lane present
+    /// at its gain in `levels` for good.
+    #[cfg(test)]
+    pub(crate) fn start_song_at(&mut self, controls: Controls, levels: [f64; LANES]) {
+        let song = Song::new(self.seed, self.next_song, controls, self.sr).at_levels(levels);
+        self.start(song);
+    }
+
+    fn start(&mut self, song: Song) {
         self.fading.extend(self.song.replace(song));
         self.next_song += 1;
+    }
+
+    /// Frames until the playing song's next latch frame or its end, whichever
+    /// comes first: as far as one step may play.
+    pub(crate) fn until_latch(&self) -> usize {
+        self.song.as_ref().map_or(0, |song| {
+            let next = song.next_latch().unwrap_or(song.len);
+            next.min(song.len) - song.played
+        })
+    }
+
+    /// Latches `controls` for the playing song's next bar if this is its latch
+    /// frame.
+    pub(crate) fn latch_due(&mut self, controls: Controls) {
+        if let Some(song) = &mut self.song
+            && song.next_latch() == Some(song.played)
+        {
+            song.latch(controls);
+        }
     }
 
     /// Plays the next `n` frames, at most [`BLOCK`] and
@@ -131,13 +186,24 @@ struct Song {
     rings: [Ring; LANES],
     chains: [Chain; LANES],
     crackle: Crackle,
-    /// Each lane's gain into the mix: the song's own, which its tails keep
-    /// past the next song's first bar.
-    levels: [f64; LANES],
+    /// The frame each bar starts on, and how many bars have latched.
+    bars: Vec<usize>,
+    latched: usize,
+    /// How far before its bar line a bar latches, how long a level ramps and a
+    /// colour grades, in frames.
+    anticipation: usize,
+    level_ramp: usize,
+    grade_ramp: usize,
+    /// Whether each lane plays the notes struck in the latched bar.
+    present: [bool; LANES],
+    /// Each lane's gain into the mix, which its tails keep past the song's
+    /// last bar at its value there.
+    levels: [Ramp; LANES],
 }
 
 impl Song {
-    fn new(seed: u64, k: u64, controls: Controls, levels: [f64; LANES], sr: u32) -> Self {
+    /// Song `k` of `seed`'s run at `sr`, its first bar latching `controls`.
+    fn new(seed: u64, k: u64, controls: Controls, sr: u32) -> Self {
         let score = song_score(seed, k, controls);
         let (mood, seed) = (score.mood, song_seed(seed, k));
         // as long as `render_lane` renders a loop, so each note lands where it
@@ -153,9 +219,26 @@ impl Song {
             .flat_map(|&at| every_loop(samples_at(at, sr), loop_len))
             .collect();
         kicks.sort_unstable();
-        let chains =
-            Lane::ALL.map(|lane| Chain::new(mood, lane, &part(&score, lane), len, &kicks, sr));
+        let chains = Lane::ALL.map(|lane| {
+            Chain::new(
+                mood,
+                lane,
+                &part(&score, lane),
+                len,
+                &kicks,
+                controls.daylight,
+                sr,
+            )
+        });
+        let present = Lane::ALL.map(|lane| lane_gain(lane, controls.intensity) > 0.0);
+        let levels = Lane::ALL
+            .map(|lane| Ramp::held(f64::from(resting_gain(lane, controls.intensity)), Shape::Db));
         Self {
+            bars: bar_grid(&score, loop_len, sr),
+            latched: 1,
+            anticipation: samples_at(ANTICIPATION_S, sr),
+            level_ramp: samples_at(LEVEL_RAMP_BEATS * score.beat_s(), sr),
+            grade_ramp: samples_at(GRADE_RAMP_BARS * score.bar_s(), sr),
             score,
             sr,
             len,
@@ -164,8 +247,48 @@ impl Song {
             rings: Default::default(),
             chains,
             crackle,
+            present,
             levels,
         }
+    }
+
+    /// The song with every lane present at its gain in `levels` for good.
+    #[cfg(test)]
+    fn at_levels(mut self, levels: [f64; LANES]) -> Self {
+        self.present = [true; LANES];
+        self.levels = levels.map(|level| Ramp::held(level, Shape::Db));
+        self.latched = self.bars.len();
+        self
+    }
+
+    /// The frame the next bar latches on: its line less the anticipation.
+    /// The first bar latched when the song started.
+    fn next_latch(&self) -> Option<usize> {
+        (self.bars.get(self.latched)).map(|&bar| bar - self.anticipation)
+    }
+
+    /// Latches `controls` for the next bar, on its latch frame: each lane
+    /// present where its gain is above 0 and ramping to it, or else holding
+    /// its level, and each chain grading to the daylight.
+    fn latch(&mut self, controls: Controls) {
+        let at = self.played;
+        for ((lane, present), level) in Lane::ALL
+            .iter()
+            .zip(&mut self.present)
+            .zip(&mut self.levels)
+        {
+            let gain = f64::from(lane_gain(*lane, controls.intensity));
+            *present = gain > 0.0;
+            if *present {
+                level.toward(at, gain, self.level_ramp);
+            } else {
+                level.hold(at);
+            }
+        }
+        for chain in &mut self.chains {
+            chain.grade(at, controls.daylight, self.grade_ramp);
+        }
+        self.latched += 1;
     }
 
     /// Strikes each note whose onset falls in the next `n` frames, then adds
@@ -175,19 +298,34 @@ impl Song {
         let end = self.played + n;
         let lanes = (Lane::ALL.into_iter().zip(&mut self.cues))
             .zip(self.rings.iter_mut().zip(&mut self.chains))
-            .zip(sums.iter_mut().zip(self.levels));
-        for (((lane, cues), (ring, chain)), (sum, level)) in lanes {
+            .zip(sums.iter_mut().zip(self.levels.iter().zip(self.present)));
+        for (((lane, cues), (ring, chain)), (sum, (level, present))) in lanes {
             let part = part(&self.score, lane);
-            cues.strike(&part, self.played, end, ring, self.sr);
+            cues.strike(&part, self.played, end, ring, present, self.sr);
             if matches!(part, Part::Bed) {
                 self.crackle
-                    .strike(self.played, end.min(self.len), ring, self.sr);
+                    .strike(self.played, end.min(self.len), ring, present, self.sr);
             }
             buf.resize(n, 0.0);
             ring.take(buf);
             chain.process(buf, &mut cues.noise);
-            for (s, x) in sum.iter_mut().zip(buf.iter()) {
-                *s += level * x;
+            // past the last bar, the tails ring at the level it ended on
+            let held = if self.played >= self.len {
+                Some(level.at(self.len))
+            } else {
+                (level.end() <= self.played).then(|| level.to())
+            };
+            match held {
+                Some(level) => {
+                    for (s, x) in sum.iter_mut().zip(buf.iter()) {
+                        *s += level * x;
+                    }
+                }
+                None => {
+                    for ((s, x), at) in sum.iter_mut().zip(buf.iter()).zip(self.played..) {
+                        *s += level.at(at.min(self.len)) * x;
+                    }
+                }
             }
         }
         self.played = end;
@@ -232,13 +370,27 @@ impl Cues {
     }
 
     /// Strikes into `ring`, which starts at frame `from`, each note whose
-    /// onset is before `to`.
-    fn strike(&mut self, part: &Part<'_>, from: usize, to: usize, ring: &mut Ring, sr: u32) {
+    /// onset is before `to`, silent unless the lane is `present`. A silent hit
+    /// still draws its noise, so no later hit's draws move; no other note
+    /// draws any, so it needs no synthesis.
+    fn strike(
+        &mut self,
+        part: &Part<'_>,
+        from: usize,
+        to: usize,
+        ring: &mut Ring,
+        present: bool,
+        sr: u32,
+    ) {
         while let Some(&(at, i)) = self.order.get(self.struck)
             && at < to
         {
-            let (snippet, gain) = part.note(i, &mut self.noise, sr);
-            ring.add(at - from, &snippet, gain);
+            if present || matches!(part, Part::Hits(_)) {
+                let (snippet, gain) = part.note(i, &mut self.noise, sr);
+                if present {
+                    ring.add(at - from, &snippet, gain);
+                }
+            }
             self.struck += 1;
         }
     }
@@ -267,11 +419,14 @@ impl Crackle {
         (secs * f64::from(sr)) as usize
     }
 
-    /// Strikes into `ring`, which starts at frame `from`, each pop before `to`.
-    fn strike(&mut self, from: usize, to: usize, ring: &mut Ring, sr: u32) {
+    /// Strikes into `ring`, which starts at frame `from`, each pop before
+    /// `to`, silent unless its lane is `present`, which draws the same.
+    fn strike(&mut self, from: usize, to: usize, ring: &mut Ring, present: bool, sr: u32) {
         while self.next < to {
             let (pop, gain) = crackle_pop(&mut self.rng, sr);
-            ring.add(self.next - from, &pop, gain);
+            if present {
+                ring.add(self.next - from, &pop, gain);
+            }
             self.next += Self::gap(&mut self.rng, sr);
         }
     }
@@ -317,15 +472,211 @@ mod tests {
     fn each_song_of_a_run_is_composed_anew() {
         let day = Controls::default();
         let scores: Vec<Score> = (0..8)
-            .map(|k| Song::new(1, k, day, UNITY, SAMPLE_RATE).score)
+            .map(|k| Song::new(1, k, day, SAMPLE_RATE).at_levels(UNITY).score)
             .collect();
         for (k, a) in scores.iter().enumerate() {
             assert!(!scores[k + 1..].contains(a), "song {k} recurs");
             assert!(
-                *a != Song::new(2, k as u64, day, UNITY, SAMPLE_RATE).score,
+                *a != Song::new(2, k as u64, day, SAMPLE_RATE)
+                    .at_levels(UNITY)
+                    .score,
                 "seeds 1 and 2 share song {k}"
             );
         }
+    }
+
+    /// Each lane of `seed`'s run from frame 0 to `to`, starting under
+    /// `start` and each of `calls` made once its frame has played, latched as
+    /// a `Performance` latches them; and the schedule it played.
+    fn latched(
+        seed: u64,
+        start: Controls,
+        calls: &[(usize, Controls)],
+        to: usize,
+    ) -> (Schedule, [Vec<f64>; LANES]) {
+        let mut run = Schedule::new(seed, 0, SAMPLE_RATE);
+        let mut lanes: [Vec<f64>; LANES] = Default::default();
+        let (mut asked, mut calls, mut at) = (start, calls.iter().peekable(), 0);
+        while at < to {
+            while let Some(&&(call, c)) = calls.peek()
+                && call == at
+            {
+                asked = c;
+                calls.next();
+            }
+            if run.song_left() == 0 {
+                run.start_song(asked);
+            }
+            run.latch_due(asked);
+            let next_call = calls.peek().map_or(to, |&&(call, _)| call);
+            let n = BLOCK
+                .min(run.until_latch())
+                .min(next_call - at)
+                .min(to - at);
+            for (lane, sum) in lanes.iter_mut().zip(run.play(n)) {
+                lane.extend_from_slice(sum);
+            }
+            at += n;
+        }
+        (run, lanes)
+    }
+
+    fn energy(buf: &[f64]) -> f64 {
+        buf.iter().map(|x| x * x).sum()
+    }
+
+    /// The drums' index in [`Lane::ALL`].
+    fn drums() -> usize {
+        Lane::ALL
+            .iter()
+            .position(|&lane| lane == Lane::Drums)
+            .expect("a drums lane")
+    }
+
+    #[test]
+    fn a_song_starts_at_the_levels_1a_played_it_at() {
+        for intensity in [0.0, 0.25, 0.5, 0.75, 1.0] {
+            let c = Controls::default().with_intensity(intensity);
+            let song = Song::new(3, 0, c, SAMPLE_RATE);
+            for ((lane, present), level) in Lane::ALL.iter().zip(song.present).zip(&song.levels) {
+                let gain = f64::from(lane_gain(*lane, intensity));
+                // an absent lane plays zeros, as 1a's played at a gain of 0
+                assert_eq!(present, gain > 0.0, "{lane:?} at {intensity}");
+                if present {
+                    assert_eq!(level.at(0), gain, "{lane:?} at {intensity}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_drums_strike_a_kick_on_every_bars_first_beat() {
+        let mut missing = Vec::new();
+        for seed in 0..64 {
+            for c in [Controls::default(), Controls::default().with_daylight(0.0)] {
+                let score = song_score(seed, 0, c);
+                let kicks: Vec<f32> = (score.drums.iter())
+                    .filter(|&&(_, kind, _)| kind == crate::compose::DrumKind::Kick)
+                    .map(|&(at, ..)| at)
+                    .collect();
+                for bar in 0..GEN_LOOP_BARS {
+                    let line = bar as f32 * score.bar_s();
+                    // within a thirty-second of the line, or anticipating it
+                    let first = (line - ANTICIPATION_S)..(line + score.beat_s() / 8.0);
+                    if !kicks.iter().any(|at| first.contains(at)) {
+                        missing.push(format!("seed {seed} daylight {}: bar {bar}", c.daylight));
+                    }
+                }
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "bars with no first-beat kick: {missing:#?}"
+        );
+    }
+
+    #[test]
+    fn a_lane_enters_on_its_first_note_after_the_line_at_six_db_or_more() {
+        let (seed, empty) = (2, Controls::default().with_intensity(0.0));
+        let moderate = empty.with_intensity(0.5);
+        let bars = bar_frames(seed, 0, empty);
+        let beat = samples_at(song_score(seed, 0, empty).beat_s(), SAMPLE_RATE);
+        let anticipation = samples_at(ANTICIPATION_S, SAMPLE_RATE);
+        let (before, line) = (bars[4], bars[5]);
+        // anywhere in the bar before, up to the line's own latch frame
+        for call in [before, before.midpoint(line), line - anticipation] {
+            let (_, lanes) = latched(seed, empty, &[(call, moderate)], line + beat);
+            let drums = &lanes[drums()];
+            let (was, now) = (energy(&drums[line - beat..line]), energy(&drums[line..]));
+            assert!(
+                now > 0.0 && now >= 4.0 * was,
+                "called at {call}: {was} then {now}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_levels_ramp_lands_on_its_target_one_beat_from_its_latch() {
+        let (seed, moderate) = (4, Controls::default());
+        let busy = moderate.with_intensity(1.0);
+        let bars = bar_frames(seed, 0, moderate);
+        let latch = bars[3] - samples_at(ANTICIPATION_S, SAMPLE_RATE);
+        let (run, _) = latched(seed, moderate, &[(bars[2], busy)], latch + 1);
+        let song = run.song.as_ref().expect("a song plays");
+        let level = &song.levels[drums()];
+        let beat = samples_at(song.score.beat_s(), SAMPLE_RATE);
+        let [from, to] = [moderate, busy].map(|c| f64::from(lane_gain(Lane::Drums, c.intensity)));
+        assert_eq!(level.at(latch), from);
+        assert!(level.at(latch + beat - 1) < to, "the ramp ends early");
+        assert_eq!(level.at(latch + beat), to);
+    }
+
+    #[test]
+    fn a_dropped_lane_holds_its_level_and_rings_out_what_it_struck() {
+        let (seed, busy) = (5, Controls::default().with_intensity(1.0));
+        let empty = busy.with_intensity(0.0);
+        let anticipation = samples_at(ANTICIPATION_S, SAMPLE_RATE);
+        let bars = bar_frames(seed, 0, busy);
+        let (_, kept) = latched(seed, busy, &[], bars[bars.len() - 1]);
+        let onsets: Vec<usize> = (Song::new(seed, 0, busy, SAMPLE_RATE).cues[drums()].order)
+            .iter()
+            .map(|&(at, _)| at)
+            .collect();
+        // a bar whose latch a hit of the bar before still rings over, alone
+        // until the bar's own first hit
+        let (bar, first) = (1..bars.len() - 2)
+            .find_map(|bar| {
+                let latch = bars[bar] - anticipation;
+                let first = onsets.iter().copied().find(|&at| at >= latch)?;
+                (energy(&kept[drums()][latch..first]) > 0.0).then_some((bar, first))
+            })
+            .expect("a bar a hit rings into");
+        let latch = bars[bar] - anticipation;
+        let to = bars[bar + 2];
+        let (run, dropped) = latched(seed, busy, &[(bars[bar - 1], empty)], to);
+        let level = &run.song.as_ref().expect("a song plays").levels[drums()];
+        let held = f64::from(lane_gain(Lane::Drums, busy.intensity));
+        assert!([latch, latch + 1, to].iter().all(|&n| level.at(n) == held));
+        assert_eq!(
+            &dropped[drums()][latch..first],
+            &kept[drums()][latch..first],
+            "the tails rang at another level"
+        );
+        // and nothing struck after the drop sounds, once those tails are out
+        assert_eq!(energy(&dropped[drums()][bars[bar + 1]..to]), 0.0);
+    }
+
+    #[test]
+    fn every_onset_a_bar_anticipates_lies_at_or_after_its_latch_frame() {
+        let anticipation = samples_at(ANTICIPATION_S, SAMPLE_RATE);
+        let mut early = Vec::new();
+        for seed in 0..64 {
+            for c in [Controls::default(), Controls::default().with_daylight(0.0)] {
+                let song = Song::new(seed, 0, c, SAMPLE_RATE);
+                // nearer a bar line than any onset the bar before plays late,
+                // whose latest sits a sixteenth or more before it
+                let window = samples_at(song.score.beat_s() / 8.0, SAMPLE_RATE);
+                for (lane, cues) in Lane::ALL.iter().zip(&song.cues) {
+                    for &(at, _) in &cues.order {
+                        let line = song.bars.iter().find(|&&bar| bar > at);
+                        if let Some(&line) = line
+                            && line - at < window
+                            && line - at > anticipation
+                        {
+                            early.push(format!(
+                                "seed {seed} {:?} {lane:?}: {} frames early",
+                                c.daylight,
+                                line - at
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        assert!(
+            early.is_empty(),
+            "onsets before their bar's latch frame: {early:#?}"
+        );
     }
 
     #[test]
@@ -335,7 +686,7 @@ mod tests {
             (1, Controls::default()),
             (2, Controls::default().with_daylight(0.0)),
         ] {
-            let song = Song::new(seed, 0, controls, UNITY, SAMPLE_RATE);
+            let song = Song::new(seed, 0, controls, SAMPLE_RATE).at_levels(UNITY);
             let strikes: Vec<usize> = pad
                 .map(|i| song.cues[i].order.iter().map(|&(at, _)| at).collect())
                 .unwrap_or_default();
@@ -348,7 +699,7 @@ mod tests {
         for c in [Controls::default(), Controls::default().with_daylight(0.0)] {
             let mut run = Schedule::new(6, 0, SAMPLE_RATE);
             for k in 0..3 {
-                run.start_song(c, UNITY);
+                run.start_song_at(c, UNITY);
                 let played = run.song.as_ref().map(|song| &song.score);
                 assert_eq!(played, Some(&song_score(6, k, c)), "song {k} at {c:?}");
             }
@@ -362,8 +713,8 @@ mod tests {
         // song's levels shows
         let levels = [UNITY, [0.5; LANES]];
         let mut run = Schedule::new(seed, 0, sr);
-        let mut first = Song::new(seed, 0, c, levels[0], sr);
-        let mut second = Song::new(seed, 1, c, levels[1], sr);
+        let mut first = Song::new(seed, 0, c, sr).at_levels(levels[0]);
+        let mut second = Song::new(seed, 1, c, sr).at_levels(levels[1]);
         let mut buf = Vec::new();
         // through song 1's first loop, past every tail of song 0
         let span = first.len + second.len / LOOPS_PER_SONG;
@@ -371,7 +722,7 @@ mod tests {
         let mut levels = levels.into_iter();
         while at < span {
             if run.song_left() == 0 {
-                run.start_song(c, levels.next().expect("two songs start"));
+                run.start_song_at(c, levels.next().expect("two songs start"));
             }
             let n = run.song_left().min(BLOCK);
             let mut alone: [Vec<f64>; LANES] = std::array::from_fn(|_| vec![0.0; n]);
@@ -404,7 +755,7 @@ mod tests {
     fn a_night_bed_ducks_after_each_kick() {
         let sr = SAMPLE_RATE;
         let night = Controls::default().with_daylight(0.0);
-        let mut song = Song::new(4, 0, night, UNITY, sr);
+        let mut song = Song::new(4, 0, night, sr).at_levels(UNITY);
         let loop_len = song.len / LOOPS_PER_SONG;
         let texture = Lane::ALL.iter().position(|&l| l == Lane::Texture).unwrap();
         let (mut bed, mut buf) = (Vec::with_capacity(loop_len), Vec::new());
@@ -439,7 +790,7 @@ mod tests {
                 gaps.push((crackle.next - last) as f64 / f64::from(sr));
                 last = crackle.next;
                 let mut ring = Ring::default();
-                crackle.strike(last, last + 1, &mut ring, sr);
+                crackle.strike(last, last + 1, &mut ring, true, sr);
                 let mut pop = vec![0.0; ring.0.len()];
                 ring.take(&mut pop);
                 pops.extend(pop.iter().map(|&v| v as f32));
@@ -473,7 +824,7 @@ mod tests {
     /// and each lane's first loop.
     fn lanes_at(c: Controls, sr: u32) -> (f64, [Vec<f32>; LANES]) {
         let mut run = Schedule::new(0, 0, sr);
-        run.start_song(c, UNITY);
+        run.start_song_at(c, UNITY);
         let loop_len = run.song_left() / LOOPS_PER_SONG;
         let mut lanes: [Vec<f32>; LANES] = Default::default();
         while lanes[0].len() < loop_len {

@@ -87,6 +87,10 @@ pub struct Score {
 
 pub(super) const GEN_LOOP_BARS: usize = 8;
 
+/// How far a hat may land from its slot, end to end: each lands within half of
+/// it either side, so a downbeat's hat may sound that much before its bar.
+pub(crate) const HAT_JITTER_S: f32 = 0.012;
+
 impl Score {
     /// Tempo in beats per minute.
     pub fn bpm(&self) -> f32 {
@@ -804,7 +808,7 @@ fn day_drums(
             if e % 2 == 1 {
                 t += swing_delay(SWING_HATS_DAY, at.eighth());
             }
-            t += (rng.unit() - 0.5) * 0.012;
+            t += (rng.unit() - 0.5) * HAT_JITTER_S;
             let open = g
                 .open_hat_bar_mod
                 .is_some_and(|m| e == 7 && bar % m == m - 1);
@@ -839,7 +843,7 @@ fn night_drums(rng: &mut NoiseStream, beat_s: f32) -> (Vec<(f32, DrumKind, f32)>
             }
             let mut t =
                 at.start + e as f32 * at.eighth() + swing_delay(SWING_HATS_NIGHT, at.eighth());
-            t += (rng.unit() - 0.5) * 0.012;
+            t += (rng.unit() - 0.5) * HAT_JITTER_S;
             out.push((
                 t.max(0.0),
                 DrumKind::Hat,

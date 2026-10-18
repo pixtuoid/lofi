@@ -12,9 +12,20 @@ pub use crate::synth::{Lane, render_lane};
 use crate::{Controls, Frame, Performance};
 
 /// Song `k` of `seed`'s run, from its first bar to the next song's, played
-/// under `controls` with no earlier song ringing into it.
-pub fn song(seed: u64, k: u64, controls: Controls) -> Vec<Frame> {
-    Performance::from_song(seed, k, controls).finish_song()
+/// from `controls` with no earlier song ringing into it, each of `calls`
+/// made to [`Performance::set_controls`] once its frame of the song has
+/// played.
+pub fn song(seed: u64, k: u64, controls: Controls, calls: &[(usize, Controls)]) -> Vec<Frame> {
+    let mut performance = Performance::from_song(seed, k, controls);
+    let mut played = Vec::new();
+    for &(at, controls) in calls {
+        let mut frames = vec![Frame::default(); at - played.len()];
+        performance.render(&mut frames);
+        played.extend(frames);
+        performance.set_controls(controls);
+    }
+    played.extend(performance.finish_song());
+    played
 }
 
 /// How many frames song `k` of `seed`'s run lasts under `controls`: where

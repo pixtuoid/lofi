@@ -4,9 +4,8 @@
 use std::fmt;
 
 use crate::dsp::SAMPLE_RATE;
-use crate::stream::master::{Ceiling, MASTER_GAIN, TIER_INTENSITIES, lane_gain};
+use crate::stream::master::{Ceiling, MASTER_GAIN, TIER_INTENSITIES};
 use crate::stream::schedule::{BLOCK, Schedule};
-use crate::synth::Lane;
 
 /// One stereo frame, `[left, right]`, at [`SAMPLE_RATE`].
 pub type Frame = [f32; 2];
@@ -67,7 +66,7 @@ impl Controls {
 /// [`set_controls`](Self::set_controls) call with the
 /// [`position`](Self::position) it is made at.
 pub struct Performance {
-    /// The latest controls asked for, which the next song's first bar latches.
+    /// The latest controls asked for, which the next bar latches.
     asked: Controls,
     position: u64,
     schedule: Schedule,
@@ -110,9 +109,14 @@ impl Performance {
         }
     }
 
-    /// Applies at the next song boundary, the incoming song's first bar, at or
-    /// after [`position`](Self::position); the first song's is position 0. Of
-    /// several calls before one boundary, the last wins.
+    /// Applies from the next bar on, latched a little before its line so a
+    /// note played early for the bar plays under it. It is heard from that
+    /// latch frame plus the ceiling's lookahead, `LOOKAHEAD_S` in
+    /// `stream::master`; the first bar latches the controls `new` was given,
+    /// at position 0. The intensity enters a lane at its first note in the
+    /// bar, and moves a lane's level within a beat; the daylight grades the
+    /// colour within a bar, and picks the day or night song at the next
+    /// song's first bar. Of several calls before one latch, the last wins.
     pub fn set_controls(&mut self, controls: Controls) {
         self.asked = controls;
     }
@@ -135,10 +139,12 @@ impl Performance {
     }
 
     /// Mixes the lanes' next frames into `mix` at [`MASTER_GAIN`]: at most
-    /// `max`, [`BLOCK`] and the rest of the playing song.
+    /// `max`, [`BLOCK`] and the frames to the playing song's next latch, so
+    /// each bar latches on its own frame however the calls chunk the render.
     fn mix_next(&mut self, max: usize) {
         self.start_due_song();
-        let n = max.min(BLOCK).min(self.schedule.song_left());
+        self.schedule.latch_due(self.asked.clamped());
+        let n = max.min(BLOCK).min(self.schedule.until_latch());
         let lanes = self.schedule.play(n);
         self.mix.clear();
         self.mix
@@ -154,9 +160,7 @@ impl Performance {
     /// under the controls asked for last.
     fn start_due_song(&mut self) {
         if self.schedule.song_left() == 0 {
-            let controls = self.asked.clamped();
-            let levels = Lane::ALL.map(|lane| f64::from(lane_gain(lane, controls.intensity)));
-            self.schedule.start_song(controls, levels);
+            self.schedule.start_song(self.asked.clamped());
         }
     }
 
@@ -182,7 +186,8 @@ mod tests {
     use super::*;
     use crate::audition;
     use crate::dsp::NoiseStream;
-    use crate::stream::schedule::{LOOPS_PER_SONG, UNITY};
+    use crate::stream::schedule::{ANTICIPATION_S, LOOPS_PER_SONG, UNITY};
+    use crate::synth::Lane;
 
     fn night() -> Controls {
         Controls::default().with_daylight(0.0)
@@ -227,7 +232,7 @@ mod tests {
         ];
         let seed = 2;
         let mut whole = Schedule::new(seed, 0, SAMPLE_RATE);
-        whole.start_song(Controls::default(), UNITY);
+        whole.start_song_at(Controls::default(), UNITY);
         // the first loop, before any song but the first plays
         let frames = whole.song_left() / LOOPS_PER_SONG;
         let mut unity = vec![Vec::with_capacity(frames); Lane::ALL.len()];
@@ -293,17 +298,22 @@ mod tests {
                     scope.spawn(move || {
                         let span = audition::song_len(seed, 0, a)
                             + audition::song_len(seed, 1, b) / LOOPS_PER_SONG;
+                        // past song 0's last latch, so it plays its corner to
+                        // its end and the next song latches the opposite one
+                        let bars = audition::bar_frames(seed, 0, a);
+                        let last = bars[bars.len() - 1]
+                            - crate::synth::samples_at(ANTICIPATION_S, SAMPLE_RATE);
                         let mut p = Performance::new(seed, a);
                         let mut ceiling = Ceiling::new(SAMPLE_RATE);
                         let mut heard = Heard::default();
                         while heard.played < span {
-                            p.mix_next(span - heard.played);
+                            if heard.played == last + 1 {
+                                p.set_controls(b);
+                            }
+                            let until = if heard.played <= last { last + 1 } else { span };
+                            p.mix_next(until - heard.played);
                             if heard.played == 0 {
                                 heard.first = p.schedule.playing().cloned();
-                                // a song latches the controls asked for
-                                // before its first frame, so the opposite
-                                // corner is asked for once this one plays
-                                p.set_controls(b);
                             }
                             // a frame at a time, which plays the same frames,
                             // to read the gain each one plays at
@@ -466,12 +476,35 @@ mod tests {
             random.push(size);
         }
         let [b0, b1] = bounds;
+        // song 0's latch frames, the night's grade ramping from the first
+        // past its ask
+        let anticipation = crate::synth::samples_at(ANTICIPATION_S, SAMPLE_RATE);
+        let latches: Vec<usize> = (audition::bar_frames(seed, 0, order[0]).iter().skip(1))
+            .map(|bar| bar - anticipation)
+            .collect();
+        let cut_at = |cuts: &[usize]| -> Vec<usize> {
+            (cuts.iter().scan(0, |at, &cut| {
+                let size = cut - *at;
+                *at = cut;
+                Some(size)
+            }))
+            .filter(|&size| size > 0)
+            .collect()
+        };
+        let beside: Vec<usize> = latches.iter().flat_map(|&l| [l - 1, l + 1]).collect();
+        let block = crate::stream::lanes::COEFF_BLOCK;
         let chunkings = [
             ("random sizes", random),
             ("one frame at each boundary", vec![b0, 1, b1 - b0 - 1, 1]),
             (
                 "a call across each boundary",
                 vec![b0 - 63, 127, b1 - b0 - 127, 127],
+            ),
+            ("cut at each latch", cut_at(&latches)),
+            ("a frame either side of each latch", cut_at(&beside)),
+            (
+                "a frame off each coefficient block",
+                [block - 1, block + 1].repeat(span / (2 * block) + 1),
             ),
         ];
         let off: Vec<String> = std::thread::scope(|scope| {
@@ -501,7 +534,7 @@ mod tests {
         playing.finish_song();
         playing.set_controls(c);
         let reached = playing.finish_song();
-        let alone = audition::song(seed, 2, c);
+        let alone = audition::song(seed, 2, c, &[]);
         assert!(audible(&alone));
         assert_eq!(reached.len(), alone.len());
         let first_loop = alone.len() / LOOPS_PER_SONG;
@@ -636,63 +669,181 @@ mod tests {
         assert!(first_diff(&play(night()), &day).is_some());
     }
 
+    /// How late the ceiling plays the mix, in frames.
+    fn lookahead() -> usize {
+        (crate::stream::master::LOOKAHEAD_S * f64::from(SAMPLE_RATE)) as usize
+    }
+
     #[test]
-    fn set_controls_takes_effect_at_the_next_song_and_the_last_call_wins() {
-        let seed = 6;
-        let boundary = audition::song_len(seed, 0, Controls::default());
-        let mut plain = Performance::new(seed, Controls::default());
-        let unasked = [plain.finish_song(), plain.finish_song()].concat();
-        // `frames` frames, each of `calls` made once its frame count has played
-        let play = |calls: &[(usize, Controls)], frames: usize| {
-            let mut p = Performance::new(seed, Controls::default());
-            let mut out = Vec::with_capacity(frames);
-            for &(at, c) in calls {
-                out.extend(next(&mut p, at - out.len()));
-                p.set_controls(c);
-            }
-            out.extend(next(&mut p, frames - out.len()));
-            out
-        };
-        let second = SAMPLE_RATE as usize;
-        let mut early = Performance::new(seed, Controls::default());
-        early.set_controls(night());
-        let early = next(&mut early, second);
-        assert!(first_diff(&early, &unasked[..second]).is_some());
-        assert_eq!(
-            first_diff(&early, &next(&mut Performance::new(seed, night()), second)),
-            None,
-            "a call before the first render missed the first song"
+    fn a_call_is_heard_from_the_next_bars_latch_and_the_last_call_before_it_wins() {
+        let (seed, c) = (6, Controls::default());
+        let busy = c.with_intensity(1.0);
+        let bars = audition::bar_frames(seed, 0, c);
+        let anticipation = crate::synth::samples_at(ANTICIPATION_S, SAMPLE_RATE);
+        let [previous, latch, after] = [3, 4, 5].map(|bar| bars[bar] - anticipation);
+        let frames = bars[6];
+        let unasked = play(seed, c, &[], &[], frames);
+        let at_latch = play(seed, c, &[(latch, busy)], &[], frames);
+        let heard = first_diff(&at_latch, &unasked);
+        assert!(
+            heard.is_some_and(|at| at >= latch + lookahead()),
+            "heard at {heard:?}, latched at {latch}"
         );
-        let mid = boundary / 2;
-        let night_song = audition::song(seed, 1, night());
-        let second_loop = night_song.len() / LOOPS_PER_SONG;
-        for (name, at) in [("mid-song", mid), ("at the boundary", boundary)] {
-            let asked = play(&[(at, night())], boundary + night_song.len());
+        for at in [previous + 1, previous.midpoint(latch)] {
+            let early = play(seed, c, &[(at, busy)], &[], frames);
             assert_eq!(
-                first_diff(&asked[..boundary], &unasked[..boundary]),
+                first_diff(&early, &at_latch),
                 None,
-                "{name}: the playing song changed"
-            );
-            assert!(
-                first_diff(&asked[boundary..], &unasked[boundary..]).is_some(),
-                "{name}: the call changed nothing"
-            );
-            assert_eq!(
-                first_diff(&asked[boundary + second_loop..], &night_song[second_loop..]),
-                None,
-                "{name}: the next song isn't the night one"
+                "a call at {at} isn't the bar's"
             );
         }
-        assert_eq!(
-            first_diff(&play(&[(boundary + 1, night())], unasked.len()), &unasked),
-            None,
-            "a call past the boundary changed the song it passed"
+        let late = play(seed, c, &[(latch + 1, busy)], &[], frames);
+        let heard = first_diff(&late, &unasked);
+        assert!(
+            heard.is_some_and(|at| at >= after + lookahead()),
+            "a call past the latch is heard at {heard:?}, before the next bar's"
         );
-        let calls = [(mid, night()), (mid + 1, Controls::default())];
+        let calls = [(previous + 1, night().with_intensity(0.0)), (latch, busy)];
         assert_eq!(
-            first_diff(&play(&calls, unasked.len()), &unasked),
+            first_diff(&play(seed, c, &calls, &[], frames), &at_latch),
             None,
             "the last call didn't win"
+        );
+        // the first bar latches the controls a call before the first render asks for
+        let mut first = Performance::new(seed, c);
+        first.set_controls(night());
+        let second = SAMPLE_RATE as usize;
+        assert_eq!(
+            first_diff(
+                &next(&mut first, second),
+                &next(&mut Performance::new(seed, night()), second)
+            ),
+            None,
+            "a call before the first render missed the first bar"
+        );
+    }
+
+    #[test]
+    fn the_daylight_grades_the_playing_song_and_picks_the_next_songs_family() {
+        let seed = 6;
+        let boundary = audition::song_len(seed, 0, Controls::default());
+        let bars = audition::bar_frames(seed, 0, Controls::default());
+        let anticipation = crate::synth::samples_at(ANTICIPATION_S, SAMPLE_RATE);
+        let latch = bars[8] - anticipation;
+        let mut p = Performance::new(seed, Controls::default());
+        let mut heard = next(&mut p, latch);
+        p.set_controls(night());
+        heard.extend(next(&mut p, boundary - latch));
+        assert_eq!(
+            p.schedule.playing(),
+            Some(&audition::song_score(seed, 0, Controls::default()))
+        );
+        let unasked = next(&mut Performance::new(seed, Controls::default()), boundary);
+        let graded = first_diff(&heard, &unasked);
+        assert!(
+            graded.is_some_and(|at| at >= latch + lookahead()),
+            "the colour moved at {graded:?}, latched at {latch}"
+        );
+        next(&mut p, 1);
+        assert_eq!(
+            p.schedule.playing(),
+            Some(&audition::song_score(seed, 1, night())),
+            "the next song isn't the night's"
+        );
+    }
+
+    #[test]
+    fn a_song_plays_its_timeline_the_same_reached_by_playback_or_alone() {
+        let (seed, c) = (5, Controls::default());
+        let k0 = audition::bar_frames(seed, 0, c);
+        let anticipation = crate::synth::samples_at(ANTICIPATION_S, SAMPLE_RATE);
+        let boundary = audition::song_len(seed, 0, c);
+        // asked before song 0's last latch, so its level ramps and grade run
+        // past its end
+        let last = k0[k0.len() - 1] - anticipation;
+        let into = night().with_intensity(0.2);
+        let mut playing = Performance::new(seed, c);
+        next(&mut playing, last);
+        playing.set_controls(into);
+        next(&mut playing, boundary - last);
+        let k1 = audition::bar_frames(seed, 1, into);
+        let calls = [
+            (k1[3], into.with_intensity(1.0)),
+            (k1[9], c.with_daylight(0.3)),
+        ];
+        let mut reached = Vec::new();
+        for &(at, controls) in &calls {
+            reached.extend(next(&mut playing, at - reached.len()));
+            playing.set_controls(controls);
+        }
+        reached.extend(playing.finish_song());
+        let alone = audition::song(seed, 1, into, &calls);
+        assert_eq!(reached.len(), alone.len());
+        let first_loop = alone.len() / LOOPS_PER_SONG;
+        assert!(
+            first_diff(&reached[..first_loop], &alone[..first_loop]).is_some(),
+            "song 0's tails ring into song 1"
+        );
+        assert_eq!(
+            first_diff(&reached[first_loop..], &alone[first_loop..]),
+            None,
+            "song 1 after the tails, from its second loop"
+        );
+    }
+
+    #[test]
+    fn the_ceiling_stays_a_backstop_under_random_timelines_across_seams() {
+        // opinion, as the corners' row: few frames turned down, and not far
+        const MOST_LIMITED_SHARE: f64 = 0.001;
+        const DEEPEST_REDUCTION_DB: f64 = 1.0;
+        let runs: Vec<Heard> = std::thread::scope(|scope| {
+            let runs: Vec<_> = (0..4u64)
+                .map(|seed| {
+                    scope.spawn(move || {
+                        let mut rng = NoiseStream::new(seed + 40);
+                        let span = (0..3)
+                            .map(|k| audition::song_len(seed, k, Controls::default()))
+                            .sum::<usize>();
+                        let mut p = Performance::new(seed, Controls::default());
+                        let mut ceiling = Ceiling::new(SAMPLE_RATE);
+                        let mut heard = Heard::default();
+                        let mut next_call = 0;
+                        while heard.played < span {
+                            if heard.played >= next_call {
+                                p.set_controls(
+                                    Controls::default()
+                                        .with_daylight(rng.unit())
+                                        .with_intensity(rng.unit()),
+                                );
+                                next_call += 1 + (rng.unit() * 4.0 * SAMPLE_RATE as f32) as usize;
+                            }
+                            p.mix_next((span - heard.played).min(next_call - heard.played));
+                            for i in 0..p.mix.len() {
+                                heard.loudest = heard.loudest.max(p.mix[i].abs());
+                                ceiling.limit(&mut p.mix[i..=i]);
+                                heard.hear(ceiling.gain(), ceiling.clamp(p.mix[i]), p.mix[i]);
+                            }
+                        }
+                        heard
+                    })
+                })
+                .collect();
+            runs.into_iter()
+                .map(|run| run.join().expect("a run panicked"))
+                .collect()
+        });
+        let off: Vec<String> = (runs.iter().enumerate())
+            .filter(|(_, h)| {
+                h.loudest == 0.0
+                    || h.limited_share() > MOST_LIMITED_SHARE
+                    || h.deepest_db() > DEEPEST_REDUCTION_DB
+                    || h.caught > 0
+            })
+            .map(|(seed, h)| format!("seed {seed}: {h:?}"))
+            .collect();
+        assert!(
+            off.is_empty(),
+            "the ceiling did more than back the mix up: {off:#?}"
         );
     }
 }
