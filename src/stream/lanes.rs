@@ -691,10 +691,15 @@ mod tests {
             &dry[..latch],
             "the ramp moved before its latch"
         );
-        // a beat's hundredth in, the ramp has barely left dry
-        let window = latch..latch + samples_at(0.01, SAMPLE_RATE);
-        let off = |b: &[f64]| -> f64 { window.clone().map(|i| (ramped[i] - b[i]).powi(2)).sum() };
-        assert!(off(&dry) < off(&wet), "the tilt jumped to its target");
+        let off = |window: Range<usize>, b: &[f64]| -> f64 {
+            window.map(|i| (ramped[i] - b[i]).powi(2)).sum()
+        };
+        // a tenth of the way in, it has left dry but sits far nearer it
+        let early = latch + samples_at(0.4, SAMPLE_RATE);
+        let window = early..early + samples_at(0.01, SAMPLE_RATE);
+        let (from_dry, from_wet) = (off(window.clone(), &dry), off(window, &wet));
+        assert!(from_dry > 0.0, "the tilt never moved off dry");
+        assert!(from_dry < from_wet, "the tilt jumped toward its target");
     }
 
     /// The lanes whose colour grades with the daylight.
