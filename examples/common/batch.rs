@@ -111,6 +111,9 @@ pub(crate) enum Sweep {
     Dusk,
     /// Daylight held at each of [`TWILIGHT`]'s, between night and day.
     Twilight,
+    /// Asks for rain over the take's middle half, dry around it, at full day
+    /// and a moderate room.
+    Rain,
 }
 
 /// The songs the dusk sweep spans: a night song follows its dusk, since a
@@ -122,7 +125,8 @@ const DUSK_SONGS: u64 = 2;
 const TWILIGHT: [(&str, f32); 2] = [("quarter", 0.25), ("threequarters", 0.75)];
 
 impl Sweep {
-    pub(crate) const ALL: [Sweep; 3] = [Sweep::Intensity, Sweep::Dusk, Sweep::Twilight];
+    pub(crate) const ALL: [Sweep; 4] =
+        [Sweep::Intensity, Sweep::Dusk, Sweep::Twilight, Sweep::Rain];
 
     /// The `--sweep` spelling.
     pub(crate) fn name(self) -> &'static str {
@@ -130,6 +134,7 @@ impl Sweep {
             Sweep::Intensity => "intensity",
             Sweep::Dusk => "dusk",
             Sweep::Twilight => "twilight",
+            Sweep::Rain => "rain",
         }
     }
 
@@ -140,7 +145,9 @@ impl Sweep {
         let at_day = Controls::default().with_daylight(day.1);
         match self {
             Sweep::Intensity => vec![(day.0, at_day.with_intensity(Tier::Empty.intensity()))],
-            Sweep::Dusk => vec![(moderate.name(), at_day.with_intensity(moderate.intensity()))],
+            Sweep::Dusk | Sweep::Rain => {
+                vec![(moderate.name(), at_day.with_intensity(moderate.intensity()))]
+            }
             Sweep::Twilight => (TWILIGHT.iter())
                 .map(|&(name, daylight)| (name, at_day.with_daylight(daylight)))
                 .collect(),
@@ -151,7 +158,7 @@ impl Sweep {
     fn songs(self) -> u64 {
         match self {
             Sweep::Dusk => DUSK_SONGS,
-            Sweep::Intensity | Sweep::Twilight => 1,
+            Sweep::Intensity | Sweep::Twilight | Sweep::Rain => 1,
         }
     }
 
@@ -159,15 +166,11 @@ impl Sweep {
     /// long, of songs `song_bars` long, `now` being what it asked for last.
     fn call(self, bar: usize, song_bars: usize, bars: usize, now: Controls) -> Option<Controls> {
         match self {
-            Sweep::Intensity => {
-                let quarter = bars / 4;
-                let tier = match bar {
-                    b if b == quarter => Tier::Busy,
-                    b if b == bars - quarter => Tier::Empty,
-                    _ => return None,
-                };
-                Some(now.with_intensity(tier.intensity()))
-            }
+            Sweep::Intensity => middle_half(bar, bars).map(|on| {
+                let tier = if on { Tier::Busy } else { Tier::Empty };
+                now.with_intensity(tier.intensity())
+            }),
+            Sweep::Rain => middle_half(bar, bars).map(|on| now.with_rain(f32::from(u8::from(on)))),
             Sweep::Dusk => (bar < song_bars).then(|| {
                 let [(_, day), (_, night)] = MOODS;
                 let done = (bar + 1) as f32 / song_bars as f32;
@@ -175,6 +178,17 @@ impl Sweep {
             }),
             Sweep::Twilight => None,
         }
+    }
+}
+
+/// Whether bar `bar` of a take `bars` long starts its middle half (`true`) or
+/// ends it (`false`), if either.
+fn middle_half(bar: usize, bars: usize) -> Option<bool> {
+    let quarter = bars / 4;
+    match bar {
+        b if b == quarter => Some(true),
+        b if b == bars - quarter => Some(false),
+        _ => None,
     }
 }
 
@@ -201,7 +215,7 @@ const JUDGE_TIER_SEEDS: u64 = JUDGE_MIN_UNTIED.div_ceil(2) as u64;
 
 /// The sweeps the judge batch plays, each a group of its own: those only a
 /// listener can judge, which no closed-form test pins.
-const JUDGE_SWEEPS: [Sweep; 1] = [Sweep::Twilight];
+const JUDGE_SWEEPS: [Sweep; 2] = [Sweep::Twilight, Sweep::Rain];
 
 /// The seeds each judged sweep spreads over its takes: room above
 /// [`JUDGE_MIN_UNTIED`] for the pairs a change leaves tied (opinion).
@@ -735,6 +749,15 @@ mod tests {
                         "seed {seed}: dusk turns back"
                     );
                     assert_eq!(daylights.last(), Some(&night), "seed {seed}");
+                }
+                Sweep::Rain => {
+                    assert_eq!(run.controls().rain, 0.0, "the rain sweep starts dry");
+                    let rains: Vec<f32> = asked.iter().map(|c| c.rain).collect();
+                    assert_eq!(rains, [1.0, 0.0], "seed {seed}");
+                    assert!(
+                        asked.iter().all(|c| c.with_rain(0.0) == run.controls()),
+                        "seed {seed}: rain moved another control"
+                    );
                 }
                 Sweep::Twilight => {
                     assert!(asked.is_empty(), "twilight holds its daylight");
