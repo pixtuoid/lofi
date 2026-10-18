@@ -359,18 +359,14 @@ mod tests {
     }
 
     #[test]
-    fn the_judge_batch_names_each_take_once_by_its_mood_tier_and_seed() {
+    fn the_judge_batch_names_each_take_once_by_its_group_mix_and_seed() {
         let takes = parsed(&["--batch", "judge"])
             .takes()
             .expect("the takes' names are distinct");
-        let mut names: Vec<&str> = takes.iter().map(|t| t.name.as_str()).collect();
         for take in &takes {
-            let (mood, tier) = (take.run.mood_name(), take.run.tier().name());
-            assert_eq!(take.name, format!("gen_{mood}_{tier}_{:03}.wav", take.seed));
+            let (group, mix) = (take.run.mood_name(), take.run.mix_name());
+            assert_eq!(take.name, format!("gen_{group}_{mix}_{:03}.wav", take.seed));
         }
-        names.sort_unstable();
-        names.dedup();
-        assert_eq!(names.len(), takes.len(), "two takes share a name");
         assert!(
             Args::parse(
                 ["--batch", "judge", "--solo", "pad"]

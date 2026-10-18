@@ -11,10 +11,11 @@ ALPHA = 0.05
 # nearness to the corpus by FAD
 JUDGES = ("audiobox_ce", "muq_eval_mi", "fad")
 
-# the moods a batch can hold, `examples/common/batch.rs`'s `MOODS`
-MOODS = ("day", "night")
+# the groups the judge batch holds, a take's first name: `examples/common/batch.rs`'s
+# `MOODS`, then its `JUDGE_SWEEPS`
+GROUPS = ("day", "night", "dusk", "twilight")
 
-# from worst: a mood's verdict, and the batch's
+# from worst: a group's verdict, and the batch's
 RANKS = ("REGRESSION", "INSUFFICIENT", "PASS", "UNCHANGED")
 
 
@@ -32,9 +33,9 @@ def min_untied(alpha):
     return next(n for n in count(1) if tail_p(n, n) < alpha)
 
 
-# the fewest when every judge tests every mood, the most tests a batch gates on:
-# the take count the judge batch builds each mood's groups to
-MIN_UNTIED = min_untied(ALPHA / (len(JUDGES) * len(MOODS)))
+# the fewest when every judge tests every group, the most tests a batch gates
+# on: the take count the judge batch builds each group to
+MIN_UNTIED = min_untied(ALPHA / (len(JUDGES) * len(GROUPS)))
 
 
 def sign_test(gains, alpha):
@@ -54,7 +55,7 @@ def sign_test(gains, alpha):
 
 
 def grouped(pairs):
-    """Each mood's pairs, then every pair as "all": the changed ones, and how
+    """Each group's pairs, then every pair as "all": the changed ones, and how
     many were byte-identical, which no judge scores."""
     groups = {mood: [p for p in pairs if p["mood"] == mood] for mood in sorted({p["mood"] for p in pairs})}
     groups["all"] = pairs
@@ -68,13 +69,13 @@ def grouped(pairs):
 
 
 def judged(pairs):
-    """The verdict on `pairs`, each a dict of its `mood`, whether it is
-    `identical`, and otherwise its `gains` on each of `JUDGES`.
+    """The verdict on `pairs`, each a dict of its group as `mood`, whether it
+    is `identical`, and otherwise its `gains` on each of `JUDGES`.
 
-    Each mood with a changed pair is a group of sign tests, one a judge, at
-    ALPHA split Bonferroni over every such test; a mood with none is
-    UNCHANGED. The pooled "all" group is tested alike but gates nothing, since
-    it repeats the moods' pairs."""
+    Each group with a changed pair gets a sign test a judge, at ALPHA split
+    Bonferroni over every such test; a group with none is UNCHANGED. The
+    pooled "all" group is tested alike but gates nothing, since it repeats
+    the groups' pairs."""
     groups = grouped(pairs)
     moods = [g for g in groups if g != "all"]
     tests = len(JUDGES) * sum(bool(groups[m]["changed"]) for m in moods)
@@ -105,6 +106,6 @@ def exit_message(result):
     passes or changed nothing."""
     return {
         "REGRESSION": "cand scores worse than base",
-        "INSUFFICIENT": f"a mood has fewer than {result['min_untied']} untied pairs in some test,"
+        "INSUFFICIENT": f"a group has fewer than {result['min_untied']} untied pairs in some test,"
         f" too few to ever reject at {result['alpha']:.4g}",
     }.get(result["overall"])
