@@ -754,9 +754,15 @@ mod tests {
         let (seed, c) = (3, Controls::default());
         let bars = bar_frames(seed, 0, c);
         let latch = bars[3] - samples_at(ANTICIPATION_S, SAMPLE_RATE);
-        let (run, _) = latched(seed, c, &[(bars[2], c.with_rain(1.0))], latch + 1);
+        // past the later bars' latches, which ask for the same rain
+        let (run, _) = latched(seed, c, &[(bars[2], c.with_rain(1.0))], bars[7]);
         let song = run.song.as_ref().expect("a song plays");
         let phrase = samples_at(RAIN_RAMP_BARS * song.score.bar_s(), SAMPLE_RATE);
+        assert_eq!(
+            song.rain.end(),
+            latch + phrase,
+            "a later latch restarted rain"
+        );
         for (lane, chain) in Lane::ALL.iter().zip(&song.chains) {
             let want = rain::DARKENED.contains(lane).then_some(latch + phrase);
             assert_eq!(chain.rained_until(), want, "{lane:?}");
