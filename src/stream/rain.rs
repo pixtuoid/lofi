@@ -22,6 +22,11 @@ pub(crate) const RAIN_DRUM_DB: f64 = -2.0;
 /// (step 1b's design, Rain).
 pub(crate) const RAIN_RAMP_BARS: f32 = 4.0;
 
+/// The lanes rain darkens, by step 1b's design: spelled apart from
+/// [`darkens`], so a test of it reads what it should be.
+#[cfg(test)]
+pub(crate) const DARKENED: [Lane; 3] = [Lane::Sparkle, Lane::Keys, Lane::Drums];
+
 /// The tilt's lift at `rain`.
 pub(crate) fn lift(rain: f64) -> f64 {
     let dry = f64::from(TILT_LIFT);

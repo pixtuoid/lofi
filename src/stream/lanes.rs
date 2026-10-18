@@ -650,7 +650,7 @@ mod tests {
                 tape.process(&mut buf);
                 buf.iter().map(|&v| v as f32).collect::<Vec<f32>>()
             });
-            if !crate::stream::rain::darkens(lane) {
+            if !rain::DARKENED.contains(&lane) {
                 assert_eq!(dry, wet, "rain tilts {lane:?}");
                 continue;
             }
@@ -664,6 +664,37 @@ mod tests {
                 "rain darkens {lane:?}'s top by only {drop:.2} dB"
             );
         }
+    }
+
+    #[test]
+    fn a_rain_ramp_darkens_the_tilt_a_sample_at_a_time() {
+        let n = samples_at(1.0, SAMPLE_RATE);
+        let mut rng = NoiseStream::new(8);
+        let noise: Vec<f64> = (0..n).map(|_| f64::from(rng.norm()) * 0.3).collect();
+        let latch = n / 2;
+        let play = |rain: f64, ramp: bool| {
+            let mut tape = tape(
+                Mood::Day,
+                Lane::Drums,
+                Controls::default().with_rain(rain as f32),
+            );
+            if ramp && let Some(r) = &mut tape.rain {
+                r.toward(latch, 1.0, samples_at(4.0, SAMPLE_RATE));
+            }
+            let mut buf = noise.clone();
+            tape.process(&mut buf);
+            buf
+        };
+        let [dry, wet, ramped] = [play(0.0, false), play(1.0, false), play(0.0, true)];
+        assert_eq!(
+            &ramped[..latch],
+            &dry[..latch],
+            "the ramp moved before its latch"
+        );
+        // a beat's hundredth in, the ramp has barely left dry
+        let window = latch..latch + samples_at(0.01, SAMPLE_RATE);
+        let off = |b: &[f64]| -> f64 { window.clone().map(|i| (ramped[i] - b[i]).powi(2)).sum() };
+        assert!(off(&dry) < off(&wet), "the tilt jumped to its target");
     }
 
     /// The lanes whose colour grades with the daylight.

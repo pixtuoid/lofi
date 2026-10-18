@@ -749,7 +749,7 @@ mod tests {
         let song = run.song.as_ref().expect("a song plays");
         let phrase = samples_at(RAIN_RAMP_BARS * song.score.bar_s(), SAMPLE_RATE);
         for (lane, chain) in Lane::ALL.iter().zip(&song.chains) {
-            let want = rain::darkens(*lane).then_some(latch + phrase);
+            let want = rain::DARKENED.contains(lane).then_some(latch + phrase);
             assert_eq!(chain.rained_until(), want, "{lane:?}");
         }
     }
@@ -812,6 +812,10 @@ mod tests {
                 .iter()
                 .all(|&n| fading.gain(sparkle, n) == held)
         );
+        for (lane, chain) in Lane::ALL.iter().zip(&fading.chains) {
+            let want = rain::DARKENED.contains(lane).then_some(len);
+            assert_eq!(chain.rained_until(), want, "{lane:?}'s tilt kept ramping");
+        }
     }
 
     /// Song 0's length under `c`.
