@@ -3,6 +3,7 @@
 $J set up as SKILL.md's GENERATOR loop step 5 says."""
 
 import errno
+import json
 import sys
 import tempfile
 import unittest
@@ -12,7 +13,15 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import numpy as np
-from ab_judge import FLOOR_CALIBRATED_DBFS, FLOOR_CALIBRATED_LUFS, floored, mono_lufs, refuse_read_only
+from ab_judge import (
+    FLOOR_CALIBRATED_DBFS,
+    FLOOR_CALIBRATED_LUFS,
+    cached_quietest,
+    floored,
+    mono_lufs,
+    quietest_file,
+    stats_file,
+)
 
 SR = 44100
 NAME = "gen_day_empty_000.wav"
@@ -44,6 +53,9 @@ class Floor(unittest.TestCase):
 
 
 class FadCache(unittest.TestCase):
+    SHA = "c" * 64
+    QUIETEST = -20.0
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.caches = Path(self.tmp.name)
@@ -51,21 +63,37 @@ class FadCache(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def refused(self, too_quiet):
-        """`refuse_read_only`'s message over a cache that refuses every write."""
+    def cache_quietest(self):
+        quietest_file(self.caches, self.SHA).write_text(json.dumps({"lufs": self.QUIETEST}) + "\n")
+
+    def refused(self, takes_lufs):
+        """`cached_quietest`'s exit message over a cache that refuses every write."""
         with mock.patch("tempfile.TemporaryFile", side_effect=OSError(errno.EROFS, "Read-only file system")):
             with self.assertRaises(SystemExit) as refused:
-                refuse_read_only(self.caches, too_quiet)
+                cached_quietest(self.caches, self.SHA, takes_lufs)
         return str(refused.exception.code)
 
+    def test_a_read_only_cache_without_the_corpus_loudness_asks_for_provision(self):
+        self.assertIn("run provision", self.refused(self.QUIETEST + 1))
+
     def test_a_read_only_cache_without_the_corpus_statistics_asks_for_provision(self):
-        self.assertIn("run provision", self.refused(too_quiet=False))
+        self.cache_quietest()
+        self.assertIn("run provision", self.refused(self.QUIETEST + 1))
 
     def test_a_read_only_cache_refuses_a_batch_quieter_than_the_corpus_locally(self):
-        self.assertIn("quieter than the corpus's quietest reference, so judge it locally", self.refused(too_quiet=True))
+        self.cache_quietest()
+        stats_file(self.caches, self.SHA, self.QUIETEST).write_bytes(b"")
+        self.assertIn("quieter than the corpus's quietest reference, so judge it locally", self.refused(self.QUIETEST - 1))
+
+    def test_a_cache_holding_the_batch_level_is_read_without_a_probe(self):
+        self.cache_quietest()
+        stats_file(self.caches, self.SHA, self.QUIETEST).write_bytes(b"")
+        with mock.patch("tempfile.TemporaryFile") as probe:
+            self.assertEqual(cached_quietest(self.caches, self.SHA, self.QUIETEST + 1), self.QUIETEST)
+        probe.assert_not_called()
 
     def test_a_writable_cache_is_let_through_and_keeps_no_probe(self):
-        refuse_read_only(self.caches, too_quiet=True)
+        self.assertIsNone(cached_quietest(self.caches, self.SHA, self.QUIETEST))
         self.assertEqual(list(self.caches.iterdir()), [])
 
 

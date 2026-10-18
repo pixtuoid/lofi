@@ -276,22 +276,41 @@ class MuqEval:
         return float((mi * weights).sum() / weights.sum())
 
 
-def refuse_read_only(caches, too_quiet):
-    """Exits, before any build, when `caches` lacks statistics this run needs
-    and can't take them, as the remote judge's read-only cache can't: with the
-    corpus's own missing, provisioning builds them; a batch quieter than the
+def quietest_file(caches, manifest_sha):
+    # the corpus alone sets it, and measuring it decodes every track
+    return caches / f"{manifest_sha}-quietest.json"
+
+
+def stats_file(caches, manifest_sha, lufs):
+    # keyed by everything the statistics are built from; the level is one any
+    # batch louder than the quietest reference shares
+    built = json.dumps([LAION_CLAP, FAD_EMBEDDING, HOLDOUT, RESAMPLE])
+    return caches / f"{manifest_sha}-{hashlib.sha256(built.encode()).hexdigest()[:16]}-{lufs:.2f}.npz"
+
+
+def cached_quietest(caches, manifest_sha, takes_lufs):
+    """The quietest reference's loudness if `caches` holds it, else None.
+    Exits first when `caches` lacks a file this run builds and can't take
+    it, as the remote judge's read-only cache can't: with the corpus's own
+    statistics missing, provisioning builds them; a batch quieter than the
     quietest reference needs its own level, which only a local run builds.
     Tried rather than asked, since Modal promises a read-only mount only as
     "read only from within containers" (modal 1.6.1 `volume.py`:598)."""
+    cached = quietest_file(caches, manifest_sha)
+    quietest = json.loads(cached.read_text())["lufs"] if cached.exists() else None
+    if quietest is not None and stats_file(caches, manifest_sha, min(takes_lufs, quietest)).exists():
+        return quietest
     try:
+        caches.mkdir(parents=True, exist_ok=True)
         tempfile.TemporaryFile(dir=caches).close()
     except OSError:
-        if too_quiet:
+        if quietest is not None and takes_lufs < quietest:
             sys.exit(
                 "no FAD statistics at this batch's level, and the cache is read-only: the batch"
                 " is quieter than the corpus's quietest reference, so judge it locally"
             )
         sys.exit("the FAD cache lacks this corpus's statistics and is read-only: run provision")
+    return quietest
 
 
 class Fad:
@@ -301,6 +320,8 @@ class Fad:
 
     def __init__(self, refs, takes_lufs, caches):
         manifest = (refs / "manifest.json").read_bytes()
+        manifest_sha = hashlib.sha256(manifest).hexdigest()
+        quietest = cached_quietest(caches, manifest_sha, takes_lufs)
         tracks = json.loads(manifest)["tracks"]
         # by index: the corpus's names are private, and the CI's log is not
         for i, t in enumerate(tracks):
@@ -322,28 +343,13 @@ class Fad:
             seeded.symlink_to(pinned)
         self.model = fadtk.model_loader.CLAPLaionModel(FAD_EMBEDDING)
         self.model.load_model()
-        manifest_sha = hashlib.sha256(manifest).hexdigest()
-        caches.mkdir(parents=True, exist_ok=True)
-        # the corpus alone sets it, and measuring it decodes every track
-        quietest_file = caches / f"{manifest_sha}-quietest.json"
-        # keyed by everything the statistics are built from; the level is one
-        # any batch louder than the quietest reference shares
-        built = json.dumps([LAION_CLAP, FAD_EMBEDDING, HOLDOUT, RESAMPLE])
-        prefix = f"{manifest_sha}-{hashlib.sha256(built.encode()).hexdigest()[:16]}"
-
-        def stats_file(lufs):
-            return caches / f"{prefix}-{lufs:.2f}.npz"
-
-        quietest = json.loads(quietest_file.read_text())["lufs"] if quietest_file.exists() else None
-        if quietest is None or not stats_file(min(takes_lufs, quietest)).exists():
-            refuse_read_only(caches, quietest is not None and takes_lufs < quietest)
         if quietest is None:
             quietest = min(mono_lufs(*self.read(refs, t)) for t in tracks)
-            quietest_file.write_text(json.dumps({"lufs": quietest}) + "\n")
+            quietest_file(caches, manifest_sha).write_text(json.dumps({"lufs": quietest}) + "\n")
         # one level for every input, the takes' unless a reference is
         # quieter, so no reference is ever raised and clipped
         self.lufs = min(takes_lufs, quietest)
-        cache = stats_file(self.lufs)
+        cache = stats_file(caches, manifest_sha, self.lufs)
         if cache.exists():
             with np.load(cache) as stats:
                 self.mu, self.cov = stats["mu"], stats["cov"]
