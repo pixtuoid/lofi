@@ -96,6 +96,11 @@ class FadCache(unittest.TestCase):
         self.assertIsNone(cached_quietest(self.caches, self.SHA, self.QUIETEST))
         self.assertEqual(list(self.caches.iterdir()), [])
 
+    def test_a_cache_not_yet_made_is_made_and_keeps_no_probe(self):
+        caches = self.caches / "fad-cache"
+        self.assertIsNone(cached_quietest(caches, self.SHA, self.QUIETEST))
+        self.assertEqual(list(caches.iterdir()), [])
+
 
 if __name__ == "__main__":
     unittest.main()
