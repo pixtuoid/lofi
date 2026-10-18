@@ -344,15 +344,24 @@ impl Song {
             buf.resize(n, 0.0);
             ring.take(buf);
             self.chains[i].process(buf, &mut cues.noise);
-            let sum = &mut sums[i];
-            if self.levels[i].end() <= self.played && rain.end() <= self.played {
-                let gain = self.levels[i].to() * rain::level(lane, rain.to());
-                for (s, x) in sum.iter_mut().zip(buf.iter()) {
-                    *s += gain * x;
+            let (sum, level) = (&mut sums[i], &self.levels[i]);
+            // rain's factor, read once while it holds
+            match (rain.end() <= self.played).then(|| rain::level(lane, rain.to())) {
+                Some(wet) if level.end() <= self.played => {
+                    let gain = level.to() * wet;
+                    for (s, x) in sum.iter_mut().zip(buf.iter()) {
+                        *s += gain * x;
+                    }
                 }
-            } else {
-                for ((s, x), at) in sum.iter_mut().zip(buf.iter()).zip(self.played..) {
-                    *s += self.gain(i, at) * x;
+                Some(wet) => {
+                    for ((s, x), at) in sum.iter_mut().zip(buf.iter()).zip(self.played..) {
+                        *s += level.at(at) * wet * x;
+                    }
+                }
+                None => {
+                    for ((s, x), at) in sum.iter_mut().zip(buf.iter()).zip(self.played..) {
+                        *s += self.gain(i, at) * x;
+                    }
                 }
             }
         }
@@ -821,6 +830,29 @@ mod tests {
     /// Song 0's length under `c`.
     fn audition_len(seed: u64, c: Controls) -> usize {
         Song::new(seed, 0, c, SAMPLE_RATE).len
+    }
+
+    #[test]
+    fn a_latch_that_asks_for_nothing_new_leaves_every_ramp_settled() {
+        for c in [
+            Controls::default(),
+            Controls::default().with_daylight(0.25).with_rain(0.6),
+            Controls::default().with_intensity(0.0),
+        ] {
+            let bars = bar_frames(1, 0, c);
+            let latch = bars[5] - samples_at(ANTICIPATION_S, SAMPLE_RATE);
+            let (run, _) = latched(1, c, &[], latch + 1);
+            let song = run.song.as_ref().expect("a song plays");
+            let ends: Vec<usize> = (song.levels.iter().map(Ramp::end))
+                .chain([song.rain.end()])
+                .chain(song.chains.iter().filter_map(Chain::graded_until))
+                .chain(song.chains.iter().filter_map(Chain::rained_until))
+                .collect();
+            assert!(
+                ends.iter().all(|&end| end < latch),
+                "{c:?}: ramps restarted, ending {ends:?}"
+            );
+        }
     }
 
     #[test]

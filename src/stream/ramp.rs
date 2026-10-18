@@ -46,8 +46,13 @@ impl Ramp {
         }
     }
 
-    /// Ramps from the value on frame `n` to `to` over `len` frames.
+    /// Ramps from the value on frame `n` to `to` over `len` frames; one
+    /// already settled on `to` stays put, so a latch asking for nothing new
+    /// starts no ramp.
     pub(crate) fn toward(&mut self, n: usize, to: f64, len: usize) {
+        if n >= self.end() && self.to == to {
+            return;
+        }
         self.from = self.at(n);
         self.to = to;
         self.start = n;
@@ -98,6 +103,19 @@ mod tests {
         let db: Vec<f64> = (0..=4).map(|n| 20.0 * ramp.at(n).log10()).collect();
         for step in db.windows(2) {
             assert!((step[1] - step[0] - 5.0).abs() < 1e-9, "{db:?}");
+        }
+    }
+
+    #[test]
+    fn a_settled_ramp_asked_for_its_own_value_stays_settled() {
+        for shape in [Shape::Linear, Shape::Db] {
+            let mut ramp = Ramp::held(0.35, shape);
+            ramp.toward(100, 0.6, 1000);
+            ramp.toward(5000, 0.6, 1000);
+            assert_eq!(ramp.end(), 1100, "{shape:?} restarted at its own value");
+            // but a ramp in flight, or asked elsewhere, moves
+            ramp.toward(6000, 0.2, 10);
+            assert_eq!(ramp.end(), 6010, "{shape:?}");
         }
     }
 
