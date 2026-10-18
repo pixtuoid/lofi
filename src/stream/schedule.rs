@@ -21,9 +21,6 @@ pub(crate) const BLOCK: usize = 1024;
 /// A song plays its loop this many times.
 pub const LOOPS_PER_SONG: usize = 4;
 
-/// The daylight below which a song is composed for the night.
-pub const DUSK: f32 = 0.5;
-
 /// How long before its bar line a bar latches the controls asked for: the
 /// composer's earliest anticipation, a downbeat hat's half of
 /// [`HAT_JITTER_S`], so an anticipated downbeat joins the bar it anticipates.
@@ -45,7 +42,7 @@ fn song_seed(seed: u64, k: u64) -> u64 {
 
 /// The score song `k` of `seed`'s run plays under `controls`.
 pub fn song_score(seed: u64, k: u64, controls: Controls) -> Score {
-    let mood = if controls.daylight < DUSK {
+    let mood = if controls.daylight < Controls::DUSK {
         Mood::Night
     } else {
         Mood::Day
@@ -505,6 +502,13 @@ pub(crate) const UNITY: [f64; LANES] = [1.0; LANES];
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_song_is_composed_for_the_night_below_dusk_and_the_day_from_it() {
+        let at = |daylight: f32| song_score(1, 0, Controls::default().with_daylight(daylight)).mood;
+        assert_eq!(at(Controls::DUSK), Mood::Day);
+        assert_eq!(at(Controls::DUSK.next_down()), Mood::Night);
+    }
 
     #[test]
     fn each_song_of_a_run_is_composed_anew() {
