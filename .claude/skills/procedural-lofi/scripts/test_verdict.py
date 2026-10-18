@@ -9,7 +9,7 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from verdict import ALPHA, JUDGES, MIN_UNTIED, MOODS, exit_message, floor, grouped, judged, sign_test
+from verdict import ALPHA, JUDGES, MIN_UNTIED, MOODS, exit_message, grouped, judged, min_untied, sign_test
 
 # where the judge batch's matrix and the moods are spelled in Rust
 BATCH_RS = HERE.parents[3] / "examples" / "common" / "batch.rs"
@@ -50,14 +50,14 @@ class SignTest(unittest.TestCase):
         self.assertEqual(t["p"], 0.03125)
         self.assertTrue(t["significant"])
 
-    def test_the_floor_is_the_fewest_pairs_that_can_reject(self):
+    def test_min_untied_is_the_fewest_pairs_that_can_reject(self):
         for alpha in (ALPHA, ALPHA / 3, ALPHA / 6):
-            n = floor(alpha)
+            n = min_untied(alpha)
             self.assertFalse(sign_test(losses(n - 1), alpha)["significant"])
             self.assertTrue(sign_test(losses(n), alpha)["significant"])
 
-    def test_min_untied_is_the_floor_at_every_gating_test(self):
-        self.assertEqual(MIN_UNTIED, floor(ALPHA / (len(JUDGES) * len(MOODS))))
+    def test_min_untied_is_the_fewest_at_every_gating_test(self):
+        self.assertEqual(MIN_UNTIED, min_untied(ALPHA / (len(JUDGES) * len(MOODS))))
 
 
 class Grouping(unittest.TestCase):
@@ -83,11 +83,11 @@ class Verdicts(unittest.TestCase):
         self.assertIsNone(exit_message(result))
 
     def test_alpha_splits_over_the_moods_that_changed(self):
-        # one changed mood tests 3 judges, so its floor is the 3-way split's
-        one = floor(ALPHA / len(JUDGES))
+        # one changed mood tests 3 judges, so its fewest is the 3-way split's
+        one = min_untied(ALPHA / len(JUDGES))
         self.assertEqual(judged(pairs("day", losses(one)))["overall"], "REGRESSION")
         self.assertEqual(judged(pairs("day", losses(one - 1)))["overall"], "INSUFFICIENT")
-        # two changed moods test 6, which a mood's floor-1 losses can't reach
+        # two changed moods test 6, which a mood's one-fewer losses can't reach
         both = pairs("day", losses(one)) + pairs("night", [1.0] * MIN_UNTIED)
         self.assertEqual(judged(both)["groups"]["day"]["verdict"], "INSUFFICIENT")
         both = pairs("day", losses(MIN_UNTIED)) + pairs("night", [1.0] * MIN_UNTIED)
@@ -119,7 +119,7 @@ class Verdicts(unittest.TestCase):
 class RustCopies(unittest.TestCase):
     """The values `examples/common/batch.rs` spells for the judge batch."""
 
-    def test_the_judge_batch_is_built_to_this_floor(self):
+    def test_the_judge_batch_is_built_to_this_min_untied(self):
         rust = re.search(r"const JUDGE_MIN_UNTIED: usize = (\d+);", BATCH_RS.read_text())
         self.assertIsNotNone(rust, f"no JUDGE_MIN_UNTIED in {BATCH_RS}")
         self.assertEqual(int(rust[1]), MIN_UNTIED)

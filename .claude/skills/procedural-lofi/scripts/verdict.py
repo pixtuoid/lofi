@@ -26,15 +26,15 @@ def tail_p(losses, untied):
     return sum(comb(untied, k) for k in range(losses, untied + 1)) / 2**untied if untied else 1.0
 
 
-def floor(alpha):
+def min_untied(alpha):
     """The fewest untied pairs a sign test can reject at `alpha` with: every
     one a loss, its most extreme outcome."""
     return next(n for n in count(1) if tail_p(n, n) < alpha)
 
 
-# the floor when every judge tests every mood, the most tests a batch gates on:
+# the fewest when every judge tests every mood, the most tests a batch gates on:
 # the take count the judge batch builds each mood's groups to
-MIN_UNTIED = floor(ALPHA / (len(JUDGES) * len(MOODS)))
+MIN_UNTIED = min_untied(ALPHA / (len(JUDGES) * len(MOODS)))
 
 
 def sign_test(gains, alpha):
@@ -49,7 +49,7 @@ def sign_test(gains, alpha):
         "ties": len(gains) - wins - losses,
         "p": p,
         "significant": p < alpha,
-        "decidable": wins + losses >= floor(alpha),
+        "decidable": wins + losses >= min_untied(alpha),
     }
 
 
@@ -94,7 +94,7 @@ def judged(pairs):
     gating = {groups[m]["verdict"] for m in moods}
     return {
         "alpha": alpha,
-        "min_untied": floor(alpha),
+        "min_untied": min_untied(alpha),
         "groups": groups,
         "overall": next((r for r in RANKS if r in gating), "UNCHANGED"),
     }
