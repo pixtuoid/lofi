@@ -7,7 +7,8 @@
 //!
 //! Usage:
 //!   cargo run --release --example lofi_measure -- \
-//!     [--engine whole|stream] [--mood day|night] [--seeds N] [--start S] [--tier empty|moderate|busy]
+//!     [--engine whole|stream] [--mood day|night] [--seeds N] [--start S] [--tier empty|moderate|busy] \
+//!     [--batch judge]
 
 #[path = "common/batch.rs"]
 mod batch;
@@ -60,11 +61,10 @@ fn run() -> std::io::Result<()> {
     while let Some(a) = args.next() {
         if !batch.parse_flag(&a, &mut args)? {
             return Err(usage_error(format!(
-                "unknown argument {a:?}; valid: --engine --mood --seeds --start --tier"
+                "unknown argument {a:?}; valid: --engine --mood --seeds --start --tier --batch"
             )));
         }
     }
-    let tier = batch.tier();
     let bands = bands();
     let header: Vec<String> = bands.iter().map(|&b| band_label(b)).collect();
     let row = |name: &str, buf: &[f32], seam: String, took: Duration| {
@@ -80,75 +80,78 @@ fn run() -> std::io::Result<()> {
         );
         (lufs, spectrum)
     };
-    let mut mix_lufs = Vec::new();
-    for seed in batch.seeds() {
-        let score = batch.score(seed);
-        // the whole-lane chain renders each lane's loop once, then plays it again
-        let (lanes, mix, took, rendered) = match batch.engine {
-            Engine::WholeLane => {
-                let (beds, took) = render_take(&score);
-                let mix = soak_mix(&beds, &batch.lane_gains());
-                let rendered = beds[0].len();
-                (Some((beds, took)), mix, took.iter().sum(), rendered)
+    for batch in batch.runs() {
+        let tier = batch.tier();
+        let mut mix_lufs = Vec::new();
+        for seed in batch.seeds() {
+            let score = batch.score(seed);
+            // the whole-lane chain renders each lane's loop once, then plays it again
+            let (lanes, mix, took, rendered) = match batch.engine {
+                Engine::WholeLane => {
+                    let (beds, took) = render_take(&score);
+                    let mix = soak_mix(&beds, &batch.lane_gains());
+                    let rendered = beds[0].len();
+                    (Some((beds, took)), mix, took.iter().sum(), rendered)
+                }
+                Engine::Stream => {
+                    let started = Instant::now();
+                    let mix = batch.perform(seed)?;
+                    let rendered = mix.len();
+                    (None, mix, started.elapsed(), rendered)
+                }
+            };
+            let loop_len = mix.len() / LOOPS_PER_SONG;
+            println!(
+                "{} seed {seed}: {}; lead {}, loop {:.2} s",
+                batch.mood_name(),
+                rail(f64::from(score.bpm()), BPM_RAIL, " bpm"),
+                score.lead_voice_name(),
+                loop_len as f64 / SR
+            );
+            println!(
+                "  {:<8} {:>6}{} {:>8} {:>6} {:>6}",
+                "lane",
+                "LUFS",
+                header
+                    .iter()
+                    .map(|h| format!(" {h:>7}"))
+                    .collect::<String>(),
+                "centroid",
+                "seam",
+                "ms"
+            );
+            if let Some((beds, took)) = &lanes {
+                for ((name, bed), took) in LANE_NAMES.iter().zip(beds).zip(took) {
+                    row(name, bed, format!("{:.2}", seam_ratio(bed)), *took);
+                }
             }
-            Engine::Stream => {
-                let started = Instant::now();
-                let mix = batch.perform(seed)?;
-                let rendered = mix.len();
-                (None, mix, started.elapsed(), rendered)
-            }
-        };
-        let loop_len = mix.len() / LOOPS_PER_SONG;
-        println!(
-            "{} seed {seed}: {}; lead {}, loop {:.2} s",
-            batch.mood_name(),
-            rail(f64::from(score.bpm()), BPM_RAIL, " bpm"),
-            score.lead_voice_name(),
-            loop_len as f64 / SR
-        );
-        println!(
-            "  {:<8} {:>6}{} {:>8} {:>6} {:>6}",
-            "lane",
-            "LUFS",
-            header
-                .iter()
-                .map(|h| format!(" {h:>7}"))
-                .collect::<String>(),
-            "centroid",
-            "seam",
-            "ms"
-        );
-        if let Some((beds, took)) = &lanes {
-            for ((name, bed), took) in LANE_NAMES.iter().zip(beds).zip(took) {
-                row(name, bed, format!("{:.2}", seam_ratio(bed)), *took);
-            }
+            let (lufs, spectrum) = row("mix", &mix, "-".into(), took);
+            mix_lufs.push(lufs);
+            let sub = BAND_EDGES_HZ[0];
+            println!(
+                "  {} mix through {}: below {sub} Hz {}; centroid {}; LTAS density slope {}-{} Hz {:.1} dB/oct; autocorrelation at the loop {:.4}; rendered at {:.4} of real time",
+                tier.name(),
+                batch.engine.name(),
+                rail(100.0 * spectrum.share(0.0, sub), SUB_SHARE_RAIL_PCT, "%"),
+                rail(spectrum.centroid(), CENTROID_RAIL_HZ, " Hz"),
+                LTAS_SPAN_HZ[0],
+                LTAS_SPAN_HZ[1],
+                spectrum.ltas_slope(),
+                loop_autocorrelation(&mix, loop_len),
+                took.as_secs_f64() / (rendered as f64 / SR)
+            );
         }
-        let (lufs, spectrum) = row("mix", &mix, "-".into(), took);
-        mix_lufs.push(lufs);
-        let sub = BAND_EDGES_HZ[0];
-        println!(
-            "  {} mix through {}: below {sub} Hz {}; centroid {}; LTAS density slope {}-{} Hz {:.1} dB/oct; autocorrelation at the loop {:.4}; rendered at {:.4} of real time",
-            tier.name(),
-            batch.engine.name(),
-            rail(100.0 * spectrum.share(0.0, sub), SUB_SHARE_RAIL_PCT, "%"),
-            rail(spectrum.centroid(), CENTROID_RAIL_HZ, " Hz"),
-            LTAS_SPAN_HZ[0],
-            LTAS_SPAN_HZ[1],
-            spectrum.ltas_slope(),
-            loop_autocorrelation(&mix, loop_len),
-            took.as_secs_f64() / (rendered as f64 / SR)
-        );
-    }
-    // one seed's sample sd divides by zero
-    if mix_lufs.len() > 1 {
-        println!(
-            "{} {} mix through {}, seeds {:?}: gated loudness sd {:.4} LU",
-            batch.mood_name(),
-            tier.name(),
-            batch.engine.name(),
-            batch.seeds(),
-            audition::lufs_sd(&mix_lufs)
-        );
+        // one seed's sample sd divides by zero
+        if mix_lufs.len() > 1 {
+            println!(
+                "{} {} mix through {}, seeds {:?}: gated loudness sd {:.4} LU",
+                batch.mood_name(),
+                tier.name(),
+                batch.engine.name(),
+                batch.seeds(),
+                audition::lufs_sd(&mix_lufs)
+            );
+        }
     }
     Ok(())
 }

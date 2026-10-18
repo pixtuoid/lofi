@@ -4,8 +4,18 @@ so `test_verdict.py` runs it without the judges' venv."""
 from itertools import count
 from math import comb
 
-# the verdict's significance (opinion)
+# the verdict's significance over every test it gates on (opinion)
 ALPHA = 0.05
+
+# each pair's gain on these, cand over base: a judge's headline score, or
+# nearness to the corpus by FAD
+JUDGES = ("audiobox_ce", "muq_eval_mi", "fad")
+
+# the moods a batch can hold, `examples/common/batch.rs`'s `MOODS`
+MOODS = ("day", "night")
+
+# from worst: a mood's verdict, and the batch's
+RANKS = ("REGRESSION", "INSUFFICIENT", "PASS", "UNCHANGED")
 
 
 def tail_p(losses, untied):
@@ -16,14 +26,20 @@ def tail_p(losses, untied):
     return sum(comb(untied, k) for k in range(losses, untied + 1)) / 2**untied if untied else 1.0
 
 
-# the fewest untied pairs a sign test can reject at ALPHA with: every one a
-# loss, its most extreme outcome
-MIN_UNTIED = next(n for n in count(1) if tail_p(n, n) < ALPHA)
+def min_untied(alpha):
+    """The fewest untied pairs a sign test can reject at `alpha` with: every
+    one a loss, its most extreme outcome."""
+    return next(n for n in count(1) if tail_p(n, n) < alpha)
 
 
-def sign_test(gains):
-    """Whether cand does worse than base more often than chance allows,
-    `gains` each pair's improvement from base to cand, ties dropped."""
+# the fewest when every judge tests every mood, the most tests a batch gates on:
+# the take count the judge batch builds each mood's groups to
+MIN_UNTIED = min_untied(ALPHA / (len(JUDGES) * len(MOODS)))
+
+
+def sign_test(gains, alpha):
+    """Whether cand does worse than base more often than chance allows at
+    `alpha`, `gains` each pair's improvement from base to cand, ties dropped."""
     wins = sum(g > 0 for g in gains)
     losses = sum(g < 0 for g in gains)
     p = tail_p(losses, wins + losses)
@@ -32,34 +48,63 @@ def sign_test(gains):
         "losses": losses,
         "ties": len(gains) - wins - losses,
         "p": p,
-        "significant": p < ALPHA,
-        "decidable": wins + losses >= MIN_UNTIED,
+        "significant": p < alpha,
+        "decidable": wins + losses >= min_untied(alpha),
     }
 
 
-def group_verdict(tests):
-    """REGRESSION if any test rejects, INSUFFICIENT if one never could, else
-    PASS."""
-    if any(t["significant"] for t in tests.values()):
-        return "REGRESSION"
-    if not all(t["decidable"] for t in tests.values()):
-        return "INSUFFICIENT"
-    return "PASS"
+def grouped(pairs):
+    """Each mood's pairs, then every pair as "all": the changed ones, and how
+    many were byte-identical, which no judge scores."""
+    groups = {mood: [p for p in pairs if p["mood"] == mood] for mood in sorted({p["mood"] for p in pairs})}
+    groups["all"] = pairs
+    return {
+        group: {
+            "changed": [p for p in members if not p["identical"]],
+            "identical": sum(p["identical"] for p in members),
+        }
+        for group, members in groups.items()
+    }
 
 
-def batch_verdict(groups):
-    """The batch's verdict over its groups': REGRESSION if any is, since a
-    detected regression stands however few pairs another group had, then
-    INSUFFICIENT if any is, else PASS."""
-    for worst in ("REGRESSION", "INSUFFICIENT"):
-        if worst in groups:
-            return worst
-    return "PASS"
+def judged(pairs):
+    """The verdict on `pairs`, each a dict of its `mood`, whether it is
+    `identical`, and otherwise its `gains` on each of `JUDGES`.
+
+    Each mood with a changed pair is a group of sign tests, one a judge, at
+    ALPHA split Bonferroni over every such test; a mood with none is
+    UNCHANGED. The pooled "all" group is tested alike but gates nothing, since
+    it repeats the moods' pairs."""
+    groups = grouped(pairs)
+    moods = [g for g in groups if g != "all"]
+    tests = len(JUDGES) * sum(bool(groups[m]["changed"]) for m in moods)
+    alpha = ALPHA / tests if tests else ALPHA
+    for group in groups.values():
+        if not group["changed"]:
+            group["verdict"] = "UNCHANGED"
+            continue
+        group["tests"] = {j: sign_test([p["gains"][j] for p in group["changed"]], alpha) for j in JUDGES}
+        group["verdict"] = (
+            "REGRESSION"
+            if any(t["significant"] for t in group["tests"].values())
+            else "INSUFFICIENT"
+            if not all(t["decidable"] for t in group["tests"].values())
+            else "PASS"
+        )
+    gating = {groups[m]["verdict"] for m in moods}
+    return {
+        "alpha": alpha,
+        "min_untied": min_untied(alpha),
+        "groups": groups,
+        "overall": next((r for r in RANKS if r in gating), "UNCHANGED"),
+    }
 
 
-def exit_message(overall):
-    """Why the batch fails, so the script exits non-zero, or None on PASS."""
+def exit_message(result):
+    """Why the batch fails, so the script exits non-zero, or None when it
+    passes or changed nothing."""
     return {
         "REGRESSION": "cand scores worse than base",
-        "INSUFFICIENT": f"a group has fewer than {MIN_UNTIED} untied pairs in some test, too few to ever reject at {ALPHA}",
-    }.get(overall)
+        "INSUFFICIENT": f"a mood has fewer than {result['min_untied']} untied pairs in some test,"
+        f" too few to ever reject at {result['alpha']:.4g}",
+    }.get(result["overall"])
