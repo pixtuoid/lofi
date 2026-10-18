@@ -6,6 +6,7 @@ use std::collections::VecDeque;
 
 use super::lanes::Chain;
 use super::master::{lane_gain, resting_gain};
+use super::rain::{self, RAIN_RAMP_BARS};
 use super::ramp::{Ramp, Shape};
 use crate::Controls;
 use crate::compose::{GEN_LOOP_BARS, HAT_JITTER_S, Mood, Score, compose};
@@ -131,7 +132,11 @@ impl Schedule {
     }
 
     fn start(&mut self, song: Song) {
-        self.fading.extend(self.song.replace(song));
+        let mut ended = self.song.replace(song);
+        if let Some(ended) = &mut ended {
+            ended.freeze();
+        }
+        self.fading.extend(ended);
         self.next_song += 1;
     }
 
@@ -198,6 +203,9 @@ struct Song {
     /// Each lane's gain into the mix, whose ramps all end within the song,
     /// so its tails ring on at the level it ended on.
     levels: [Ramp; LANES],
+    /// The rain latched, and how long it takes to arrive, in frames.
+    rain: Ramp,
+    rain_ramp: usize,
 }
 
 impl Song {
@@ -218,17 +226,8 @@ impl Song {
             .flat_map(|&at| every_loop(samples_at(at, sr), loop_len))
             .collect();
         kicks.sort_unstable();
-        let chains = Lane::ALL.map(|lane| {
-            Chain::new(
-                mood,
-                lane,
-                &part(&score, lane),
-                len,
-                &kicks,
-                controls.daylight,
-                sr,
-            )
-        });
+        let chains = Lane::ALL
+            .map(|lane| Chain::new(mood, lane, &part(&score, lane), len, &kicks, controls, sr));
         let present = Lane::ALL.map(|lane| lane_gain(lane, controls.intensity) > 0.0);
         let levels = Lane::ALL
             .map(|lane| Ramp::held(f64::from(resting_gain(lane, controls.intensity)), Shape::Db));
@@ -238,6 +237,8 @@ impl Song {
             anticipation: samples_at(ANTICIPATION_S, sr),
             level_ramp: samples_at(LEVEL_RAMP_BEATS * score.beat_s(), sr),
             grade_ramp: samples_at(GRADE_RAMP_BARS * score.bar_s(), sr),
+            rain: Ramp::held(f64::from(controls.rain), Shape::Linear),
+            rain_ramp: samples_at(RAIN_RAMP_BARS * score.bar_s(), sr),
             score,
             sr,
             len,
@@ -284,10 +285,32 @@ impl Song {
                 level.hold(at);
             }
         }
+        let rain = f64::from(controls.rain);
+        self.rain.toward(at, rain, self.rain_ramp);
         for chain in &mut self.chains {
             chain.grade(at, controls.daylight, self.grade_ramp);
+            chain.rain(at, rain, self.rain_ramp);
         }
         self.latched += 1;
+    }
+
+    /// Holds every ramp where it is, at the song's end: a fading song's tails
+    /// latch nothing, and rain's phrase can outlast the last bar.
+    fn freeze(&mut self) {
+        let at = self.played;
+        for level in &mut self.levels {
+            level.hold(at);
+        }
+        self.rain.hold(at);
+        for chain in &mut self.chains {
+            chain.freeze(at);
+        }
+    }
+
+    /// Lane `i`'s gain into the mix on frame `n`: its intensity's level, and
+    /// rain's on it.
+    fn gain(&self, i: usize, n: usize) -> f64 {
+        self.levels[i].at(n) * rain::level(Lane::ALL[i], self.rain.at(n))
     }
 
     /// Strikes each note whose onset falls in the next `n` frames, then adds
@@ -295,27 +318,41 @@ impl Song {
     /// `sums`.
     fn play(&mut self, sums: &mut [Vec<f64>; LANES], buf: &mut Vec<f64>, n: usize) {
         let end = self.played + n;
-        let lanes = (Lane::ALL.into_iter().zip(&mut self.cues))
-            .zip(self.rings.iter_mut().zip(&mut self.chains))
-            .zip(sums.iter_mut().zip(self.levels.iter().zip(self.present)));
-        for (((lane, cues), (ring, chain)), (sum, (level, present))) in lanes {
+        let rain = self.rain;
+        let hit = |at: usize| rain::hit(rain.at(at));
+        let unity = |_: usize| 1.0;
+        for (i, lane) in Lane::ALL.into_iter().enumerate() {
             let part = part(&self.score, lane);
-            cues.strike(&part, self.played, end, ring, present, self.sr);
+            let voice: &dyn Fn(usize) -> f32 = match part {
+                Part::Hits(_) => &hit,
+                _ => &unity,
+            };
+            let (ring, present) = (&mut self.rings[i], self.present[i]);
+            let cues = &mut self.cues[i];
+            cues.strike(
+                &part,
+                self.played,
+                end,
+                ring,
+                present.then_some(voice),
+                self.sr,
+            );
             if matches!(part, Part::Bed) {
                 self.crackle
                     .strike(self.played, end.min(self.len), ring, present, self.sr);
             }
             buf.resize(n, 0.0);
             ring.take(buf);
-            chain.process(buf, &mut cues.noise);
-            if level.end() <= self.played {
-                let level = level.to();
+            self.chains[i].process(buf, &mut cues.noise);
+            let sum = &mut sums[i];
+            if self.levels[i].end() <= self.played && rain.end() <= self.played {
+                let gain = self.levels[i].to() * rain::level(lane, rain.to());
                 for (s, x) in sum.iter_mut().zip(buf.iter()) {
-                    *s += level * x;
+                    *s += gain * x;
                 }
             } else {
                 for ((s, x), at) in sum.iter_mut().zip(buf.iter()).zip(self.played..) {
-                    *s += level.at(at) * x;
+                    *s += self.gain(i, at) * x;
                 }
             }
         }
@@ -361,25 +398,26 @@ impl Cues {
     }
 
     /// Strikes into `ring`, which starts at frame `from`, each note whose
-    /// onset is before `to`, silent unless the lane is `present`. A silent hit
-    /// still draws its noise, so no later hit's draws move; no other note
-    /// draws any, so it needs no synthesis.
+    /// onset is before `to`, at the gain `voice` gives its onset, or silent
+    /// if there is no `voice`: the lane is absent. A silent hit still draws
+    /// its noise, so no later hit's draws move; no other note draws any, so it
+    /// needs no synthesis.
     fn strike(
         &mut self,
         part: &Part<'_>,
         from: usize,
         to: usize,
         ring: &mut Ring,
-        present: bool,
+        voice: Option<&dyn Fn(usize) -> f32>,
         sr: u32,
     ) {
         while let Some(&(at, i)) = self.order.get(self.struck)
             && at < to
         {
-            if present || matches!(part, Part::Hits(_)) {
+            if voice.is_some() || matches!(part, Part::Hits(_)) {
                 let (snippet, gain) = part.note(i, &mut self.noise, sr);
-                if present {
-                    ring.add(at - from, &snippet, gain);
+                if let Some(voice) = voice {
+                    ring.add(at - from, &snippet, gain * voice(at));
                 }
             }
             self.struck += 1;
@@ -659,6 +697,95 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn rain_leaves_the_score_its_tempo_and_its_bars_alone() {
+        for seed in 0..8 {
+            for c in [Controls::default(), Controls::default().with_daylight(0.0)] {
+                let wet = c.with_rain(1.0);
+                assert_eq!(
+                    song_score(seed, 0, wet),
+                    song_score(seed, 0, c),
+                    "seed {seed}"
+                );
+                assert_eq!(
+                    bar_frames(seed, 0, wet),
+                    bar_frames(seed, 0, c),
+                    "seed {seed}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_rain_latch_turns_the_sparkle_down_and_the_pad_up_over_a_phrase() {
+        let (seed, empty) = (3, Controls::default().with_intensity(0.0));
+        let bars = bar_frames(seed, 0, empty);
+        let latch = bars[3] - samples_at(ANTICIPATION_S, SAMPLE_RATE);
+        let (run, _) = latched(seed, empty, &[(bars[2], empty.with_rain(1.0))], latch + 1);
+        let song = run.song.as_ref().expect("a song plays");
+        let phrase = samples_at(RAIN_RAMP_BARS * song.score.bar_s(), SAMPLE_RATE);
+        for (i, lane) in Lane::ALL.iter().enumerate() {
+            let level = song.levels[i].at(latch);
+            assert_eq!(song.gain(i, latch), level, "{lane:?} at the latch");
+            let wet = level * rain::level(*lane, 1.0);
+            assert_eq!(song.gain(i, latch + phrase), wet, "{lane:?} a phrase on");
+            if wet != level {
+                assert!(
+                    song.gain(i, latch + phrase - 1) != wet,
+                    "{lane:?} lands early"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rain_softens_each_drum_hit_as_it_strikes() {
+        let seed = 6;
+        let [mut dry, mut wet] = [0.0, 1.0]
+            .map(|rain| Song::new(seed, 0, Controls::default().with_rain(rain), SAMPLE_RATE));
+        let (mut sums, mut buf) = (std::array::from_fn(|_| Vec::new()), Vec::new());
+        for song in [&mut dry, &mut wet] {
+            song.play(&mut sums, &mut buf, BLOCK);
+        }
+        let [dry, wet] =
+            [&dry, &wet].map(|song| song.rings[drums()].0.iter().copied().collect::<Vec<f32>>());
+        assert!(dry.iter().any(|&s| s != 0.0), "no hit rang");
+        // within f32's rounding of the sums the ring holds
+        let loudest = dry.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+        let off = (dry.iter().zip(&wet))
+            .find(|&(&d, &w)| (w - d * rain::hit(1.0)).abs() > 1e-6 * loudest);
+        assert_eq!(off, None, "a wet hit isn't the dry one, softened");
+    }
+
+    #[test]
+    fn a_fading_songs_rain_holds_where_it_ended() {
+        let (seed, c) = (2, Controls::default().with_intensity(0.0));
+        let bars = bar_frames(seed, 0, c);
+        let len = audition_len(seed, c);
+        let last = bars[bars.len() - 1] - samples_at(ANTICIPATION_S, SAMPLE_RATE);
+        let (run, _) = latched(seed, c, &[(last, c.with_rain(1.0))], len + 1);
+        let fading = run.fading.first().expect("song 0 fades");
+        let sparkle = Lane::ALL
+            .iter()
+            .position(|&lane| lane == Lane::Sparkle)
+            .expect("a sparkle lane");
+        let held = fading.gain(sparkle, len);
+        assert!(
+            held < fading.levels[sparkle].at(len),
+            "the rain didn't start"
+        );
+        assert!(
+            [len + 1, len + 10_000]
+                .iter()
+                .all(|&n| fading.gain(sparkle, n) == held)
+        );
+    }
+
+    /// Song 0's length under `c`.
+    fn audition_len(seed: u64, c: Controls) -> usize {
+        Song::new(seed, 0, c, SAMPLE_RATE).len
     }
 
     #[test]

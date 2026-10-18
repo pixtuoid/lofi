@@ -459,7 +459,12 @@ mod tests {
     fn render_plays_the_same_frames_however_the_calls_chunk_them() {
         let seed = 3;
         let busy = Controls::default().with_intensity(1.0);
-        let order = [Controls::default(), night(), busy];
+        // rain asked mid-song, so its phrase-long ramps cross a seam
+        let order = [
+            Controls::default(),
+            night().with_rain(1.0),
+            busy.with_rain(0.5),
+        ];
         let lens = [0, 1, 2].map(|k| audition::song_len(seed, k, order[k as usize]));
         let bounds = [lens[0], lens[0] + lens[1]];
         // each song asks for the next one's controls halfway through
@@ -781,9 +786,9 @@ mod tests {
         let anticipation = crate::synth::samples_at(ANTICIPATION_S, SAMPLE_RATE);
         let boundary = audition::song_len(seed, 0, c);
         // asked at song 0's last latch, so its last bar plays `into` and song
-        // 1 starts under it
+        // 1 starts under it, while song 0's phrase of rain still ramps
         let last = k0[k0.len() - 1] - anticipation;
-        let into = night().with_intensity(0.2);
+        let into = night().with_intensity(0.2).with_rain(1.0);
         let mut playing = Performance::new(seed, c);
         next(&mut playing, last);
         playing.set_controls(into);
@@ -792,6 +797,7 @@ mod tests {
         let calls = [
             (k1[3], into.with_intensity(1.0)),
             (k1[9], c.with_daylight(0.3)),
+            (k1[12], c.with_rain(0.4)),
         ];
         let mut reached = Vec::new();
         for &(at, controls) in &calls {
@@ -835,7 +841,8 @@ mod tests {
                                 p.set_controls(
                                     Controls::default()
                                         .with_daylight(rng.unit())
-                                        .with_intensity(rng.unit()),
+                                        .with_intensity(rng.unit())
+                                        .with_rain(rng.unit()),
                                 );
                                 next_call += 1 + (rng.unit() * 4.0 * SAMPLE_RATE as f32) as usize;
                             }
