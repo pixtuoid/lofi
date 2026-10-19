@@ -120,9 +120,9 @@ impl Score {
     }
 }
 
-/// One vetted progression template, pre-voiced in C in the ratified pad
-/// register. `roots_pc` carries the harmonic ROOT per chord — voicings may be
-/// inversions, so `chord[0]` is not authoritative.
+/// One vetted progression template, pre-voiced in C. `roots_pc` carries the
+/// harmonic ROOT per chord — voicings may be inversions, so `chord[0]` is not
+/// authoritative.
 struct Progression {
     chords: [[u8; 4]; 4],
     roots_pc: [u8; 4],
@@ -367,10 +367,21 @@ const NIGHT_PROGRESSIONS: [Progression; 8] = [
     },
 ];
 
-/// Transposition window, semitones — keeps every template inside the ratified
-/// pad register after the shift.
+/// Transposition window, semitones; a voice the shift drops under
+/// [`CHORD_FLOOR`] folds up an octave.
 const TRANSPOSE_MIN: i8 = -3;
 const TRANSPOSE_MAX: i8 = 2;
+
+/// The lowest note a chord voice plays: LOFI-BIBLE.md R7's low-interval
+/// limit, under which the bass plays alone; the owner put the bible over the
+/// ratified pad register (2026-10-19).
+const CHORD_FLOOR: u8 = 48;
+
+/// `n`, up an octave if it falls under [`CHORD_FLOOR`]: the voicing turns over
+/// rather than leave the floor.
+fn floored(n: u8) -> u8 {
+    if n < CHORD_FLOOR { n + 12 } else { n }
+}
 
 pub(crate) const DAY_BPM: (f32, f32) = (70.0, 82.0);
 const NIGHT_BPM: (f32, f32) = (64.0, 72.0);
@@ -404,7 +415,7 @@ fn transpose(p: &Progression, t: i8) -> ([[u8; 4]; 4], [u8; 4], [u8; 7]) {
     let mut chords = p.chords;
     for chord in &mut chords {
         for n in chord.iter_mut() {
-            *n = (i16::from(*n) + i16::from(t)) as u8;
+            *n = floored((i16::from(*n) + i16::from(t)) as u8);
         }
     }
     let mut roots = p.roots_pc;
@@ -419,14 +430,14 @@ fn transpose(p: &Progression, t: i8) -> ([[u8; 4]; 4], [u8; 4], [u8; 7]) {
     (chords, roots, scale)
 }
 
-/// The V7 of `target_root_pc`, voiced inside the ratified pad register.
+/// The V7 of `target_root_pc`, voiced on [`CHORD_FLOOR`] and above.
 fn dominant7_of(target_root_pc: u8) -> [u8; 4] {
     let dom_pc = (target_root_pc + 7) % 12;
-    let mut r = 48 + dom_pc;
+    let mut r = CHORD_FLOOR + dom_pc;
     if r > 57 {
         r -= 12;
     }
-    [r, r + 4, r + 7, r + 10]
+    [r, r + 4, r + 7, r + 10].map(floored)
 }
 
 /// The 8-bar harmonic timeline + per-bar roots: template ×2, with (day) bar 8

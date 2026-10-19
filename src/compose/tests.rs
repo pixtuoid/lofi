@@ -483,4 +483,69 @@ fn every_seed_composes_the_score_it_did() {
     assert_eq!(h, EVERY_SEED_GOLDEN, "{h:#018x}");
 }
 
-const EVERY_SEED_GOLDEN: u64 = 0xfd8d_51fc_dda2_5657;
+const EVERY_SEED_GOLDEN: u64 = 0x0e11_de19_bd24_d20f;
+
+#[test]
+fn every_chord_voice_sits_on_r7s_floor_or_above() {
+    let bible = include_str!("../../.claude/skills/procedural-lofi/reference/LOFI-BIBLE.md");
+    let r7 = format!("no interval <P5 below {CHORD_FLOOR}");
+    assert!(bible.contains(&r7), "LOFI-BIBLE.md no longer reads {r7:?}");
+    for mood in [Mood::Day, Mood::Night] {
+        for seed in 0..SWEEP {
+            let s = compose(mood, seed);
+            let pad = s.bar_chords.iter().flatten().copied();
+            let keys = s.keys.iter().map(|&(_, note, _)| note);
+            for note in pad.chain(keys) {
+                assert!(
+                    note >= CHORD_FLOOR,
+                    "{mood:?} seed {seed}: a chord voice at {note}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn the_floor_moves_no_voice_past_a_fifth_the_template_keeps_within() {
+    // each voice in pitch order, which is how a held chord is heard
+    let step = |a: [u8; 4], b: [u8; 4]| {
+        let (mut a, mut b) = (a, b);
+        a.sort_unstable();
+        b.sort_unstable();
+        (a.iter().zip(&b))
+            .map(|(&x, &y)| x.abs_diff(y))
+            .max()
+            .unwrap_or(0)
+    };
+    const FIFTH: u8 = 7;
+    for (mood, progs) in [
+        (Mood::Day, &DAY_PROGRESSIONS[..]),
+        (Mood::Night, &NIGHT_PROGRESSIONS[..]),
+    ] {
+        for (i, p) in progs.iter().enumerate() {
+            for t in TRANSPOSE_MIN..=TRANSPOSE_MAX {
+                let (chords, roots, _) = transpose(p, t);
+                let (floored, _) = timeline(&chords, &roots, mood);
+                // the template shifted as it was before the floor, its day
+                // dominant rooted at 46..=57
+                let shifted = p.chords.map(|c| c.map(|n| n.wrapping_add_signed(t)));
+                let (mut before, _) = timeline(&shifted, &roots, mood);
+                if mood == Mood::Day {
+                    let r = 46 + (roots[0] + 9) % 12;
+                    before[7] = [r, r + 4, r + 7, r + 10];
+                }
+                for bar in 0..GEN_LOOP_BARS {
+                    let next = (bar + 1) % GEN_LOOP_BARS;
+                    let (now, was) = (
+                        step(floored[bar], floored[next]),
+                        step(before[bar], before[next]),
+                    );
+                    assert!(
+                        now <= was.max(FIFTH),
+                        "{mood:?} template {i} at {t:+}: bar {bar} moves a voice {now}, was {was}"
+                    );
+                }
+            }
+        }
+    }
+}
