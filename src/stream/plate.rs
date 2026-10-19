@@ -374,20 +374,42 @@ mod tests {
     }
 
     #[test]
-    fn each_output_tap_reads_its_line_at_its_index_and_sign() {
+    fn each_output_tap_reads_its_line_at_table_2s_index_and_sign() {
+        use TankLine::*;
+        // Table 2 as the paper prints it, spelled apart from TAPS, so a
+        // slip in either shows: `(side, line, index, sign)`
+        let table_2 = [
+            (0, RightDelay1, 266, 1.0),
+            (0, RightDelay1, 2974, 1.0),
+            (0, RightDiffuser2, 1913, -1.0),
+            (0, RightDelay2, 1996, 1.0),
+            (0, LeftDelay1, 1990, -1.0),
+            (0, LeftDiffuser2, 187, -1.0),
+            (0, LeftDelay2, 1066, -1.0),
+            (1, LeftDelay1, 353, 1.0),
+            (1, LeftDelay1, 3627, 1.0),
+            (1, LeftDiffuser2, 1228, -1.0),
+            (1, LeftDelay2, 2673, 1.0),
+            (1, RightDelay1, 2111, -1.0),
+            (1, RightDiffuser2, 335, -1.0),
+            (1, RightDelay2, 121, -1.0),
+        ];
+        assert_eq!(
+            TAPS.iter().flatten().count(),
+            table_2.len(),
+            "a tap Table 2 lacks"
+        );
         let sr = SAMPLE_RATE;
-        for (side, taps) in TAPS.iter().enumerate() {
-            for &(line, index, sign) in taps {
-                let mut plate = Plate::new(sr);
-                plate.impulse_into = Some(line);
-                let at = scaled(f64::from(index), sr);
-                let raw: Vec<[f64; 2]> = (0..=at).map(|_| plate.step(0.0)).collect();
-                assert_eq!(
-                    raw[at][side],
-                    sign * TAP_GAIN,
-                    "side {side}: {line:?}[{index}] at frame {at}"
-                );
-            }
+        for (side, line, index, sign) in table_2 {
+            let mut plate = Plate::new(sr);
+            plate.impulse_into = Some(line);
+            let at = scaled(f64::from(index), sr);
+            let raw: Vec<[f64; 2]> = (0..=at).map(|_| plate.step(0.0)).collect();
+            assert_eq!(
+                raw[at][side],
+                sign * TAP_GAIN,
+                "side {side}: {line:?}[{index}] at frame {at}"
+            );
         }
     }
 

@@ -233,29 +233,6 @@ mod tests {
         (out.iter().map(|&[l, _]| l).collect(), ceiling)
     }
 
-    #[test]
-    fn a_peak_on_one_side_turns_both_down_alike() {
-        let limit = f64::from(Ceiling::new(SAMPLE_RATE).limit);
-        let mut input: Vec<[f64; 2]> = tone(0.5, 440.0, 0.5)
-            .into_iter()
-            .map(|x| [x, 0.1 * x])
-            .collect();
-        input.extend(tone(2.0, 440.0, 0.5).into_iter().map(|x| [x, 0.1 * x]));
-        let mut out = input.clone();
-        let mut ceiling = Ceiling::new(SAMPLE_RATE);
-        ceiling.limit(&mut out);
-        let late = (LOOKAHEAD_S * f64::from(SAMPLE_RATE)) as usize;
-        // the quiet side keeps its share of the loud one, so the image holds
-        let off = (out[late..].iter().zip(&input)).position(|([l, r], [x, _])| {
-            (r - 0.1 * l).abs() > 1e-12 || l.abs() > limit || (l - x).abs() > 2.0 * x.abs()
-        });
-        assert_eq!(off, None);
-        assert!(
-            out.iter().any(|[l, _]| l.abs() > 0.99 * limit),
-            "the peak never reached the ceiling"
-        );
-    }
-
     /// How many of `buf`'s samples the clamp changes.
     fn clamped(ceiling: &Ceiling, buf: &[f64]) -> usize {
         buf.iter()
@@ -267,6 +244,36 @@ mod tests {
     /// silence first sounds.
     fn delay(out: &[f64]) -> usize {
         out.iter().position(|&v| v != 0.0).unwrap_or(out.len())
+    }
+
+    #[test]
+    fn a_peak_on_either_side_turns_both_down_alike() {
+        let limit = f64::from(Ceiling::new(SAMPLE_RATE).limit);
+        let late = (LOOKAHEAD_S * f64::from(SAMPLE_RATE)) as usize;
+        for loud in [0, 1] {
+            // the loud side's tone, and the quiet side a tenth of it
+            let frame = |x: f64| {
+                let mut frame = [0.1 * x; 2];
+                frame[loud] = x;
+                frame
+            };
+            let mut input: Vec<[f64; 2]> = tone(0.5, 440.0, 0.5).into_iter().map(frame).collect();
+            input.extend(tone(2.0, 440.0, 0.5).into_iter().map(frame));
+            let mut out = input.clone();
+            Ceiling::new(SAMPLE_RATE).limit(&mut out);
+            // the quiet side keeps its share of the loud one, so the image holds
+            let off = (out[late..].iter().zip(&input)).position(|(y, x)| {
+                let (l, q) = (y[loud], y[1 - loud]);
+                (q - 0.1 * l).abs() > 1e-12
+                    || l.abs() > limit
+                    || (l - x[loud]).abs() > 2.0 * x[loud].abs()
+            });
+            assert_eq!(off, None, "side {loud} loud");
+            assert!(
+                out.iter().any(|y| y[loud].abs() > 0.99 * limit),
+                "side {loud}'s peak never reached the ceiling"
+            );
+        }
     }
 
     #[test]
