@@ -484,8 +484,8 @@ impl Batch {
     }
 
     /// `seed`'s take as a `Performance` plays it, each call made at its
-    /// frame: one channel of it, since it plays both alike.
-    pub(crate) fn perform(&self, seed: u64) -> io::Result<Vec<f32>> {
+    /// frame.
+    pub(crate) fn perform(&self, seed: u64) -> Vec<Frame> {
         let timeline = self.timeline(seed);
         let mut frames = vec![Frame::default(); timeline.songs.iter().map(|&(_, len)| len).sum()];
         let mut performance = Performance::new(seed, self.controls());
@@ -497,17 +497,6 @@ impl Batch {
         }
         performance.render(&mut frames[done..]);
         frames
-            .into_iter()
-            .map(|[left, right]: Frame| {
-                (left.to_bits() == right.to_bits())
-                    .then_some(left)
-                    .ok_or_else(|| {
-                        io::Error::other(
-                            "the stream plays its channels apart, so one is not the take",
-                        )
-                    })
-            })
-            .collect()
     }
 }
 

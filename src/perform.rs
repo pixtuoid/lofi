@@ -231,7 +231,7 @@ mod tests {
     }
 
     fn audible(frames: &[Frame]) -> bool {
-        frames.iter().any(|&[l, _]| l != 0.0)
+        crate::loudness::fold(frames).iter().any(|&x| x != 0.0)
     }
 
     /// `p`'s next `frames` frames of the lanes' mix, before the ceiling.
@@ -580,8 +580,7 @@ mod tests {
     /// `song`'s gated loudness, in LUFS, which must be finite: a silent or a
     /// NaN song's would make [`audition::lufs_sd`] NaN, which no bound fails.
     fn lufs(song: &[Frame]) -> f64 {
-        let left: Vec<f32> = song.iter().map(|&[l, _]| l).collect();
-        let lufs = crate::loudness::gated_lufs(&left, SAMPLE_RATE);
+        let lufs = crate::loudness::gated_lufs(&crate::loudness::fold(song), SAMPLE_RATE);
         assert!(lufs.is_finite(), "a song reads {lufs} LUFS");
         lufs
     }

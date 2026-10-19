@@ -22,7 +22,7 @@ use pixtuoid_lofi::audition::{self, LOOPS_PER_SONG};
 use pixtuoid_lofi::dsp::SAMPLE_RATE;
 
 use batch::{Batch, Engine, LANE_NAMES, lane_gains, render_take, soak_mix, usage_error};
-use loudness::gated_lufs;
+use loudness::{fold, gated_lufs};
 
 const SR: f64 = SAMPLE_RATE as f64;
 
@@ -106,7 +106,7 @@ fn run() -> std::io::Result<()> {
                 }
                 Engine::Stream => {
                     let started = Instant::now();
-                    let mix = batch.perform(seed)?;
+                    let mix = fold(&batch.perform(seed));
                     let rendered = mix.len();
                     (None, mix, started.elapsed(), rendered)
                 }
@@ -420,7 +420,7 @@ mod tests {
         let (batch, seed) = (Batch::default(), 0);
         let (beds, _) = render_take(&batch.score(seed));
         let whole = gated_lufs(&soak_mix(&beds, &lane_gains(batch.controls())), SAMPLE_RATE);
-        let stream = gated_lufs(&batch.perform(seed).expect("the stream plays"), SAMPLE_RATE);
+        let stream = gated_lufs(&fold(&batch.perform(seed)), SAMPLE_RATE);
         // half the staging in dB, which a mix staged once less or once more
         // reads past
         let bound = -10.0 * Performance::MASTER_GAIN.log10();
