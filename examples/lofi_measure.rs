@@ -1,9 +1,11 @@
 //! The listening loop's numbers: what a sound change moves in a pixtuoid
-//! tier's mix, and per lane through `--engine whole`. They steer a change;
-//! `ab_judge.py` judges it. `--engine stream`, the default, measures a
-//! `Performance`'s song, which is what lofi ships; `--engine whole` measures the
-//! same score's lanes rendered whole and their mix looped as long, at the
-//! stage where the stream's mix meets its ceiling, so the two mixes compare.
+//! tier's mix and in each of its lanes, and where the mix's spectrum sits in
+//! the reference corpus. They steer a change; `ab_judge.py` judges it.
+//! `--engine stream`, the default, measures a `Performance`'s song, which is
+//! what lofi ships, its lanes as the stems its mix sums; `--engine whole`
+//! measures the same score's lanes rendered whole and their mix looped as
+//! long, at the stage where the stream's mix meets its ceiling, so the two
+//! mixes compare.
 //!
 //! Usage:
 //!   cargo run --release --example lofi_measure -- \
@@ -12,34 +14,25 @@
 
 #[path = "common/batch.rs"]
 mod batch;
+#[path = "common/corpus.rs"]
+mod corpus;
 #[path = "common/loudness.rs"]
 mod loudness;
 
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
-use pixtuoid_lofi::audition::{self, LOOPS_PER_SONG};
+use pixtuoid_lofi::audition::{self, LOOPS_PER_SONG, Stems};
 use pixtuoid_lofi::dsp::SAMPLE_RATE;
 
 use batch::{Batch, Engine, LANE_NAMES, lane_gains, render_take, soak_mix, usage_error};
+use corpus::{BAND_EDGES_HZ, CORPUS, LTAS_BANDS_PER_OCTAVE, LTAS_SPAN_HZ, percentile};
 use loudness::{fold, gated_lufs};
 
 const SR: f64 = SAMPLE_RATE as f64;
 
-/// The band shares' inner edges in Hz; the first is the guard rails' sub band.
-const BAND_EDGES_HZ: [f64; 6] = [62.0, 125.0, 250.0, 500.0, 1000.0, 2000.0];
-
-/// `LOFI-BIBLE.md`'s MEASURED tempo and spectral targets, each printed as a
-/// guard rail beside the take's value: the tempo in BPM, the percent of power
-/// under [`BAND_EDGES_HZ`]`[0]`, and the centroid in Hz.
+/// `LOFI-BIBLE.md`'s MEASURED tempo, printed as a guard rail beside the take's.
 const BPM_RAIL: [f64; 2] = [68.0, 90.0];
-const SUB_SHARE_RAIL_PCT: [f64; 2] = [55.0, 65.0];
-const CENTROID_RAIL_HZ: [f64; 2] = [140.0, 160.0];
-
-/// The LTAS slope's span in Hz, fitted over the power density of its fractional
-/// octave bands.
-const LTAS_SPAN_HZ: [f64; 2] = [250.0, 4000.0];
-const LTAS_BANDS_PER_OCTAVE: f64 = 3.0;
 
 /// The seam ratio's reference: this quantile of the lane's own second
 /// differences.
@@ -78,20 +71,10 @@ fn main() -> ExitCode {
 fn run() -> std::io::Result<()> {
     let batch = parse(std::env::args().skip(1))?;
     let bands = bands();
-    let header: Vec<String> = bands.iter().map(|&b| band_label(b)).collect();
-    let row = |name: &str, buf: &[f32], seam: String, took: Duration| {
-        let (lufs, spectrum) = (gated_lufs(buf, SAMPLE_RATE), Spectrum::of(buf));
-        let shares: String = bands
-            .iter()
-            .map(|&(lo, hi)| format!(" {:>6.1}%", 100.0 * spectrum.share(lo, hi)))
-            .collect();
-        println!(
-            "  {name:<8} {lufs:>6.1}{shares} {:>8.0} {seam:>6} {:>6.0}",
-            spectrum.centroid(),
-            took.as_secs_f64() * 1e3
-        );
-        (lufs, spectrum)
+    let cells = |cell: &dyn Fn(f64, f64) -> String| -> Vec<String> {
+        bands.iter().map(|&(lo, hi)| cell(lo, hi)).collect()
     };
+    let pct = |share: f64| format!("{:.2}%", 100.0 * share);
     for batch in batch.runs() {
         let mut mix_lufs = Vec::new();
         for seed in batch.seeds() {
@@ -101,14 +84,18 @@ fn run() -> std::io::Result<()> {
                 Engine::WholeLane => {
                     let (beds, took) = render_take(&score);
                     let mix = soak_mix(&beds, &lane_gains(batch.controls()));
-                    let rendered = beds[0].len();
-                    (Some((beds, took)), mix, took.iter().sum(), rendered)
+                    let (rendered, all) = (beds[0].len(), took.iter().sum());
+                    (Lanes::Whole(beds, took), mix, all, rendered)
                 }
                 Engine::Stream => {
                     let started = Instant::now();
                     let mix = fold(&batch.perform(seed));
+                    let took = started.elapsed();
+                    // rendered again, so the render's time is the shipped one's
+                    let mut stems = Stems::default();
+                    batch.perform_with(seed, |p, out| stems.render(p, out));
                     let rendered = mix.len();
-                    (None, mix, started.elapsed(), rendered)
+                    (Lanes::Stems(stems), mix, took, rendered)
                 }
             };
             let loop_len = mix.len() / LOOPS_PER_SONG;
@@ -119,35 +106,71 @@ fn run() -> std::io::Result<()> {
                 score.lead_voice_name(),
                 loop_len as f64 / SR
             );
-            println!(
-                "  {:<8} {:>6}{} {:>8} {:>6} {:>6}",
-                "lane",
-                "LUFS",
-                header
-                    .iter()
-                    .map(|h| format!(" {h:>7}"))
-                    .collect::<String>(),
-                "centroid",
-                "seam",
-                "ms"
-            );
-            if let Some((beds, took)) = &lanes {
-                for ((name, bed), took) in LANE_NAMES.iter().zip(beds).zip(took) {
-                    row(name, bed, format!("{:.2}", seam_ratio(bed)), *took);
+            let header = cells(&|lo, hi| band_label((lo, hi)));
+            print_row("lane", "LUFS", &header, "centroid", "seam", "ms");
+            let transform = Transform::of(&mix);
+            let spectrum = Spectrum::cross(&transform, &transform);
+            match &lanes {
+                Lanes::Whole(beds, took) => {
+                    for ((name, bed), took) in LANE_NAMES.iter().zip(beds).zip(took) {
+                        let own = Spectrum::of(bed);
+                        print_row(
+                            name,
+                            &format!("{:.1}", gated_lufs(bed, SAMPLE_RATE)),
+                            &cells(&|lo, hi| pct(own.share(lo, hi))),
+                            &format!("{:.0}", own.centroid()),
+                            &format!("{:.2}", seam_ratio(bed)),
+                            &format!("{:.0}", took.as_secs_f64() * 1e3),
+                        );
+                    }
+                }
+                Lanes::Stems(stems) => {
+                    println!("  stems in shares of the mix's power, which they sum to");
+                    for (name, stem) in named(stems) {
+                        let stem_transform = Transform::of(stem);
+                        let own = Spectrum::cross(&stem_transform, &stem_transform);
+                        let row =
+                            shares_of(&Spectrum::cross(&stem_transform, &transform), &spectrum);
+                        print_row(
+                            name,
+                            &format!("{:.1}", gated_lufs(stem, SAMPLE_RATE)),
+                            &row.into_iter().map(pct).collect::<Vec<_>>(),
+                            &format!("{:.0}", own.centroid()),
+                            "-",
+                            "-",
+                        );
+                    }
                 }
             }
-            let (lufs, spectrum) = row("mix", &mix, "-".into(), took);
+            let lufs = gated_lufs(&mix, SAMPLE_RATE);
             mix_lufs.push(lufs);
-            let sub = BAND_EDGES_HZ[0];
+            print_row(
+                "mix",
+                &format!("{lufs:.1}"),
+                &cells(&|lo, hi| pct(spectrum.share(lo, hi))),
+                &format!("{:.0}", spectrum.centroid()),
+                "-",
+                &format!("{:.0}", took.as_secs_f64() * 1e3),
+            );
+            let spreads = bands.iter().zip(CORPUS.shares_pct);
+            print_row(
+                "corpus",
+                "",
+                &(spreads
+                    .map(|(&(lo, hi), spread)| percentile(100.0 * spectrum.share(lo, hi), spread)))
+                .collect::<Vec<_>>(),
+                &percentile(spectrum.centroid(), CORPUS.centroid_hz),
+                "",
+                "",
+            );
+            let slope = spectrum.ltas_slope();
             println!(
-                "  {} mix through {}: below {sub} Hz {}; centroid {}; LTAS density slope {}-{} Hz {:.1} dB/oct; autocorrelation at the loop {:.4}; rendered at {:.4} of real time",
+                "  {} mix through {}: LTAS density slope {}-{} Hz {slope:.1} dB/oct ({} of the corpus); autocorrelation at the loop {:.4}; rendered at {:.4} of real time",
                 batch.mix_name(),
                 batch.engine.name(),
-                rail(100.0 * spectrum.share(0.0, sub), SUB_SHARE_RAIL_PCT, "%"),
-                rail(spectrum.centroid(), CENTROID_RAIL_HZ, " Hz"),
                 LTAS_SPAN_HZ[0],
                 LTAS_SPAN_HZ[1],
-                spectrum.ltas_slope(),
+                percentile(slope, CORPUS.ltas_db_per_oct),
                 loop_autocorrelation(&mix, loop_len),
                 took.as_secs_f64() / (rendered as f64 / SR)
             );
@@ -165,6 +188,38 @@ fn run() -> std::io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// What a take's lane rows read: each lane rendered whole with its render
+/// time, or the stream's stems.
+enum Lanes {
+    Whole([Vec<f32>; LANE_NAMES.len()], [Duration; LANE_NAMES.len()]),
+    Stems(Stems),
+}
+
+/// One row of the table: a cell per band between its LUFS and centroid.
+fn print_row(name: &str, lufs: &str, bands: &[String], centroid: &str, seam: &str, ms: &str) {
+    let bands: String = bands.iter().map(|cell| format!(" {cell:>7}")).collect();
+    println!("  {name:<8} {lufs:>6}{bands} {centroid:>8} {seam:>6} {ms:>6}");
+}
+
+/// Each stem with the name it prints under: the lanes', then the plate's.
+fn named(stems: &Stems) -> impl Iterator<Item = (&str, &[f32])> {
+    let lanes = stems.lanes().iter().map(Vec::as_slice);
+    LANE_NAMES
+        .into_iter()
+        .zip(lanes)
+        .chain([("plate", stems.plate())])
+}
+
+/// A stem's part of `mix`'s power in each band, its `cross` with the mix, as
+/// a fraction of the mix's whole power.
+fn shares_of(cross: &Spectrum, mix: &Spectrum) -> Vec<f64> {
+    let total = mix.power(0.0, f64::INFINITY);
+    bands()
+        .into_iter()
+        .map(|(lo, hi)| cross.power(lo, hi) / total)
+        .collect()
 }
 
 /// The share bands, `[lo, hi)` Hz, from DC to Nyquist across [`BAND_EDGES_HZ`].
@@ -232,7 +287,24 @@ fn loop_autocorrelation(mix: &[f32], loop_len: usize) -> f64 {
     ab / (aa * bb).sqrt()
 }
 
-/// A buffer's power spectrum, zero-padded to a power of two: bins `0..=n/2`.
+/// A buffer's DFT, zero-padded to a power of two.
+struct Transform {
+    re: Vec<f64>,
+    im: Vec<f64>,
+}
+
+impl Transform {
+    fn of(buf: &[f32]) -> Self {
+        let n = buf.len().next_power_of_two();
+        let mut re: Vec<f64> = buf.iter().map(|&v| f64::from(v)).collect();
+        re.resize(n, 0.0);
+        let mut im = vec![0.0; n];
+        fft(&mut re, &mut im);
+        Self { re, im }
+    }
+}
+
+/// A power spectrum: bins `0..=n/2` of an `n`-point [`Transform`].
 struct Spectrum {
     power: Vec<f64>,
     hz_per_bin: f64,
@@ -240,12 +312,23 @@ struct Spectrum {
 
 impl Spectrum {
     fn of(buf: &[f32]) -> Self {
-        let n = buf.len().next_power_of_two();
-        let mut re: Vec<f64> = buf.iter().map(|&v| f64::from(v)).collect();
-        re.resize(n, 0.0);
-        let mut im = vec![0.0; n];
-        fft(&mut re, &mut im);
-        let power = (0..=n / 2).map(|k| re[k] * re[k] + im[k] * im[k]).collect();
+        let transform = Transform::of(buf);
+        Self::cross(&transform, &transform)
+    }
+
+    /// `a`'s cross-power with `b`, Re(A·B̄) per bin: `a`'s power when `b` is
+    /// `a`, and over parts that sum to `b`, summing to `b`'s power where the
+    /// parts' own powers would miss the terms between them.
+    ///
+    /// # Panics
+    ///
+    /// If `a` and `b` are of different lengths, whose bins differ.
+    fn cross(a: &Transform, b: &Transform) -> Self {
+        let n = a.re.len();
+        assert_eq!(n, b.re.len(), "transforms of different lengths");
+        let power = (0..=n / 2)
+            .map(|k| a.re[k] * b.re[k] + a.im[k] * b.im[k])
+            .collect();
         Self {
             power,
             hz_per_bin: SR / n as f64,
@@ -257,16 +340,17 @@ impl Spectrum {
         (1..self.power.len()).map(|k| (k as f64 * self.hz_per_bin, self.power[k]))
     }
 
+    /// The power in `[lo, hi)` Hz.
+    fn power(&self, lo: f64, hi: f64) -> f64 {
+        (self.bins())
+            .filter(|&(f, _)| f >= lo && f < hi)
+            .map(|(_, p)| p)
+            .sum()
+    }
+
     /// The fraction of the power in `[lo, hi)` Hz.
     fn share(&self, lo: f64, hi: f64) -> f64 {
-        let (mut band, mut total) = (0.0, 0.0);
-        for (f, p) in self.bins() {
-            total += p;
-            if f >= lo && f < hi {
-                band += p;
-            }
-        }
-        band / total
+        self.power(lo, hi) / self.power(0.0, f64::INFINITY)
     }
 
     fn centroid(&self) -> f64 {
@@ -345,8 +429,8 @@ fn fft(re: &mut [f64], im: &mut [f64]) {
 
 #[cfg(test)]
 mod tests {
-    use pixtuoid_lofi::Performance;
     use pixtuoid_lofi::dsp::NoiseStream;
+    use pixtuoid_lofi::{Frame, Performance};
 
     use super::*;
 
@@ -367,21 +451,68 @@ mod tests {
     }
 
     #[test]
-    fn the_guard_rails_are_lofi_bibles_tempo_and_spectral_rows() {
+    fn the_tempo_rail_is_lofi_bibles_row() {
         let bible = include_str!("../.claude/skills/procedural-lofi/reference/LOFI-BIBLE.md");
-        let [bpm_lo, bpm_hi] = BPM_RAIL;
-        let ([sub_lo, sub_hi], [c_lo, c_hi]) = (SUB_SHARE_RAIL_PCT, CENTROID_RAIL_HZ);
-        let rails = [
-            format!("BPM: {bpm_lo}–{bpm_hi} (MEASURED"),
-            format!(
-                "{sub_lo}–{sub_hi}% of power below {} Hz, centroid {c_lo}–{c_hi} Hz",
-                BAND_EDGES_HZ[0]
-            ),
+        let [lo, hi] = BPM_RAIL;
+        let rail = format!("BPM: {lo}–{hi} (MEASURED");
+        assert!(
+            bible.contains(&rail),
+            "LOFI-BIBLE.md no longer reads {rail:?}"
+        );
+    }
+
+    #[test]
+    fn the_bands_split_the_top_at_4_and_6_5_khz() {
+        let labels: Vec<String> = bands().into_iter().map(band_label).collect();
+        let want = [
+            "<62", "62-125", "125-250", "250-500", "500-1k", "1k-2k", "2k-4k", "4k-6.5k", ">6.5k",
         ];
-        for rail in &rails {
+        assert_eq!(labels, want);
+    }
+
+    #[test]
+    fn every_corpus_spread_rises() {
+        let spreads =
+            (CORPUS.shares_pct.iter()).chain([&CORPUS.centroid_hz, &CORPUS.ltas_db_per_oct]);
+        for spread in spreads {
+            assert!(spread.is_sorted_by(|a, b| a < b), "{spread:?}");
+        }
+    }
+
+    #[test]
+    fn a_reading_falls_between_the_percentiles_around_it() {
+        let spread = [1.0, 2.0, 3.0, 4.0, 5.0];
+        for (value, want) in [
+            (0.5, "<p10"),
+            (1.0, "p10-25"),
+            (2.5, "p25-50"),
+            (5.0, "p75-90"),
+            (5.5, ">p90"),
+        ] {
+            assert_eq!(percentile(value, spread), want, "{value}");
+        }
+    }
+
+    #[test]
+    fn a_takes_stem_rows_sum_to_its_mix_row() {
+        // f32's rounding, of each stem and of the frame it sums to
+        let rounding = 8.0 * f64::from(f32::EPSILON);
+        let (batch, seed) = (Batch::default(), 0);
+        let mut frames = vec![Frame::default(); 10 * SAMPLE_RATE as usize];
+        let mut stems = audition::Stems::default();
+        stems.render(&mut Performance::new(seed, batch.controls()), &mut frames);
+        let mix = Transform::of(&fold(&frames));
+        let spectrum = Spectrum::cross(&mix, &mix);
+        let rows: Vec<Vec<f64>> = (named(&stems))
+            .map(|(_, stem)| shares_of(&Spectrum::cross(&Transform::of(stem), &mix), &spectrum))
+            .collect();
+        for (k, (lo, hi)) in bands().into_iter().enumerate() {
+            let sum: f64 = rows.iter().map(|row| row[k]).sum();
+            let want = spectrum.share(lo, hi);
             assert!(
-                bible.contains(rail),
-                "LOFI-BIBLE.md no longer reads {rail:?}"
+                (sum - want).abs() < rounding,
+                "{}: the stems sum to {sum}, the mix {want}",
+                band_label((lo, hi))
             );
         }
     }

@@ -2,6 +2,7 @@
 //! solo, mute and measure, and the loudness bounds lofi's gates share. Not a
 //! contract: any release may change it.
 
+use std::collections::VecDeque;
 use std::ops::Range;
 
 pub use crate::compose::Score;
@@ -9,6 +10,10 @@ pub use crate::stream::master::{TIER_INTENSITIES, lane_gain};
 pub use crate::stream::schedule::{LOOPS_PER_SONG, bar_frames, song_score};
 pub use crate::synth::{Lane, render_lane};
 
+use crate::dsp::SAMPLE_RATE;
+use crate::perform::Probe;
+use crate::stream::master::lookahead;
+use crate::stream::schedule::LANES;
 use crate::{Controls, Frame, Performance};
 
 /// Song `k` of `seed`'s run, from its first bar to the next song's, played
@@ -49,6 +54,77 @@ pub fn song(seed: u64, k: u64, controls: Controls, calls: &[(usize, Controls)]) 
 /// the next song's first bar falls, without rendering a frame.
 pub fn song_len(seed: u64, k: u64, controls: Controls) -> usize {
     Performance::song_len(seed, k, controls)
+}
+
+/// A performance's mix as the sum it is, on the fold every reading hears:
+/// each lane's dry sum and the plate's return, as the ceiling played them,
+/// so a frame's stems sum to its fold but for the rounding each takes.
+#[derive(Debug)]
+pub struct Stems {
+    /// Each stem of the mix the ceiling has yet to play, the lanes then the
+    /// plate, starting with the silence it plays first.
+    pending: VecDeque<([f64; LANES], f64)>,
+    lanes: [Vec<f32>; LANES],
+    plate: Vec<f32>,
+}
+
+impl Default for Stems {
+    /// The stems of a performance yet to play a frame.
+    fn default() -> Self {
+        Self {
+            pending: VecDeque::from(vec![([0.0; LANES], 0.0); lookahead(SAMPLE_RATE)]),
+            lanes: std::array::from_fn(|_| Vec::new()),
+            plate: Vec::new(),
+        }
+    }
+}
+
+impl Stems {
+    /// `performance.render(out)`, each frame's stems added after the ones
+    /// before.
+    ///
+    /// # Panics
+    ///
+    /// If `performance` rendered frames these stems didn't, which they would
+    /// misplace.
+    pub fn render(&mut self, performance: &mut Performance, out: &mut [Frame]) {
+        assert_eq!(
+            performance.position(),
+            self.plate.len() as u64,
+            "the performance rendered frames these stems didn't"
+        );
+        performance.render_probed(out, self);
+    }
+
+    /// Each lane's stem, in [`Lane::ALL`] order.
+    pub fn lanes(&self) -> &[Vec<f32>; LANES] {
+        &self.lanes
+    }
+
+    /// The plate's return.
+    pub fn plate(&self) -> &[f32] {
+        &self.plate
+    }
+}
+
+impl Probe for Stems {
+    fn step(&mut self, lanes: &[Vec<f64>; LANES], plate: &[Vec<f64>; 2]) {
+        let [left, right] = plate;
+        self.pending.extend(
+            (left.iter().zip(right).enumerate())
+                .map(|(i, (l, r))| (lanes.each_ref().map(|lane| lane[i]), l.midpoint(*r))),
+        );
+    }
+
+    fn gain(&mut self, gain: f64) {
+        // the ceiling plays no frame it hasn't been given
+        let (lanes, plate) = self.pending.pop_front().unwrap_or_default();
+        let heard = |x: f64| (x * Performance::MASTER_GAIN * gain) as f32;
+        for (stem, x) in self.lanes.iter_mut().zip(lanes) {
+            stem.push(heard(x));
+        }
+        self.plate.push(heard(plate));
+    }
 }
 
 /// The seeds [`WHOLE_LANE_LUFS_SD`] was measured over.
@@ -107,6 +183,71 @@ mod tests {
         // the last of the frame-0 calls wins, as before any latch
         let late = [(0, day), (0, night), (night_len - 1, night)];
         assert_eq!(song(seed, 0, day, &late), song(seed, 0, night, &late[2..]));
+    }
+
+    #[test]
+    fn a_takes_stems_sum_to_its_fold() {
+        // f32's rounding, of each stem and of the frame it sums to
+        let rounding = 8.0 * f64::from(f32::EPSILON);
+        let (seed, busy) = (8, Controls::default().with_intensity(1.0));
+        let frames = 20 * SAMPLE_RATE as usize;
+        // in two renders, night asked for between them
+        let take = |render: &mut dyn FnMut(&mut Performance, &mut [Frame])| {
+            let mut performance = Performance::new(seed, busy);
+            let mut out = vec![Frame::default(); frames];
+            let (head, tail) = out.split_at_mut(frames / 2);
+            render(&mut performance, head);
+            performance.set_controls(busy.with_daylight(0.0));
+            render(&mut performance, tail);
+            out
+        };
+        let mut stems = Stems::default();
+        let got = take(&mut |p, out| stems.render(p, out));
+        let want = take(&mut |p, out| p.render(out));
+        let first_diff =
+            (got.iter().zip(&want)).position(|(a, b)| a.map(f32::to_bits) != b.map(f32::to_bits));
+        assert_eq!(first_diff, None, "the stems' render played other frames");
+        assert!(stems.plate().iter().any(|&x| x != 0.0), "no plate plays");
+        let fold = crate::loudness::fold(&want);
+        let off = (0..frames).position(|i| {
+            let sum = stems
+                .lanes()
+                .iter()
+                .map(|stem| f64::from(stem[i]))
+                .sum::<f64>()
+                + f64::from(stems.plate()[i]);
+            (sum - f64::from(fold[i])).abs() > rounding
+        });
+        assert_eq!(off, None);
+    }
+
+    #[test]
+    fn a_stem_plays_as_late_as_the_ceiling_and_at_its_gain() {
+        // no take turns the ceiling down soon enough to test in one
+        let (late, gain) = (lookahead(SAMPLE_RATE), 0.5);
+        let lanes: [Vec<f64>; LANES] = std::array::from_fn(|k| vec![k as f64 + 1.0]);
+        let mut stems = Stems::default();
+        stems.step(&lanes, &[vec![1.0], vec![3.0]]);
+        for _ in 0..late {
+            stems.gain(1.0);
+        }
+        stems.gain(gain);
+        let heard = |x: f64| (x * Performance::MASTER_GAIN * gain) as f32;
+        let silent = |stem: &[f32]| stem[..late].iter().all(|&x| x == 0.0);
+        assert!(stems.lanes().iter().all(|stem| silent(stem)) && silent(stems.plate()));
+        assert_eq!(
+            stems.lanes().each_ref().map(|stem| stem[late]),
+            std::array::from_fn(|k| heard(k as f64 + 1.0))
+        );
+        assert_eq!(stems.plate()[late], heard(2.0));
+    }
+
+    #[test]
+    #[should_panic(expected = "rendered frames these stems didn't")]
+    fn stems_refuse_a_performance_already_playing() {
+        let mut performance = Performance::new(1, Controls::default());
+        performance.render(&mut [Frame::default(); 1]);
+        Stems::default().render(&mut performance, &mut [Frame::default(); 1]);
     }
 
     #[test]

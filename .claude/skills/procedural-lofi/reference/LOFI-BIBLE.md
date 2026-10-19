@@ -52,7 +52,7 @@ Each rule → the parameter it maps to here.
 
 ## 4. MIX targets (measurement-reconciled)
 
-- **Band shares: 55–65% of power below 62 Hz, centroid 140–160 Hz — the ratified target (MEASURED).** Literature is directionally consistent (AES 8960: ~5 dB/oct LTAS decay from 100 Hz puts ~half of power below 62 Hz; Trackscore: 81% below 250 Hz for electronic) but generic-EDM sub shares run lower — **prefer the measurement**; the low end is also the least-standardized region (10 dB σ between pro masters, DiVA thesis), which is exactly why reference-matching beats curve-matching. [M]
+- **Band shares, centroid and LTAS slope: the 100-track corpus's spread (MEASURED), `examples/common/corpus.rs`'s `CORPUS`, which `lofi_measure` reads every take against.** It supersedes the two-track 55–65% / 140–160 Hz row (owner, 2026-10-19: "100 首语料"; "可以修改bible的").
 - **Enforce by subtraction, not boost**: HPF every non-bass stem ~140 Hz; HPF master at 30 Hz; sub register belongs to the bass stem alone (R7). [M lofiweekly.com]
 - **Head-bump conflict — RESOLVED (2026-08)**: the chain bumped 80–120 Hz while literature pins 15 ips ≈ 60 Hz / 30 ips ≈ 120 Hz, and the bass lane's fundamentals (36–73 Hz) landed under the old floor. `lofi_post` now bumps the widened **60–120 Hz**; the frozen night-pad 62–125 pin re-measured 0.191 → 0.299 and the batch was re-LISTEN-gated. [SD help.uaudio.com Oxide manual; M]
 - **6.5 kHz rolloff: keep.** Real cassette rolls off 10–12 kHz — ours is deliberately darker, matching genre practice, the measured centroid, and anti-fatigue (2–5 kHz is the ear's fatigue band). [SD ultraferric.com; M babyaud.io]

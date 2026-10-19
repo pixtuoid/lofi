@@ -65,6 +65,12 @@ const CEILING_DBFS: f32 = -1.0;
 /// [Luff]: https://signalsmith-audio.co.uk/writing/2022/limiter/
 pub(crate) const LOOKAHEAD_S: f64 = 0.005;
 
+/// How many frames late the ceiling plays the mix at `sr`: its
+/// [`LOOKAHEAD_S`].
+pub(crate) fn lookahead(sr: u32) -> usize {
+    (LOOKAHEAD_S * f64::from(sr)) as usize
+}
+
 /// How much longer than the lookahead a peak holds the gain down, which keeps
 /// it from fluttering between peaks close together. Opinion: [Luff]'s
 /// example.
@@ -118,7 +124,7 @@ pub(crate) struct Ceiling {
 impl Ceiling {
     pub(crate) fn new(sr: u32) -> Self {
         let rate = f64::from(sr);
-        let lookahead = (LOOKAHEAD_S * rate) as usize;
+        let lookahead = lookahead(sr);
         let window = lookahead + (HOLD_S * rate) as usize + 1;
         let unit = 1u64 << GAIN_BITS;
         // each with room for one more than it keeps: a frame pushes before it
@@ -140,9 +146,16 @@ impl Ceiling {
         }
     }
 
-    /// Limits `buf`'s stereo frames in place, as late as the lookahead, both
-    /// sides at the one gain the louder needs, so the image holds.
+    /// [`limit_heard`](Self::limit_heard), no gain heard.
+    #[cfg(test)]
     pub(crate) fn limit(&mut self, buf: &mut [[f64; 2]]) {
+        self.limit_heard(buf, |_| ());
+    }
+
+    /// Limits `buf`'s stereo frames in place, as late as the lookahead, both
+    /// sides at the one gain the louder needs, so the image holds; `heard`
+    /// hears each frame's gain as it plays.
+    pub(crate) fn limit_heard(&mut self, buf: &mut [[f64; 2]], mut heard: impl FnMut(f64)) {
         let limit = f64::from(self.limit);
         let unit = (1u64 << GAIN_BITS) as f64;
         for x in buf {
@@ -168,6 +181,7 @@ impl Ceiling {
             self.sum -= self.steps.pop_front().unwrap_or(0);
             self.late.push_back(*x);
             let gain = self.gain();
+            heard(gain);
             *x = self
                 .late
                 .pop_front()
@@ -247,9 +261,22 @@ mod tests {
     }
 
     #[test]
+    fn the_limiter_tells_the_gain_each_frame_plays_at() {
+        let input: Vec<[f64; 2]> = tone(2.0, 440.0, 0.5).into_iter().map(|x| [x; 2]).collect();
+        let (mut out, mut heard) = (input.clone(), Vec::new());
+        Ceiling::new(SAMPLE_RATE).limit_heard(&mut out, |gain| heard.push(gain));
+        let late = lookahead(SAMPLE_RATE);
+        assert_eq!(heard.len(), out.len());
+        assert!(heard.iter().any(|&g| g < 1.0), "nothing was turned down");
+        let off = (out[late..].iter().zip(&input).zip(&heard[late..]))
+            .position(|((y, x), &g)| y[0].to_bits() != (x[0] * g).to_bits());
+        assert_eq!(off, None);
+    }
+
+    #[test]
     fn a_peak_on_either_side_turns_both_down_alike() {
         let limit = f64::from(Ceiling::new(SAMPLE_RATE).limit);
-        let late = (LOOKAHEAD_S * f64::from(SAMPLE_RATE)) as usize;
+        let late = lookahead(SAMPLE_RATE);
         for loud in [0, 1] {
             // the loud side's tone, and the quiet side a tenth of it
             let frame = |x: f64| {
