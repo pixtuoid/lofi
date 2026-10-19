@@ -19,8 +19,10 @@ FARTHER from the corpus by per-song FAD. Byte-identical pairs are never
 scored, and a group with only those is UNCHANGED. The batch takes its worst
 group's verdict, a detected regression first, and exits non-zero on
 REGRESSION or INSUFFICIENT. The owner's blind listen, when given, overrides
-this verdict. Every third-octave band whose difference passes TO_EXPLAIN_DB
-is listed TO-EXPLAIN: a PR names its cause, but it fails nothing.
+this verdict, and a group listed SPLIT, one judge significantly for cand and
+another against, calls for it. Every third-octave band whose difference
+passes TO_EXPLAIN_DB is listed TO-EXPLAIN: a PR names its cause, but it fails
+nothing.
 
 A score is a guard against regression from a base batch to a candidate,
 never an objective to maximize: lofi's character (hiss, crackle, roll-off) is
@@ -545,6 +547,7 @@ def main():
         bands_hz=BANDS_HZ,
         pairs=pairs,
         verdict=verdict,
+        split=result["split"],
         overall=result["overall"],
     )
     # built once, so judge.json's table is the one printed
@@ -583,6 +586,11 @@ def main():
             f" {ce['mean_delta']:+8.3f} {v['audiobox_mean_delta_pq']:+8.3f}"
             f"  {mi['wins']:>7}/{mi['losses']}/{mi['ties']:<5} {mi['p']:7.4f} {mi['mean_delta']:+8.3f}"
             f"  {fd['wins']:>3}/{fd['losses']}/{fd['ties']:<3} {fd['p']:7.4f} {fd['mean_delta']:+9.3f}  {label}"
+        )
+    if result["split"]:
+        table.append(
+            f"SPLIT {', '.join(result['split'])}: one judge significantly favours cand and another base,"
+            " so no vote settles it; the owner's blind listen does (ab_listen.py)"
         )
     if changed:
         table.append(f"alpha {result['alpha']:.4g} a test, so one needs {result['min_untied']} untied pairs to ever reject")

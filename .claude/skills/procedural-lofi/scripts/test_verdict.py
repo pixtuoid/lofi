@@ -118,6 +118,35 @@ class Verdicts(unittest.TestCase):
         self.assertIsNone(exit_message(judged(pairs("day", [1.0] * MIN_UNTIED))))
 
 
+def split_pair(mood, gains):
+    """A pair each judge scores its own gain on."""
+    return {"mood": mood, "identical": False, "gains": dict(zip(JUDGES, gains))}
+
+
+class Splits(unittest.TestCase):
+    def test_a_group_one_judge_favours_and_another_disfavours_is_split(self):
+        n = MIN_UNTIED * 2
+        batch = [split_pair("day", (1.0, -1.0, 1.0)) for _ in range(n)]
+        result = judged(batch)
+        self.assertEqual(result["split"], ["day"])
+        self.assertEqual(result["groups"]["day"]["verdict"], "REGRESSION", "a split keeps its verdict")
+
+    def test_a_group_every_judge_disfavours_is_not_split(self):
+        result = judged(pairs("day", losses(MIN_UNTIED * 2)))
+        self.assertEqual(result["split"], [])
+        result = judged(pairs("night", [1.0] * MIN_UNTIED * 2))
+        self.assertEqual(result["split"], [])
+
+    def test_23s_day_row_is_split(self):
+        # #23's day group: Audiobox CE 37/0, MuQ-Eval MI 7/30, FAD 37/0 in
+        # cand's favour, under four changed groups' alpha
+        day = [split_pair("day", (1.0, 1.0 if i < 7 else -1.0, 1.0)) for i in range(37)]
+        even = [split_pair(g, (1.0, -1.0, 1.0) if i % 2 else (-1.0, 1.0, -1.0)) for g in ("night", "rain", "twilight") for i in range(12)]
+        result = judged(day + even)
+        self.assertEqual(result["alpha"], ALPHA / (len(JUDGES) * 4))
+        self.assertEqual(result["split"], ["day"])
+
+
 class RustCopies(unittest.TestCase):
     """The values `examples/common/batch.rs` spells for the judge batch."""
 
