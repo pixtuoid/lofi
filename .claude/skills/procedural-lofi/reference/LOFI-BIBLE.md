@@ -36,7 +36,7 @@ Each rule → the parameter it maps to here.
 
 ## 3. SOUND targets per voice
 
-**Pad** — extensions/upper-shell register (MIDI 60–72+). Slow attack / long release AR; dual-voice detune **±5–10 cents**. Brickwall LPF ~2–4 kHz; HPF ~140 Hz. Primary sidechain-pump target. Loop length incommensurate with all other stems (see §4) (declined here: the musical lanes phase-lock — AGENTS.md Invariants). [M fractal forum detune; SD modeaudio.com]
+**Pad** — R7's shell and extensions, from `compose::CHORD_FLOOR` up. Slow attack / long release AR; dual-voice detune **±5–10 cents**. Brickwall LPF ~2–4 kHz; HPF ~140 Hz. Primary sidechain-pump target. Loop length incommensurate with all other stems (see §4) (declined here: the musical lanes phase-lock — AGENTS.md Invariants). [M fractal forum detune; SD modeaudio.com]
 
 **Bass** — sine + tanh saturation for audible harmonics (the sub carries power, harmonics carry audibility — matches our <62 Hz fingerprint). Root-only below MIDI 48; line restricted to root/5th/leading-tone. Dead center, mono. Soft attack; ducked by kick (kick wins the transient, sub swells behind). [SD edmprod.com/lofi-hip-hop/; G devpost lofigen; M joeysturgistones.com]
 
