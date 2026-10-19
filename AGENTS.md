@@ -12,8 +12,8 @@ Measurement steers a change toward a target; CI's [`judge.yml`](.github/workflow
 
 ## Map
 
-- `perform`: the public engine, `Performance` and its `Controls`.
-- `stream`: the engine's chunk-invariant parts: the song schedule, the lane chains and their filters, and the master: each lane's gain for the intensity, lofi's output level, and the ceiling.
+- `perform`: the public engine, `Performance`, its `Controls` and lofi's output level.
+- `stream`: the engine's chunk-invariant parts: the song schedule, the lane chains and their filters, and the master: each lane's gain for the intensity, and the ceiling.
 - `compose`: seed → `Score`. The rng draw order is the sound.
 - `synth`: voices, the lane recipe both chains read, and the whole-lane chain behind `render_lane`.
 - `dsp`: the public primitives, dependency-free on purpose.

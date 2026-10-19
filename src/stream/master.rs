@@ -1,5 +1,5 @@
-//! The master bus: each lane at its gain for how busy the room is, the mix's
-//! level, and the ceiling it plays under.
+//! The master bus: each lane at its gain for how busy the room is, and the
+//! ceiling the mix plays under.
 
 use std::collections::VecDeque;
 
