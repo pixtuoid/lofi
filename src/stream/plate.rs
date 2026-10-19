@@ -9,7 +9,7 @@ use super::biquad::{Cascade, butter_highpass};
 use super::delay::DelayLine;
 use super::flush;
 use super::onepole::OnePole;
-use crate::synth::Lane;
+use crate::synth::{Lane, samples_at};
 
 /// Each wet lane's send into the plate, in dB on its mix level: set so its
 /// return reads 12, 14 and 16 LU under its dry lane on the fold, as the
@@ -44,7 +44,11 @@ pub(crate) const PLATE_T60_S: f64 = 1.5;
 
 /// The send's delay into the plate. Opinion: the short end of a lofi
 /// plate's 20–40 ms, so the reverb trails the note without parting from it.
-pub(crate) const PLATE_PREDELAY_S: f64 = 0.02;
+pub(crate) const PLATE_PREDELAY_S: f32 = 0.02;
+
+/// Table 1: "decay diffusion 2 = decay + 0.15, floor = 0.25, ceiling = 0.50".
+const DECAY_DIFFUSION_2_OVER_DECAY: f64 = 0.15;
+const DECAY_DIFFUSION_2_RANGE: (f64, f64) = (0.25, 0.5);
 
 /// Where the tank's damping one-pole sits: Dattorro's `damping` of about
 /// 0.5 at 44.1 kHz, so the tail darkens as it rings. Opinion.
@@ -128,11 +132,6 @@ const TAP_GAIN: f64 = 0.6;
 /// `at`, a count at [`DATTORRO_HZ`], at `sr`.
 fn scaled(at: f64, sr: u32) -> usize {
     (at * f64::from(sr) / DATTORRO_HZ).round() as usize
-}
-
-/// `secs` in frames at `sr`.
-fn samples(secs: f64, sr: u32) -> usize {
-    (secs * f64::from(sr)).round() as usize
 }
 
 /// A lattice all-pass, `w = x + g·d`, `y = d − g·w`, `d` being `w` delayed:
@@ -246,16 +245,15 @@ impl Plate {
             .sum::<usize>();
         let trip_s = trip as f64 / f64::from(sr);
         let decay = 10f64.powf(-T60_DB / 20.0 * trip_s / (DECAYS_PER_TRIP * PLATE_T60_S));
-        let predelay_len = samples(PLATE_PREDELAY_S, sr);
+        let predelay_len = samples_at(PLATE_PREDELAY_S, sr);
         Self {
             predelay: DelayLine::new(predelay_len as f64),
             predelay_len,
             diffusers: INPUT_DIFFUSERS.map(|len| Allpass::new(scaled(len, sr), 0.0)),
             halves,
             decay,
-            // Table 1: "decay diffusion 2 = decay + 0.15, floor = 0.25,
-            // ceiling = 0.50"
-            decay_diffusion_2: (decay + 0.15).clamp(0.25, 0.5),
+            decay_diffusion_2: (decay + DECAY_DIFFUSION_2_OVER_DECAY)
+                .clamp(DECAY_DIFFUSION_2_RANGE.0, DECAY_DIFFUSION_2_RANGE.1),
             excursion,
             return_hpf: [(); 2].map(|_| butter_highpass(PLATE_HPF_HZ, PLATE_HPF_ORDER, sr)),
             taps: TAPS
@@ -438,7 +436,11 @@ mod tests {
     fn the_plate_rings_for_its_t60_in_the_band_neither_filter_shapes() {
         let sr = SAMPLE_RATE;
         let mut plate = Plate::new(sr);
-        let [left, right] = returned(&mut plate, &[1.0], samples(4.0 * PLATE_T60_S, sr));
+        let [left, right] = returned(
+            &mut plate,
+            &[1.0],
+            samples_at((4.0 * PLATE_T60_S) as f32, sr),
+        );
         // the fold, above the return's high-pass, below where the tank's
         // damping acts
         let mut band: Vec<f64> = left
@@ -509,12 +511,12 @@ mod tests {
     fn the_returns_two_sides_correlate_little_for_noise_in() {
         let sr = SAMPLE_RATE;
         let mut rng = NoiseStream::new(3);
-        let noise: Vec<f64> = (0..samples(8.0, sr))
+        let noise: Vec<f64> = (0..samples_at(8.0, sr))
             .map(|_| f64::from(rng.norm()))
             .collect();
         let [l, r] = returned(&mut Plate::new(sr), &noise, noise.len());
         // past the tank's fill
-        let skip = samples(2.0, sr);
+        let skip = samples_at(2.0, sr);
         let dot = |a: &[f64], b: &[f64]| -> f64 {
             a[skip..].iter().zip(&b[skip..]).map(|(x, y)| x * y).sum()
         };
@@ -531,13 +533,13 @@ mod tests {
         let at = 1000;
         let mut send = vec![0.0; at];
         send.push(1.0);
-        let out = returned(&mut Plate::new(sr), &send, at + samples(1.0, sr));
+        let out = returned(&mut Plate::new(sr), &send, at + samples_at(1.0, sr));
         let first = out
             .iter()
             .map(|side| side.iter().position(|&x| x != 0.0))
             .min()
             .flatten();
-        let earliest = at + samples(PLATE_PREDELAY_S, sr);
+        let earliest = at + samples_at(PLATE_PREDELAY_S, sr);
         assert!(
             first.is_some_and(|f| f >= earliest),
             "the plate answered at {first:?}, before {earliest}"

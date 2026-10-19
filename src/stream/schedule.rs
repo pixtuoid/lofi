@@ -1031,7 +1031,7 @@ mod tests {
             .iter()
             .filter_map(|side| side.iter().position(|&x| x != 0.0))
             .min();
-        let earliest = samples_at(super::plate::PLATE_PREDELAY_S as f32, SAMPLE_RATE);
+        let earliest = samples_at(super::plate::PLATE_PREDELAY_S, SAMPLE_RATE);
         assert!(
             first.is_some_and(|f| f >= earliest),
             "the plate answered at {first:?}, before {earliest}"
