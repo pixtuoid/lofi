@@ -56,6 +56,12 @@ class SignTest(unittest.TestCase):
             self.assertFalse(sign_test(losses(n - 1), alpha)["significant"])
             self.assertTrue(sign_test(losses(n), alpha)["significant"])
 
+    def test_favours_cand_needs_min_untied_wins_at_its_alpha(self):
+        for alpha in (ALPHA, ALPHA / 3, ALPHA / 6):
+            n = min_untied(alpha)
+            self.assertFalse(sign_test([1.0] * (n - 1), alpha)["favours_cand"])
+            self.assertTrue(sign_test([1.0] * n, alpha)["favours_cand"])
+
     def test_min_untied_is_the_fewest_at_every_gating_test(self):
         self.assertEqual(MIN_UNTIED, min_untied(ALPHA / (len(JUDGES) * len(GROUPS))))
 
@@ -137,9 +143,9 @@ class Splits(unittest.TestCase):
         result = judged(pairs("night", [1.0] * MIN_UNTIED * 2))
         self.assertEqual(result["split"], [])
 
-    def test_23s_day_row_is_split(self):
-        # #23's day group: Audiobox CE 37/0, MuQ-Eval MI 7/30, FAD 37/0 in
-        # cand's favour, under four changed groups' alpha
+    def test_two_judges_for_and_one_against_under_four_groups_alpha_is_split(self):
+        # two judges sweep for cand while the third dissents on a large
+        # minority, the shape a real plate change scored
         day = [split_pair("day", (1.0, 1.0 if i < 7 else -1.0, 1.0)) for i in range(37)]
         even = [split_pair(g, (1.0, -1.0, 1.0) if i % 2 else (-1.0, 1.0, -1.0)) for g in ("night", "rain", "twilight") for i in range(12)]
         result = judged(day + even)
