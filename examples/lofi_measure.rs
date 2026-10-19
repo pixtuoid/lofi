@@ -345,7 +345,7 @@ fn fft(re: &mut [f64], im: &mut [f64]) {
 
 #[cfg(test)]
 mod tests {
-    use pixtuoid_lofi::audition::MASTER_GAIN;
+    use pixtuoid_lofi::Performance;
     use pixtuoid_lofi::dsp::NoiseStream;
 
     use super::*;
@@ -423,7 +423,7 @@ mod tests {
         let stream = gated_lufs(&batch.perform(seed).expect("the stream plays"), SAMPLE_RATE);
         // half the staging in dB, which a mix staged once less or once more
         // reads past
-        let bound = -10.0 * MASTER_GAIN.log10();
+        let bound = -10.0 * Performance::MASTER_GAIN.log10();
         assert!(
             (whole - stream).abs() < bound,
             "the whole-lane mix reads {whole:.2} LUFS, the stream's {stream:.2}"

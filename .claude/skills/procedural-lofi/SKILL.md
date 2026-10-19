@@ -196,7 +196,7 @@ constraint and re-batch), and every taste axis is a data table or named const wi
 | groove feel                | `DAY_GROOVES` templates / `night_drums` pattern + the swing/drag consts |
 | comping density            | `keys_events` density draws                              |
 | room-tone crackle          | `synth::CRACKLE_POPS_PER_SEC` (one knob, both beds)      |
-| lane gains, mix level      | `stream::master`: `tier_gains`, `MASTER_GAIN`            |
+| lane gains, mix level      | `stream::master`: `tier_gains`; `Performance::MASTER_GAIN` |
 | staging, bed crossfade     | `stream::lanes`: `staging`, `BED_CROSSFADE_S`            |
 | **a new instrument**       | see the checklist below                                  |
 
