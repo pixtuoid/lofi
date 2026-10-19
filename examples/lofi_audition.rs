@@ -4,8 +4,8 @@
 //! `--sweep` of control calls. `--engine stream`, the default, renders it as a
 //! `Performance` plays it, so what you hear is what lofi ships; `--engine whole`
 //! renders each song's lanes whole and loops their mix, under the controls its
-//! first bar latches, as pixtuoid's office played lofi before the stream. Either
-//! take is mono.
+//! first bar latches, as pixtuoid's office played lofi before the stream, dry
+//! and centred; a stream take carries the plate on its two sides.
 //!
 //! Usage:
 //!   cargo run --release --example lofi_audition -- \

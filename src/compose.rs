@@ -372,7 +372,7 @@ const NIGHT_PROGRESSIONS: [Progression; 8] = [
 const TRANSPOSE_MIN: i8 = -3;
 const TRANSPOSE_MAX: i8 = 2;
 
-const DAY_BPM: (f32, f32) = (70.0, 82.0);
+pub(crate) const DAY_BPM: (f32, f32) = (70.0, 82.0);
 const NIGHT_BPM: (f32, f32) = (64.0, 72.0);
 
 /// Lead register clamps (MIDI).

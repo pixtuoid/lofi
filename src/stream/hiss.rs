@@ -297,6 +297,7 @@ mod tests {
     #[test]
     fn the_hiss_is_chunk_invariant() {
         crate::stream::assert_chunk_invariant(
+            1,
             || (Hiss::new(HISS_HZ, SAMPLE_RATE), NoiseStream::new(3)),
             |(hiss, noise), buf| hiss.fill(buf, noise),
         );

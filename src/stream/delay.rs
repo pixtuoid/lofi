@@ -1,4 +1,5 @@
-//! A fractional delay line: tape wow and flutter as a moving read head.
+//! A fractional delay line: tape wow and flutter as a moving read head, and
+//! the plate's lattices and taps.
 
 /// Reads its input back `delay(n)` samples late, at fractional delays.
 #[derive(Debug)]
@@ -27,25 +28,39 @@ impl DelayLine {
     /// silence. A delay out of range reads at the nearer end and NaN at 0,
     /// since a panic on the render path costs more than a misread delay.
     pub(crate) fn process(&mut self, buf: &mut [f64], mut delay: impl FnMut(u64) -> f64) {
-        let mask = self.ring.len() - 1;
         for x in buf {
             let n = self.written;
-            self.ring[n as usize & mask] = *x;
-            // `max` returns the non-NaN operand
-            // (<https://doc.rust-lang.org/std/primitive.f64.html#method.max>)
-            let d = delay(n).max(0.0).min(self.max_delay);
-            // the whole part comes off the integer count, so the fraction keeps
-            // its precision however long the line runs
-            let whole = d.floor();
-            let frac = d - whole;
-            let at = n.wrapping_sub(whole as u64);
-            // linear between n − M and n − M − 1, "a one-zero FIR filter"
-            // (<https://ccrma.stanford.edu/~jos/pasp/Fractional_Delay_Filtering_Linear.html>),
-            // so a moving delay leaves no recursive state behind
-            *x = (1.0 - frac) * self.ring[at as usize & mask]
-                + frac * self.ring[at.wrapping_sub(1) as usize & mask];
-            self.written += 1;
+            self.push(*x);
+            *x = self.tap(delay(n));
         }
+    }
+
+    /// Writes `x` as the line's newest sample.
+    pub(crate) fn push(&mut self, x: f64) {
+        let mask = self.ring.len() - 1;
+        self.ring[self.written as usize & mask] = x;
+        self.written += 1;
+    }
+
+    /// The sample pushed `delay` samples before the newest, at a fractional
+    /// delay; before the first, silence. A delay out of range reads at the
+    /// nearer end and NaN at 0.
+    pub(crate) fn tap(&self, delay: f64) -> f64 {
+        let mask = self.ring.len() - 1;
+        let n = self.written.wrapping_sub(1);
+        // `max` returns the non-NaN operand
+        // (<https://doc.rust-lang.org/std/primitive.f64.html#method.max>)
+        let d = delay.max(0.0).min(self.max_delay);
+        // the whole part comes off the integer count, so the fraction keeps
+        // its precision however long the line runs
+        let whole = d.floor();
+        let frac = d - whole;
+        let at = n.wrapping_sub(whole as u64);
+        // linear between n − M and n − M − 1, "a one-zero FIR filter"
+        // (<https://ccrma.stanford.edu/~jos/pasp/Fractional_Delay_Filtering_Linear.html>),
+        // so a moving delay leaves no recursive state behind
+        (1.0 - frac) * self.ring[at as usize & mask]
+            + frac * self.ring[at.wrapping_sub(1) as usize & mask]
     }
 
     /// Whether it holds only zeros, so silence in plays silence out.
@@ -74,6 +89,22 @@ mod tests {
             for (n, &g) in got.iter().enumerate() {
                 let want = if n < k { 0.0 } else { input[n - k] };
                 assert_eq!(g, want, "delay {k} at {n}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_tap_reads_back_what_was_pushed_that_many_samples_before() {
+        let mut line = DelayLine::new(16.0);
+        for n in 0..40 {
+            line.push(f64::from(n));
+            for d in [0, 1, 5, 16] {
+                let want = if n >= d { f64::from(n - d) } else { 0.0 };
+                assert_eq!(line.tap(f64::from(d)), want, "{d} back at {n}");
+            }
+            // halfway between n − 2 and n − 3, exactly on a ramp
+            if n >= 3 {
+                assert_eq!(line.tap(2.5), f64::from(n) - 2.5, "2.5 back at {n}");
             }
         }
     }
@@ -133,6 +164,7 @@ mod tests {
     fn a_modulated_delay_is_chunk_invariant() {
         let sr = f64::from(SAMPLE_RATE);
         crate::stream::assert_chunk_invariant(
+            1,
             || DelayLine::new(32.0),
             |line, buf| {
                 line.process(buf, |n| {

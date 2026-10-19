@@ -8,6 +8,7 @@ pub(crate) mod hiss;
 pub(crate) mod lanes;
 pub(crate) mod master;
 pub(crate) mod onepole;
+pub(crate) mod plate;
 pub(crate) mod rain;
 pub(crate) mod ramp;
 pub(crate) mod schedule;
@@ -44,12 +45,17 @@ fn burst_then_silence(silence_secs: u32) -> Vec<f64> {
 }
 
 /// Panics unless a fresh `make()` driven by `process` gives bit-identical
-/// output over one call and over every chunking the render path can see.
+/// output over one call and over every chunking the render path can see,
+/// over a burst then `tail_secs` of silence.
 #[cfg(test)]
-fn assert_chunk_invariant<P>(make: impl Fn() -> P, mut process: impl FnMut(&mut P, &mut [f64])) {
+fn assert_chunk_invariant<P>(
+    tail_secs: u32,
+    make: impl Fn() -> P,
+    mut process: impl FnMut(&mut P, &mut [f64]),
+) {
     // the silence decays every state past the flush floor, so a flush
     // placed per call rather than per sample shows
-    let input = burst_then_silence(1);
+    let input = burst_then_silence(tail_secs);
     let mut whole = input.clone();
     process(&mut make(), &mut whole);
     for chunk in [1, 127, 4096] {

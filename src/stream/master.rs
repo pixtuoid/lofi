@@ -101,7 +101,7 @@ pub(crate) struct Ceiling {
     /// The released gain's factor of rise per frame.
     rise: f64,
     /// The mix's last frames, as many as the lookahead.
-    late: VecDeque<f64>,
+    late: VecDeque<[f64; 2]>,
     /// `(frame, need)` for each frame in the window whose need no later frame's
     /// undercuts: increasing in both, so the first is the window's minimum.
     needs: VecDeque<(u64, f64)>,
@@ -124,7 +124,7 @@ impl Ceiling {
         // each with room for one more than it keeps: a frame pushes before it
         // pops
         let mut late = VecDeque::with_capacity(lookahead + 1);
-        late.resize(lookahead, 0.0);
+        late.resize(lookahead, [0.0; 2]);
         let mut steps = VecDeque::with_capacity(lookahead + 2);
         steps.resize(lookahead + 1, unit);
         Self {
@@ -140,16 +140,14 @@ impl Ceiling {
         }
     }
 
-    /// Limits `buf` in place, as late as the lookahead.
-    pub(crate) fn limit(&mut self, buf: &mut [f64]) {
+    /// Limits `buf`'s stereo frames in place, as late as the lookahead, both
+    /// sides at the one gain the louder needs, so the image holds.
+    pub(crate) fn limit(&mut self, buf: &mut [[f64; 2]]) {
         let limit = f64::from(self.limit);
         let unit = (1u64 << GAIN_BITS) as f64;
         for x in buf {
-            let need = if x.abs() > limit {
-                limit / x.abs()
-            } else {
-                1.0
-            };
+            let peak = x[0].abs().max(x[1].abs());
+            let need = if peak > limit { limit / peak } else { 1.0 };
             while self.needs.back().is_some_and(|&(_, n)| n >= need) {
                 self.needs.pop_back();
             }
@@ -169,7 +167,12 @@ impl Ceiling {
             self.sum += step;
             self.sum -= self.steps.pop_front().unwrap_or(0);
             self.late.push_back(*x);
-            *x = self.late.pop_front().unwrap_or(0.0) * self.gain();
+            let gain = self.gain();
+            *x = self
+                .late
+                .pop_front()
+                .unwrap_or_default()
+                .map(|side| side * gain);
             self.frame += 1;
         }
     }
@@ -217,12 +220,40 @@ mod tests {
             .collect()
     }
 
-    /// `buf` through a fresh ceiling's limiter, before its clamp.
+    /// `buf`, centred, through a fresh ceiling's limiter, before its clamp:
+    /// one side of it, which plays as the other.
     fn limited(buf: &[f64]) -> (Vec<f64>, Ceiling) {
         let mut ceiling = Ceiling::new(SAMPLE_RATE);
-        let mut out = buf.to_vec();
+        let mut out: Vec<[f64; 2]> = buf.iter().map(|&x| [x; 2]).collect();
         ceiling.limit(&mut out);
-        (out, ceiling)
+        assert!(
+            out.iter().all(|[l, r]| l.to_bits() == r.to_bits()),
+            "a centred mix played apart"
+        );
+        (out.iter().map(|&[l, _]| l).collect(), ceiling)
+    }
+
+    #[test]
+    fn a_peak_on_one_side_turns_both_down_alike() {
+        let limit = f64::from(Ceiling::new(SAMPLE_RATE).limit);
+        let mut input: Vec<[f64; 2]> = tone(0.5, 440.0, 0.5)
+            .into_iter()
+            .map(|x| [x, 0.1 * x])
+            .collect();
+        input.extend(tone(2.0, 440.0, 0.5).into_iter().map(|x| [x, 0.1 * x]));
+        let mut out = input.clone();
+        let mut ceiling = Ceiling::new(SAMPLE_RATE);
+        ceiling.limit(&mut out);
+        let late = (LOOKAHEAD_S * f64::from(SAMPLE_RATE)) as usize;
+        // the quiet side keeps its share of the loud one, so the image holds
+        let off = (out[late..].iter().zip(&input)).position(|([l, r], [x, _])| {
+            (r - 0.1 * l).abs() > 1e-12 || l.abs() > limit || (l - x).abs() > 2.0 * x.abs()
+        });
+        assert_eq!(off, None);
+        assert!(
+            out.iter().any(|[l, _]| l.abs() > 0.99 * limit),
+            "the peak never reached the ceiling"
+        );
     }
 
     /// How many of `buf`'s samples the clamp changes.
@@ -319,9 +350,9 @@ mod tests {
             // a lone peak that needs a quarter of the gain, then silence
             let mut input = vec![0.0; lookahead + hold + 2 * release + 2 * lookahead];
             input[0] = 4.0 * f64::from(ceiling.limit);
-            let gains: Vec<f64> = (input.iter_mut())
-                .map(|x| {
-                    ceiling.limit(std::slice::from_mut(x));
+            let gains: Vec<f64> = (input.iter())
+                .map(|&x| {
+                    ceiling.limit(&mut [[x; 2]]);
                     ceiling.gain()
                 })
                 .collect();
@@ -357,8 +388,8 @@ mod tests {
         // minimum keeps every frame's need
         let frames = 2 * ceiling.window as usize;
         let limit = f64::from(ceiling.limit);
-        let mut input: Vec<f64> = (0..frames)
-            .map(|i| limit * (4.0 - 2.0 * i as f64 / frames as f64))
+        let mut input: Vec<[f64; 2]> = (0..frames)
+            .map(|i| [limit * (4.0 - 2.0 * i as f64 / frames as f64); 2])
             .collect();
         ceiling.limit(&mut input);
         assert_eq!(room(&ceiling), before, "a buffer grew while playing");
@@ -366,6 +397,17 @@ mod tests {
 
     #[test]
     fn the_ceiling_limits_the_same_however_it_is_chunked() {
-        assert_chunk_invariant(|| Ceiling::new(SAMPLE_RATE), Ceiling::limit);
+        // its sides apart, so a side that drifted from the other shows
+        assert_chunk_invariant(
+            1,
+            || Ceiling::new(SAMPLE_RATE),
+            |ceiling, buf| {
+                let mut frames: Vec<[f64; 2]> = buf.iter().map(|&x| [x, -0.5 * x]).collect();
+                ceiling.limit(&mut frames);
+                for (x, [l, r]) in buf.iter_mut().zip(frames) {
+                    *x = l + 3.0 * r;
+                }
+            },
+        );
     }
 }

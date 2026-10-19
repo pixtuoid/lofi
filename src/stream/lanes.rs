@@ -796,7 +796,7 @@ mod tests {
             }
             tape
         };
-        crate::stream::assert_chunk_invariant(make, |tape, buf| tape.process(buf));
+        crate::stream::assert_chunk_invariant(1, make, |tape, buf| tape.process(buf));
     }
 
     #[test]

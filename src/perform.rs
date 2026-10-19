@@ -85,8 +85,8 @@ pub struct Performance {
     asked: Controls,
     position: u64,
     schedule: Schedule,
-    /// The lanes' mix over a step.
-    mix: Vec<f64>,
+    /// The mix over a step, a stereo frame each.
+    mix: Vec<[f64; 2]>,
     ceiling: Ceiling,
 }
 
@@ -152,8 +152,8 @@ impl Performance {
         while done < out.len() {
             self.mix_next(out.len() - done);
             self.ceiling.limit(&mut self.mix);
-            for (frame, &x) in out[done..].iter_mut().zip(&self.mix) {
-                *frame = [self.ceiling.clamp(x); 2];
+            for (frame, x) in out[done..].iter_mut().zip(&self.mix) {
+                *frame = x.map(|side| self.ceiling.clamp(side));
             }
             done += self.mix.len();
         }
@@ -167,11 +167,14 @@ impl Performance {
         self.start_due_song();
         self.schedule.latch_due(self.asked.clamped());
         let n = max.min(BLOCK).min(self.schedule.until_latch());
-        let lanes = self.schedule.play(n);
+        self.schedule.play(n);
+        let (lanes, plate) = (self.schedule.sums(), self.schedule.returned());
         self.mix.clear();
-        self.mix.extend(
-            (0..n).map(|i| lanes.iter().map(|lane| lane[i]).sum::<f64>() * Self::MASTER_GAIN),
-        );
+        self.mix.extend((0..n).map(|i| {
+            let dry = lanes.iter().map(|lane| lane[i]).sum::<f64>();
+            // the dry lanes centred, the plate's return on its own sides
+            [0, 1].map(|side| (dry + plate[side][i]) * Self::MASTER_GAIN)
+        }));
     }
 
     /// Frames rendered so far.
@@ -234,14 +237,18 @@ mod tests {
         crate::loudness::fold(frames).iter().any(|&x| x != 0.0)
     }
 
-    /// `p`'s next `frames` frames of the lanes' mix, before the ceiling.
-    fn mixed(p: &mut Performance, frames: usize) -> Vec<f64> {
-        let mut out = Vec::with_capacity(frames);
-        while out.len() < frames {
-            p.mix_next(frames - out.len());
-            out.extend_from_slice(&p.mix);
+    /// `p`'s next `frames` frames: its mix before the ceiling, and the two
+    /// parts it is made of, the lanes' dry sum and the plate's return.
+    fn mixed(p: &mut Performance, frames: usize) -> (Vec<[f64; 2]>, Vec<f64>, Vec<[f64; 2]>) {
+        let (mut mix, mut dry, mut plate) = (Vec::new(), Vec::new(), Vec::new());
+        while mix.len() < frames {
+            p.mix_next(frames - mix.len());
+            mix.extend_from_slice(&p.mix);
+            let (lanes, wet) = (p.schedule.sums(), p.schedule.returned());
+            dry.extend((0..p.mix.len()).map(|i| lanes.iter().map(|lane| lane[i]).sum::<f64>()));
+            plate.extend((0..p.mix.len()).map(|i| [wet[0][i], wet[1][i]]));
         }
-        out
+        (mix, dry, plate)
     }
 
     #[test]
@@ -272,12 +279,12 @@ mod tests {
                 "intensity {intensity}"
             );
             let c = Controls::default().with_intensity(intensity);
-            let got = mixed(&mut Performance::new(seed, c), frames);
+            let (_, got, _) = mixed(&mut Performance::new(seed, c), frames);
             let first_diff = (0..frames).position(|i| {
                 let lanes: f64 = (unity.iter().zip(gains))
                     .map(|(lane, gain)| f64::from(gain) * lane[i])
                     .sum();
-                got[i] != lanes * Performance::MASTER_GAIN
+                got[i] != lanes
             });
             assert_eq!(
                 first_diff, None,
@@ -341,9 +348,11 @@ mod tests {
                             // a frame at a time, which plays the same frames,
                             // to read the gain each one plays at
                             for i in 0..p.mix.len() {
-                                heard.loudest = heard.loudest.max(p.mix[i].abs());
+                                heard.loudest =
+                                    (p.mix[i].iter()).fold(heard.loudest, |m, x| m.max(x.abs()));
                                 ceiling.limit(&mut p.mix[i..=i]);
-                                heard.hear(ceiling.gain(), ceiling.clamp(p.mix[i]), p.mix[i]);
+                                let clamped = p.mix[i].map(|side| ceiling.clamp(side));
+                                heard.hear(ceiling.gain(), clamped, p.mix[i]);
                             }
                         }
                         heard.second = p.schedule.playing().cloned();
@@ -401,13 +410,13 @@ mod tests {
     }
 
     impl Heard {
-        fn hear(&mut self, gain: f64, clamped: f32, limited: f64) {
+        fn hear(&mut self, gain: f64, clamped: [f32; 2], limited: [f64; 2]) {
             self.played += 1;
             if gain < 1.0 {
                 self.limited += 1;
                 self.least_gain = Some(self.least_gain.map_or(gain, |g| g.min(gain)));
             }
-            self.caught += usize::from(clamped != limited as f32);
+            self.caught += usize::from(clamped != limited.map(|side| side as f32));
         }
 
         fn limited_share(&self) -> f64 {
@@ -420,15 +429,24 @@ mod tests {
     }
 
     #[test]
-    fn render_plays_the_mix_limited_clamped_and_alike_in_both_channels() {
+    fn render_plays_the_dry_lanes_centred_under_the_plate_limited_and_clamped() {
         let (seed, c) = (8, Controls::default().with_intensity(1.0));
         let frames = 10 * SAMPLE_RATE as usize;
         let got = next(&mut Performance::new(seed, c), frames);
-        let mut mix = mixed(&mut Performance::new(seed, c), frames);
+        let (mut mix, dry, plate) = mixed(&mut Performance::new(seed, c), frames);
+        // one dry value on both sides, the plate's own on each
+        let centred = (0..frames).position(|i| {
+            mix[i] != plate[i].map(|side| (dry[i] + side) * Performance::MASTER_GAIN)
+        });
+        assert_eq!(centred, None, "the dry lanes play apart");
+        assert!(
+            plate.iter().any(|[l, r]| l != r),
+            "no plate plays, so nothing proves the sides"
+        );
         let mut ceiling = Ceiling::new(SAMPLE_RATE);
         ceiling.limit(&mut mix);
-        let first_diff = (got.iter().zip(&mix)).position(|(&[l, r], &x)| {
-            l.to_bits() != ceiling.clamp(x).to_bits() || l.to_bits() != r.to_bits()
+        let first_diff = (got.iter().zip(&mix)).position(|(frame, x)| {
+            frame.map(f32::to_bits) != x.map(|side| ceiling.clamp(side).to_bits())
         });
         assert_eq!(first_diff, None);
     }
@@ -859,9 +877,11 @@ mod tests {
                             }
                             p.mix_next((span - heard.played).min(next_call - heard.played));
                             for i in 0..p.mix.len() {
-                                heard.loudest = heard.loudest.max(p.mix[i].abs());
+                                heard.loudest =
+                                    (p.mix[i].iter()).fold(heard.loudest, |m, x| m.max(x.abs()));
                                 ceiling.limit(&mut p.mix[i..=i]);
-                                heard.hear(ceiling.gain(), ceiling.clamp(p.mix[i]), p.mix[i]);
+                                let clamped = p.mix[i].map(|side| ceiling.clamp(side));
+                                heard.hear(ceiling.gain(), clamped, p.mix[i]);
                             }
                         }
                         heard
