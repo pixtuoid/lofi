@@ -395,7 +395,7 @@ impl Song {
             for (s, x) in sums[i].iter_mut().zip(buf.iter()) {
                 *s += x;
             }
-            if let Some(send) = plate::send(lane) {
+            if let Some(send) = plate::send(self.score.mood, lane) {
                 for (s, x) in self.send.iter_mut().zip(buf.iter()) {
                     *s += send * x;
                 }

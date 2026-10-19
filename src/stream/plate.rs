@@ -9,27 +9,37 @@ use super::biquad::{Cascade, butter_highpass};
 use super::delay::DelayLine;
 use super::flush;
 use super::onepole::OnePole;
+use crate::compose::Mood;
 use crate::synth::{Lane, samples_at};
 
-/// Each wet lane's send into the plate, in dB on its mix level: set so its
-/// return reads 12, 14 and 16 LU under its dry lane on the fold, as the
-/// commit that set them measured. Opinion: the pad wettest, then the keys,
-/// then the lead, which stays nearest.
-const PAD_SEND_DB: f64 = -6.2;
-const KEYS_SEND_DB: f64 = -7.3;
-const SPARKLE_SEND_DB: f64 = -13.4;
+/// How far under its dry lane each wet lane's return reads on the fold,
+/// `[pad, keys, sparkle]`, by family. Opinion: the pad wettest, then the
+/// keys, then the lead, which stays nearest; the day 3 LU drier than the
+/// night, since #23's judge heard the day's faster, brighter songs smear
+/// (MuQ-Eval's loss there alone).
+const NIGHT_RETURN_LU: [f64; 3] = [12.0, 14.0, 16.0];
+const DAY_RETURN_LU: [f64; 3] = [15.0, 17.0, 19.0];
 
-/// `lane`'s send into the plate, as a gain on its mix level; none for a lane
-/// lofi keeps dry: the drums and bass ground the centre, and the texture is
-/// a bed already.
-pub(crate) fn send(lane: Lane) -> Option<f64> {
-    let db = match lane {
-        Lane::Pad => PAD_SEND_DB,
-        Lane::Keys => KEYS_SEND_DB,
-        Lane::Sparkle => SPARKLE_SEND_DB,
-        Lane::Drums | Lane::Bass | Lane::Texture => return None,
+/// A `mood` song's `lane` send into the plate, as a gain on its mix level;
+/// none for a lane lofi keeps dry: the drums and bass ground the centre, and
+/// the texture is a bed already.
+pub(crate) fn send(mood: Mood, lane: Lane) -> Option<f64> {
+    // each wet lane's return at a 0 dB send, in LU on its dry lane: the
+    // median over seeds the commit that set it measured
+    let (k, unity) = match (mood, lane) {
+        (Mood::Day, Lane::Pad) => (0, -6.08),
+        (Mood::Day, Lane::Keys) => (1, -7.24),
+        (Mood::Day, Lane::Sparkle) => (2, -3.02),
+        (Mood::Night, Lane::Pad) => (0, -5.16),
+        (Mood::Night, Lane::Keys) => (1, -6.85),
+        (Mood::Night, Lane::Sparkle) => (2, -3.39),
+        (_, Lane::Drums | Lane::Bass | Lane::Texture) => return None,
     };
-    Some(10f64.powf(db / 20.0))
+    let under = match mood {
+        Mood::Day => DAY_RETURN_LU,
+        Mood::Night => NIGHT_RETURN_LU,
+    }[k];
+    Some(10f64.powf((-under - unity) / 20.0))
 }
 
 /// The rate Table 1's lengths and Table 2's taps are counted at: "Sample
@@ -361,6 +371,19 @@ mod tests {
     use crate::compose::{BEATS_PER_BAR, DAY_BPM, GEN_LOOP_BARS};
     use crate::dsp::{NoiseStream, SAMPLE_RATE};
     use crate::stream::biquad::{butter_highpass, butter_lowpass};
+
+    #[test]
+    fn a_day_song_sends_drier_than_a_night_song_on_every_wet_lane() {
+        for lane in Lane::ALL {
+            match [Mood::Day, Mood::Night].map(|mood| send(mood, lane)) {
+                [Some(day), Some(night)] => {
+                    assert!(day < night, "{lane:?}: {day} by day, {night} by night")
+                }
+                [None, None] => {}
+                sends => panic!("{lane:?} is wet in one family only: {sends:?}"),
+            }
+        }
+    }
 
     /// `frames` of the plate's return, `send` in from frame 0 then silence.
     fn returned(plate: &mut Plate, send: &[f64], frames: usize) -> [Vec<f64>; 2] {
