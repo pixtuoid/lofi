@@ -52,13 +52,6 @@ pub(crate) fn resting_gain(lane: Lane, intensity: f32) -> f32 {
         .map_or(gain, |(_, gain)| gain)
 }
 
-/// The mix's gain into the ceiling: lofi's mastering level for a background
-/// bed, the level pixtuoid's office has played the lanes at
-/// (<https://github.com/pixtuoid/pixtuoid/blob/a63f1782f477c357666e71a9c1147090b47fe17d/crates/pixtuoid-scene/src/audio/mixer.rs#L63-L65>),
-/// which leaves the ceiling a rare backstop. How a caller plays it:
-/// [`render`](crate::Performance::render).
-pub const MASTER_GAIN: f64 = 0.35;
-
 /// The peak no sample of [`render`](crate::Performance::render) passes, after
 /// EBU R 128 (<https://tech.ebu.ch/docs/r/r128.pdf>), which recommends "that
 /// the True Peak Level of a programme shall not exceed −1 dBTP". Held on

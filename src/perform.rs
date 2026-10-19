@@ -4,7 +4,7 @@
 use std::fmt;
 
 use crate::dsp::SAMPLE_RATE;
-use crate::stream::master::{Ceiling, MASTER_GAIN, TIER_INTENSITIES};
+use crate::stream::master::{Ceiling, TIER_INTENSITIES};
 use crate::stream::schedule::{BLOCK, Schedule};
 
 /// One stereo frame, `[left, right]`, at [`SAMPLE_RATE`].
@@ -107,6 +107,13 @@ impl fmt::Debug for Performance {
 }
 
 impl Performance {
+    /// The mix's gain into the ceiling: lofi's mastering level for a background
+    /// bed, the level pixtuoid's office has played the lanes at
+    /// (<https://github.com/pixtuoid/pixtuoid/blob/a63f1782f477c357666e71a9c1147090b47fe17d/crates/pixtuoid-scene/src/audio/mixer.rs#L63-L65>),
+    /// which leaves the ceiling a rare backstop; a host that stages its own
+    /// sounds alike keeps the balance lofi masters at.
+    pub const MASTER_GAIN: f64 = 0.35;
+
     /// `seed` picks the whole sequence of songs; lofi reads no clock, so the
     /// caller supplies it.
     pub fn new(seed: u64, controls: Controls) -> Self {
@@ -153,7 +160,7 @@ impl Performance {
         self.position += out.len() as u64;
     }
 
-    /// Mixes the lanes' next frames into `mix` at [`MASTER_GAIN`]: at most
+    /// Mixes the lanes' next frames into `mix` at [`Self::MASTER_GAIN`]: at most
     /// `max`, [`BLOCK`] and the frames to the playing song's next latch, so
     /// each bar latches on its own frame however the calls chunk the render.
     fn mix_next(&mut self, max: usize) {
@@ -162,8 +169,9 @@ impl Performance {
         let n = max.min(BLOCK).min(self.schedule.until_latch());
         let lanes = self.schedule.play(n);
         self.mix.clear();
-        self.mix
-            .extend((0..n).map(|i| lanes.iter().map(|lane| lane[i]).sum::<f64>() * MASTER_GAIN));
+        self.mix.extend(
+            (0..n).map(|i| lanes.iter().map(|lane| lane[i]).sum::<f64>() * Self::MASTER_GAIN),
+        );
     }
 
     /// Frames rendered so far.
@@ -269,7 +277,7 @@ mod tests {
                 let lanes: f64 = (unity.iter().zip(gains))
                     .map(|(lane, gain)| f64::from(gain) * lane[i])
                     .sum();
-                got[i] != lanes * MASTER_GAIN
+                got[i] != lanes * Performance::MASTER_GAIN
             });
             assert_eq!(
                 first_diff, None,

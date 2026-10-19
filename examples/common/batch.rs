@@ -7,7 +7,7 @@ use std::ops::Range;
 use std::time::{Duration, Instant};
 
 use pixtuoid_lofi::audition::{
-    self, LOOPS_PER_SONG, Lane, MASTER_GAIN, Score, TIER_INTENSITIES, lane_gain, render_lane,
+    self, LOOPS_PER_SONG, Lane, Score, TIER_INTENSITIES, lane_gain, render_lane,
 };
 use pixtuoid_lofi::dsp::NoiseStream;
 use pixtuoid_lofi::{Controls, Frame, Performance};
@@ -535,12 +535,12 @@ pub(crate) fn render_take(
 
 /// `beds` at `gains`, each looping on its own length, summed over as many
 /// loops of the first bed as a `Performance` plays a song's, and mastered at
-/// its [`MASTER_GAIN`]: the whole-lane mix, as long and at the stage where
+/// its [`Performance::MASTER_GAIN`]: the whole-lane mix, as long and at the stage where
 /// the engine's own mix meets its ceiling.
 pub(crate) fn soak_mix(beds: &[Vec<f32>], gains: &[f32]) -> Vec<f32> {
     let mut mix = vec![0.0f32; beds[0].len() * LOOPS_PER_SONG];
     for (bed, &gain) in beds.iter().zip(gains) {
-        let gain = gain * MASTER_GAIN as f32;
+        let gain = gain * Performance::MASTER_GAIN as f32;
         for (i, slot) in mix.iter_mut().enumerate() {
             *slot += bed[i % bed.len()] * gain;
         }
