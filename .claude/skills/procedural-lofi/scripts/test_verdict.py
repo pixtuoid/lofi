@@ -144,8 +144,8 @@ class Splits(unittest.TestCase):
         self.assertEqual(result["split"], [])
 
     def test_two_judges_for_and_one_against_under_four_groups_alpha_is_split(self):
-        # two judges sweep for cand while the third dissents on a large
-        # minority, the shape a real plate change scored
+        # two judges sweep for cand while the other is against it on most
+        # pairs but not all, the shape a real plate change scored
         day = [split_pair("day", (1.0, 1.0 if i < 7 else -1.0, 1.0)) for i in range(37)]
         even = [split_pair(g, (1.0, -1.0, 1.0) if i % 2 else (-1.0, 1.0, -1.0)) for g in ("night", "rain", "twilight") for i in range(12)]
         result = judged(day + even)
