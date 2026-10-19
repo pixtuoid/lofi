@@ -40,7 +40,8 @@ MIN_UNTIED = min_untied(ALPHA / (len(JUDGES) * len(GROUPS)))
 
 def sign_test(gains, alpha):
     """Whether cand does worse than base more often than chance allows at
-    `alpha`, `gains` each pair's improvement from base to cand, ties dropped."""
+    `alpha`, `gains` each pair's improvement from base to cand, ties dropped;
+    and whether, the same way, it does better."""
     wins = sum(g > 0 for g in gains)
     losses = sum(g < 0 for g in gains)
     p = tail_p(losses, wins + losses)
@@ -50,6 +51,7 @@ def sign_test(gains, alpha):
         "ties": len(gains) - wins - losses,
         "p": p,
         "significant": p < alpha,
+        "favours_cand": tail_p(wins, wins + losses) < alpha,
         "decidable": wins + losses >= min_untied(alpha),
     }
 
@@ -75,7 +77,9 @@ def judged(pairs):
     Each group with a changed pair gets a sign test a judge, at ALPHA split
     Bonferroni over every such test; a group with none is UNCHANGED. The
     pooled "all" group is tested alike but gates nothing, since it repeats
-    the groups' pairs."""
+    the groups' pairs. A gating group where one judge significantly favours
+    cand and another base is `split`: its verdict stands, but the judges
+    disagree, and the owner's blind listen settles it."""
     groups = grouped(pairs)
     moods = [g for g in groups if g != "all"]
     tests = len(JUDGES) * sum(bool(groups[m]["changed"]) for m in moods)
@@ -93,10 +97,17 @@ def judged(pairs):
             else "PASS"
         )
     gating = {groups[m]["verdict"] for m in moods}
+    split = [
+        m
+        for m in moods
+        if any(t["significant"] for t in groups[m].get("tests", {}).values())
+        and any(t["favours_cand"] for t in groups[m].get("tests", {}).values())
+    ]
     return {
         "alpha": alpha,
         "min_untied": min_untied(alpha),
         "groups": groups,
+        "split": split,
         "overall": next((r for r in RANKS if r in gating), "UNCHANGED"),
     }
 
