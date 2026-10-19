@@ -42,6 +42,13 @@ impl DelayLine {
         self.written += 1;
     }
 
+    /// The sample pushed `delay` whole samples before the newest: [`tap`](Self::tap)
+    /// without the interpolation, for a line read at fixed points.
+    pub(crate) fn at(&self, delay: usize) -> f64 {
+        let mask = self.ring.len() - 1;
+        self.ring[self.written.wrapping_sub(1 + delay as u64) as usize & mask]
+    }
+
     /// The sample pushed `delay` samples before the newest, at a fractional
     /// delay; before the first, silence. A delay out of range reads at the
     /// nearer end and NaN at 0.

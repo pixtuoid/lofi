@@ -140,26 +140,36 @@ fn samples(secs: f64, sr: u32) -> usize {
 #[derive(Debug)]
 struct Allpass {
     line: DelayLine,
-    delay: f64,
+    delay: usize,
 }
 
 impl Allpass {
     /// A lattice `delay` frames long, which may stretch by up to `reach`.
     fn new(delay: usize, reach: f64) -> Self {
-        let delay = delay as f64;
         Self {
-            line: DelayLine::new(delay + reach),
+            line: DelayLine::new(delay as f64 + reach),
             delay,
         }
     }
 
-    /// The next output, `x` in, at coefficient `g`, `stretch` frames longer;
+    /// The next output, `x` in, at coefficient `g`, its line `d` delayed;
     /// `kick` adds to what the line stores.
-    fn step(&mut self, x: f64, g: f64, stretch: f64, kick: f64) -> f64 {
-        let d = self.line.tap(self.delay + stretch - 1.0);
+    fn step_from(&mut self, x: f64, g: f64, d: f64, kick: f64) -> f64 {
         let w = flush(x + g * d) + kick;
         self.line.push(w);
         d - g * w
+    }
+
+    /// [`step_from`](Self::step_from) at the lattice's own length.
+    fn step(&mut self, x: f64, g: f64, kick: f64) -> f64 {
+        let d = self.line.at(self.delay - 1);
+        self.step_from(x, g, d, kick)
+    }
+
+    /// [`step_from`](Self::step_from) `stretch` frames longer, between frames.
+    fn step_stretched(&mut self, x: f64, g: f64, stretch: f64) -> f64 {
+        let d = self.line.tap(self.delay as f64 + stretch - 1.0);
+        self.step_from(x, g, d, 0.0)
     }
 }
 
@@ -168,30 +178,30 @@ impl Allpass {
 struct Half {
     diffuser_1: Allpass,
     delay_1: DelayLine,
-    delay_1_len: f64,
+    delay_1_len: usize,
     damping: OnePole,
     diffuser_2: Allpass,
     delay_2: DelayLine,
-    delay_2_len: f64,
+    delay_2_len: usize,
 }
 
 impl Half {
     fn new([diffuser_1, delay_1, diffuser_2, delay_2]: [f64; 4], excursion: f64, sr: u32) -> Self {
-        let [delay_1, delay_2] = [delay_1, delay_2].map(|len| scaled(len, sr) as f64);
+        let [delay_1, delay_2] = [delay_1, delay_2].map(|len| scaled(len, sr));
         Self {
             diffuser_1: Allpass::new(scaled(diffuser_1, sr), excursion),
-            delay_1: DelayLine::new(delay_1),
+            delay_1: DelayLine::new(delay_1 as f64),
             delay_1_len: delay_1,
             damping: OnePole::new(PLATE_DAMPING_HZ, sr),
             diffuser_2: Allpass::new(scaled(diffuser_2, sr), 0.0),
-            delay_2: DelayLine::new(delay_2),
+            delay_2: DelayLine::new(delay_2 as f64),
             delay_2_len: delay_2,
         }
     }
 
     /// The sample leaving the half on this frame, before its pushes.
     fn leaving(&self) -> f64 {
-        self.delay_2.tap(self.delay_2_len - 1.0)
+        self.delay_2.at(self.delay_2_len - 1)
     }
 
     fn at_rest(&self) -> bool {
@@ -207,13 +217,15 @@ impl Half {
 #[derive(Debug)]
 pub(crate) struct Plate {
     predelay: DelayLine,
-    predelay_len: f64,
+    predelay_len: usize,
     diffusers: [Allpass; 4],
     halves: [Half; 2],
     decay: f64,
     decay_diffusion_2: f64,
     excursion: f64,
     return_hpf: [Cascade; 2],
+    /// Table 2's taps, each `(line, frames back, sign)` at the song's rate.
+    taps: [[(TankLine, usize, f64); 7]; 2],
     sr: u32,
     /// Frames played: the LFO's clock, which starts with the song.
     frame: u64,
@@ -234,9 +246,9 @@ impl Plate {
             .sum::<usize>();
         let trip_s = trip as f64 / f64::from(sr);
         let decay = 10f64.powf(-T60_DB / 20.0 * trip_s / (DECAYS_PER_TRIP * PLATE_T60_S));
-        let predelay_len = samples(PLATE_PREDELAY_S, sr) as f64;
+        let predelay_len = samples(PLATE_PREDELAY_S, sr);
         Self {
-            predelay: DelayLine::new(predelay_len),
+            predelay: DelayLine::new(predelay_len as f64),
             predelay_len,
             diffusers: INPUT_DIFFUSERS.map(|len| Allpass::new(scaled(len, sr), 0.0)),
             halves,
@@ -246,6 +258,8 @@ impl Plate {
             decay_diffusion_2: (decay + 0.15).clamp(0.25, 0.5),
             excursion,
             return_hpf: [(); 2].map(|_| butter_highpass(PLATE_HPF_HZ, PLATE_HPF_ORDER, sr)),
+            taps: TAPS
+                .map(|side| side.map(|(line, at, sign)| (line, scaled(f64::from(at), sr), sign))),
             sr,
             frame: 0,
             #[cfg(test)]
@@ -276,9 +290,9 @@ impl Plate {
             .map(kick),
         ];
         self.predelay.push(x);
-        let mut x = self.predelay.tap(self.predelay_len);
+        let mut x = self.predelay.at(self.predelay_len);
         for (i, diffuser) in self.diffusers.iter_mut().enumerate() {
-            x = diffuser.step(x, INPUT_DIFFUSION[i / 2], 0.0, 0.0);
+            x = diffuser.step(x, INPUT_DIFFUSION[i / 2], 0.0);
         }
         let leaving = self.halves.each_ref().map(Half::leaving);
         // a quadrature pair, "to decrease the correlation" between the halves
@@ -288,34 +302,33 @@ impl Plate {
         for (h, half) in self.halves.iter_mut().enumerate() {
             let fed = x + decay * leaving[1 - h];
             // "note sign": decay diffusion 1's lattice is negated
-            let a = half
-                .diffuser_1
-                .step(fed, -DECAY_DIFFUSION_1, self.excursion * lfo[h], 0.0);
+            let a =
+                (half.diffuser_1).step_stretched(fed, -DECAY_DIFFUSION_1, self.excursion * lfo[h]);
             half.delay_1.push(flush(a) + kicks[h][0]);
-            let b = half.delay_1.tap(half.delay_1_len);
+            let b = half.delay_1.at(half.delay_1_len);
             let c = half.damping.lowpass(b) * decay;
-            let d = half.diffuser_2.step(c, dd2, 0.0, kicks[h][1]);
+            let d = half.diffuser_2.step(c, dd2, kicks[h][1]);
             half.delay_2.push(flush(d) + kicks[h][2]);
         }
         self.frame += 1;
-        TAPS.map(|taps| {
-            (taps.iter())
-                .map(|&(line, index, sign)| sign * TAP_GAIN * self.tap(line, index))
-                .sum()
+        self.taps.map(|taps| {
+            let sum: f64 = (taps.iter())
+                .map(|&(line, back, sign)| sign * self.line(line).at(back))
+                .sum();
+            TAP_GAIN * sum
         })
     }
 
-    /// `line` read `index` frames back, `index` counted at [`DATTORRO_HZ`].
-    fn tap(&self, line: TankLine, index: u32) -> f64 {
-        let back = scaled(f64::from(index), self.sr) as f64;
+    /// The tank line Table 2 names.
+    fn line(&self, line: TankLine) -> &DelayLine {
         let [left, right] = &self.halves;
         match line {
-            TankLine::LeftDelay1 => left.delay_1.tap(back),
-            TankLine::LeftDiffuser2 => left.diffuser_2.line.tap(back),
-            TankLine::LeftDelay2 => left.delay_2.tap(back),
-            TankLine::RightDelay1 => right.delay_1.tap(back),
-            TankLine::RightDiffuser2 => right.diffuser_2.line.tap(back),
-            TankLine::RightDelay2 => right.delay_2.tap(back),
+            TankLine::LeftDelay1 => &left.delay_1,
+            TankLine::LeftDiffuser2 => &left.diffuser_2.line,
+            TankLine::LeftDelay2 => &left.delay_2,
+            TankLine::RightDelay1 => &right.delay_1,
+            TankLine::RightDiffuser2 => &right.diffuser_2.line,
+            TankLine::RightDelay2 => &right.delay_2,
         }
     }
 
