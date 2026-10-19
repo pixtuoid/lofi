@@ -212,7 +212,7 @@ jobs:
         run: |
           set -euo pipefail
           verdict="$RUNNER_TEMP/verdict/verdict.json"
-          table=""
+          table="" split=""
           # outputs of the job that ran the PR's code: the take lists keep a
           # take name's characters alone, so none opens markup or a mention
           [[ "$MERGE_BASE" =~ ^[0-9a-f]{40}$ ]] || MERGE_BASE=unknown
@@ -235,6 +235,7 @@ jobs:
               PASS | REGRESSION | INSUFFICIENT | UNCHANGED)
                 outcome="$got"
                 table=$(jq -r '.table // ""' "$verdict" | tr -d '`')
+                split=$(jq -r '.record.split // [] | join(", ")' "$verdict" | tr -cd 'a-z, ')
                 ;;
               *) outcome="infra failure" ;;
             esac
@@ -250,6 +251,7 @@ jobs:
             echo "**lofi judge: $outcome**"
             echo
             echo "head \`$HEAD_SHA\` · merge-base \`$MERGE_BASE\` · judge at \`$JUDGE_AT\`"
+            [ -z "$split" ] || printf "\n**SPLIT: %s.** One judge significantly favours cand and another base, so no vote settles it: the owner's blind listen does (\`ab_listen.py\`).\n" "$split"
             if [ -n "$table" ]; then
               echo
               echo "<details><summary>scores</summary>"
