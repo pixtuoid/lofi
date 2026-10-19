@@ -26,7 +26,8 @@ pub(crate) struct Corpus {
     pub(crate) ltas_db_per_oct: Spread,
 }
 
-/// 100 CC-licensed lofi tracks from archive.org, 5.98 h, each read whole as
+/// 100 lofi tracks from archive.org netlabel uploads, 5.98 h, each item
+/// declaring a CC BY-NC licence in its `licenseurl`, each read whole as
 /// `lofi_measure` reads a take: decoded at lofi's sample rate, folded to mono
 /// as `fold` does, and read by `Spectrum`, one rectangular FFT over the track
 /// with DC left out. Each spread is linear between ranks (numpy's
