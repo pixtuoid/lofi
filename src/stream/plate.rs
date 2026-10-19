@@ -448,9 +448,10 @@ mod tests {
             .collect();
         butter_highpass(600.0, 4, sr).process(&mut band);
         butter_lowpass(1500.0, 4, sr).process(&mut band);
-        // the decay counts each lattice at its mean delay, and their spread
-        // of delay rings the late modes a little longer; a dropped `decay`
-        // multiply would still double it
+        // the decay's relation assumes the loop's mean delay, while the
+        // tank's lattices spread the modes' delay, so the late modes ring a
+        // little longer (our inference); 10 % still catches a dropped
+        // `decay` multiply, which about doubles T60
         const TOLERANCE: f64 = 0.1;
         let got = t60(&band, sr);
         assert!(
