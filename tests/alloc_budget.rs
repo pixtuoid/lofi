@@ -11,7 +11,7 @@ use pixtuoid_lofi::{Controls, Frame, Performance, audition};
 /// The most heap a `Performance` may hold at once, in bytes: the highest
 /// high-water this test measured plus 25 %, both of which the commit that set
 /// it records.
-const BUDGET: usize = 8_424_525;
+const BUDGET: usize = 11_134_025;
 
 /// Bytes allocated and not yet freed, and the most there have been.
 static LIVE: AtomicUsize = AtomicUsize::new(0);

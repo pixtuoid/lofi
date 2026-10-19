@@ -78,6 +78,16 @@ fn run_circular(x: &[f64], filter: &[Biquad]) -> Vec<f64> {
     y
 }
 
+/// Stereo `frames` as the one mono every reading hears: (L + R) / 2, as
+/// `ab_judge.py`'s `mono` folds a take, so a centred frame reads its left
+/// channel exactly.
+pub(crate) fn fold(frames: &[[f32; 2]]) -> Vec<f32> {
+    frames
+        .iter()
+        .map(|&[left, right]| f32::midpoint(left, right))
+        .collect()
+}
+
 /// `buf`'s gated loudness as a loop at `sr`, in LKFS: −∞ when no block passes
 /// the absolute gate.
 pub(crate) fn gated_lufs(buf: &[f32], sr: u32) -> f64 {
@@ -112,6 +122,18 @@ pub(crate) fn gated_lufs(buf: &[f32], sr: u32) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_fold_is_the_mean_of_both_channels_and_a_centred_frame_exactly() {
+        let centred = [[0.3f32, 0.3], [-0.71, -0.71], [1e-30, 1e-30]];
+        let got = fold(&centred);
+        assert!(
+            got.iter()
+                .zip(&centred)
+                .all(|(g, [l, _])| g.to_bits() == l.to_bits())
+        );
+        assert_eq!(fold(&[[1.0, 0.0], [0.25, -0.75]]), [0.5, -0.25]);
+    }
 
     /// The rate the standard tabulates the K-filter at.
     const SAMPLE_RATE: u32 = 48_000;

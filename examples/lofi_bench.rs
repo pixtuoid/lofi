@@ -22,7 +22,7 @@ use pixtuoid_lofi::dsp::SAMPLE_RATE;
 use pixtuoid_lofi::{Controls, Frame, Performance};
 
 use host::{Clock, machine, say};
-use loudness::gated_lufs;
+use loudness::{fold, gated_lufs};
 
 /// The span a player renders ahead in, in seconds.
 const CHUNK_S: f64 = 0.5;
@@ -165,9 +165,9 @@ fn play_room(buf: &mut [Frame], room: &str, controls: Controls) -> bool {
     let (mut took, mut songs) = (0.0, Vec::new());
     while music.position() < u64::from(ROOM_S) * u64::from(SAMPLE_RATE) {
         let len = audition::song_len(seed, songs.len() as u64, controls);
-        let mut left = Vec::with_capacity(len);
-        while left.len() < len {
-            let n = buf.len().min(len - left.len());
+        let mut song = Vec::with_capacity(len);
+        while song.len() < len {
+            let n = buf.len().min(len - song.len());
             let clock = Clock::start();
             music.render(&mut buf[..n]);
             took += clock.secs();
@@ -179,9 +179,9 @@ fn play_room(buf: &mut [Frame], room: &str, controls: Controls) -> bool {
                 say(&format!("{room} room: frame {frame} plays {:?}", buf[i]));
                 return false;
             }
-            left.extend(buf[..n].iter().map(|&[l, _]| l));
+            song.extend(fold(&buf[..n]));
         }
-        songs.push(gated_lufs(&left, SAMPLE_RATE));
+        songs.push(gated_lufs(&song, SAMPLE_RATE));
     }
     let played = music.position() as f64 / f64::from(SAMPLE_RATE);
     let rtf = took / played;

@@ -1,24 +1,50 @@
-//! The one-pole tilt that brightens a lane's top.
+//! The one-pole low-pass, and the tilt it makes, which brightens a lane's
+//! top.
 
 use std::f64::consts::TAU;
+
+/// A one-pole low-pass at a corner, `y = (1 − a)·x + a·y₋₁`.
+#[derive(Debug)]
+pub(crate) struct OnePole {
+    pole: f64,
+    y: f64,
+}
+
+impl OnePole {
+    pub(crate) fn new(corner_hz: f32, sr: u32) -> Self {
+        Self {
+            // the analog pole at −2π·corner mapped by impulse invariance,
+            // z = e^{sT} (<https://ccrma.stanford.edu/~jos/pasp/Impulse_Invariant_Method.html>)
+            pole: (-TAU * f64::from(corner_hz) / f64::from(sr)).exp(),
+            y: 0.0,
+        }
+    }
+
+    /// The next output, `x` in.
+    pub(crate) fn lowpass(&mut self, x: f64) -> f64 {
+        self.y = super::flush(self.pole * self.y + (1.0 - self.pole) * x);
+        self.y
+    }
+
+    /// Whether its state is zero, so silence in plays silence out.
+    pub(crate) fn at_rest(&self) -> bool {
+        self.y == 0.0
+    }
+}
 
 /// A one-pole high shelf, `x + lift·(x − lp(x))`, `lp` a one-pole low-pass at
 /// the corner.
 #[derive(Debug)]
 pub(crate) struct Tilt {
-    pole: f64,
+    lp: OnePole,
     lift: f64,
-    lp: f64,
 }
 
 impl Tilt {
     pub(crate) fn new(corner_hz: f32, lift: f64, sr: u32) -> Self {
         Self {
-            // the analog pole at −2π·corner mapped by impulse invariance,
-            // z = e^{sT} (<https://ccrma.stanford.edu/~jos/pasp/Impulse_Invariant_Method.html>)
-            pole: (-TAU * f64::from(corner_hz) / f64::from(sr)).exp(),
+            lp: OnePole::new(corner_hz, sr),
             lift,
-            lp: 0.0,
         }
     }
 
@@ -30,17 +56,15 @@ impl Tilt {
     /// [`process`](Self::process) with the lift on `buf[i]` at `lift(i)`: the
     /// lift is memoryless, so it may move per sample.
     pub(crate) fn process_lifted(&mut self, buf: &mut [f64], lift: impl Fn(usize) -> f64) {
-        let mut lp = self.lp;
         for (i, x) in buf.iter_mut().enumerate() {
-            lp = super::flush(self.pole * lp + (1.0 - self.pole) * *x);
+            let lp = self.lp.lowpass(*x);
             *x += lift(i) * (*x - lp);
         }
-        self.lp = lp;
     }
 
     /// Whether its state is zero, so silence in plays silence out.
     pub(crate) fn at_rest(&self) -> bool {
-        self.lp == 0.0
+        self.lp.at_rest()
     }
 }
 
@@ -48,6 +72,20 @@ impl Tilt {
 mod tests {
     use super::*;
     use crate::dsp::SAMPLE_RATE;
+
+    #[test]
+    fn a_one_pole_settles_a_step_as_its_closed_form() {
+        // y[n] = (1 − a)·Σ aᵏ = 1 − aⁿ⁺¹
+        for sr in [SAMPLE_RATE, 48_000] {
+            let mut lp = OnePole::new(5000.0, sr);
+            let a = (-TAU * 5000.0 / f64::from(sr)).exp();
+            for n in 0..200 {
+                let (got, want) = (lp.lowpass(1.0), 1.0 - a.powi(n + 1));
+                assert!((got - want).abs() < 1e-12, "{sr} at {n}: {got} vs {want}");
+            }
+            assert!(!lp.at_rest());
+        }
+    }
 
     #[test]
     fn a_tilt_has_its_closed_form_step_response() {
@@ -81,6 +119,7 @@ mod tests {
     #[test]
     fn a_tilt_is_chunk_invariant() {
         crate::stream::assert_chunk_invariant(
+            1,
             || Tilt::new(1200.0, 0.8, SAMPLE_RATE),
             Tilt::process,
         );

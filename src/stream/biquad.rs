@@ -46,6 +46,15 @@ impl Biquad {
         Self::cookbook([b0, 1.0 - cos, b0, 1.0 + alpha, -2.0 * cos, 1.0 - alpha])
     }
 
+    /// The cookbook's HPF at `hz` at `sr`.
+    fn highpass(hz: f32, q: f64, sr: u32) -> Self {
+        let w0 = TAU * f64::from(hz) / f64::from(sr);
+        let (sin, cos) = w0.sin_cos();
+        let alpha = sin / (2.0 * q);
+        let b0 = f64::midpoint(1.0, cos);
+        Self::cookbook([b0, -(1.0 + cos), b0, 1.0 + alpha, -2.0 * cos, 1.0 - alpha])
+    }
+
     /// The state is f64: a 60 Hz section's poles sit near enough the unit
     /// circle to amplify f32 rounding in the feedback.
     fn process(&mut self, buf: &mut [f64]) {
@@ -106,6 +115,20 @@ pub(crate) fn butter_lowpass(hz: f32, order: usize, sr: u32) -> Cascade {
     Cascade(
         (1..=order / 2)
             .map(|k| Biquad::lowpass(hz, butter_q(k, order), sr))
+            .collect(),
+    )
+}
+
+/// A Butterworth high-pass of even `order` at `hz` at `sr`, from the
+/// cookbook's HPF sections at [`butter_lowpass`]'s Qs.
+pub(crate) fn butter_highpass(hz: f32, order: usize, sr: u32) -> Cascade {
+    debug_assert!(
+        order.is_multiple_of(2),
+        "an odd order needs a first-order section"
+    );
+    Cascade(
+        (1..=order / 2)
+            .map(|k| Biquad::highpass(hz, butter_q(k, order), sr))
             .collect(),
     )
 }
@@ -176,6 +199,25 @@ mod tests {
             let cascade = butter_lowpass(corner as f32, order, sr);
             for hz in [20.0, 60.0, 90.0, 1000.0, 6500.0, 12000.0] {
                 let want = 1.0 / (1.0 + (warped(hz) / warped(corner)).powi(2 * n));
+                let got = power_gain(&cascade, hz, sr);
+                assert!(
+                    (got / want - 1.0).abs() < 1e-6,
+                    "order {order} at {sr}, {hz} Hz: {got} vs {want}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_high_pass_has_its_butterworth_prototypes_magnitude() {
+        // the low-pass row's prototype, mirrored: 1 / (1 + (ωc/ω)^2n)
+        let corner = 300.0;
+        for (sr, order) in RATES.into_iter().flat_map(|sr| [(sr, 2), (sr, 4)]) {
+            let warped = |hz: f64| (PI * hz / f64::from(sr)).tan();
+            let n = order as i32;
+            let cascade = butter_highpass(corner as f32, order, sr);
+            for hz in [20.0, 100.0, 300.0, 1000.0, 6500.0, 15000.0] {
+                let want = 1.0 / (1.0 + (warped(corner) / warped(hz)).powi(2 * n));
                 let got = power_gain(&cascade, hz, sr);
                 assert!(
                     (got / want - 1.0).abs() < 1e-6,
@@ -263,10 +305,12 @@ mod tests {
     fn a_cascade_is_chunk_invariant() {
         // the chain's slowest section, the head bump, and its steepest slope
         crate::stream::assert_chunk_invariant(
+            1,
             || cookbook_bandpass(60.0, 120.0, SAMPLE_RATE),
             Cascade::process,
         );
         crate::stream::assert_chunk_invariant(
+            1,
             || butter_lowpass(6500.0, 4, SAMPLE_RATE),
             Cascade::process,
         );

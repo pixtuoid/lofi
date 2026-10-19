@@ -4,8 +4,8 @@
 //! `--sweep` of control calls. `--engine stream`, the default, renders it as a
 //! `Performance` plays it, so what you hear is what lofi ships; `--engine whole`
 //! renders each song's lanes whole and loops their mix, under the controls its
-//! first bar latches, as pixtuoid's office played lofi before the stream. Either
-//! take is mono.
+//! first bar latches, as pixtuoid's office played lofi before the stream, dry
+//! and centred; a stream take carries the plate on its two sides.
 //!
 //! Usage:
 //!   cargo run --release --example lofi_audition -- \
@@ -27,13 +27,14 @@ use std::io::{self, BufWriter, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use pixtuoid_lofi::Frame;
 use pixtuoid_lofi::audition::{self, Lane};
 use pixtuoid_lofi::dsp::{NoiseStream, SAMPLE_RATE};
 
 use batch::{
     Batch, Engine, LANE_NAMES, lane_gains, parse_choice, render_take, soak_mix, usage_error,
 };
-use loudness::gated_lufs;
+use loudness::{fold, gated_lufs};
 
 /// Every take renders at ONE gated loudness, so a blind A/B compares takes, not
 /// gain.
@@ -200,7 +201,7 @@ impl Args {
 
     /// `seed`'s take in `run` at its target loudness; an error if that clips
     /// it, which would write a different take.
-    fn render(&self, run: &Batch, seed: u64) -> io::Result<Vec<f32>> {
+    fn render(&self, run: &Batch, seed: u64) -> io::Result<Vec<Frame>> {
         let mut take = match run.engine {
             Engine::WholeLane => {
                 let mut take = Vec::new();
@@ -214,19 +215,19 @@ impl Args {
                         None => lane_gains(controls),
                     };
                     let (beds, _) = render_take(&audition::song_score(seed, k, controls));
-                    take.extend(soak_mix(&beds, &gains));
+                    take.extend(soak_mix(&beds, &gains).into_iter().map(|x| [x; 2]));
                 }
                 take
             }
-            Engine::Stream => run.perform(seed)?,
+            Engine::Stream => run.perform(seed),
         };
         fade_edges(&mut take);
         let target = self.target_lufs();
-        let gain = 10f64.powf((target - gated_lufs(&take, SAMPLE_RATE)) / 20.0) as f32;
-        for v in &mut take {
+        let gain = 10f64.powf((target - gated_lufs(&fold(&take), SAMPLE_RATE)) / 20.0) as f32;
+        for v in take.iter_mut().flatten() {
             *v *= gain;
         }
-        if take.iter().any(|v| v.abs() > 1.0) {
+        if take.iter().flatten().any(|v| v.abs() > 1.0) {
             return Err(io::Error::other(format!(
                 "seed {seed} clips at {target} LUFS"
             )));
@@ -244,13 +245,14 @@ impl Args {
 }
 
 /// `take` faded in from silence and out to it over [`EDGE_FADE_S`].
-fn fade_edges(take: &mut [f32]) {
+fn fade_edges(take: &mut [Frame]) {
     let n = (EDGE_FADE_S * f64::from(SAMPLE_RATE)) as usize;
     let last = take.len() - 1;
     for i in 0..n {
         let w = (0.5 * (1.0 - (PI * i as f64 / n as f64).cos())) as f32;
-        take[i] *= w;
-        take[last - i] *= w;
+        for at in [i, last - i] {
+            take[at] = take[at].map(|v| v * w);
+        }
     }
 }
 
@@ -279,10 +281,10 @@ fn pcm(x: f32) -> i16 {
     (x * f32::from(i16::MAX)) as i16
 }
 
-/// 16-bit stereo RIFF/WAVE, the take in both channels.
-fn write_wav(path: &Path, mono: &[f32]) -> io::Result<()> {
+/// 16-bit stereo RIFF/WAVE.
+fn write_wav(path: &Path, take: &[Frame]) -> io::Result<()> {
     let mut w = BufWriter::new(File::create(path)?);
-    let n = mono.len() as u32;
+    let n = take.len() as u32;
     let data_len = n * 4; // 2 channels × i16
     let byte_rate = SAMPLE_RATE * 2 * 2;
     w.write_all(b"RIFF")?;
@@ -297,10 +299,8 @@ fn write_wav(path: &Path, mono: &[f32]) -> io::Result<()> {
     w.write_all(&16u16.to_le_bytes())?;
     w.write_all(b"data")?;
     w.write_all(&data_len.to_le_bytes())?;
-    for &s in mono {
-        let pcm = pcm(s);
-        w.write_all(&pcm.to_le_bytes())?;
-        w.write_all(&pcm.to_le_bytes())?;
+    for s in take.iter().flatten() {
+        w.write_all(&pcm(*s).to_le_bytes())?;
     }
     w.flush()
 }
@@ -315,7 +315,7 @@ mod tests {
     }
 
     /// `seed`'s take in the run's one batch.
-    fn rendered(args: &[&str], seed: u64) -> io::Result<Vec<f32>> {
+    fn rendered(args: &[&str], seed: u64) -> io::Result<Vec<Frame>> {
         let args = parsed(args);
         args.render(&args.batch, seed)
     }
@@ -390,10 +390,10 @@ mod tests {
         let seed = 1;
         let [whole, stream] = ["whole", "stream"].map(|engine| {
             let take = rendered(&["--engine", engine], seed);
-            let written: Vec<f32> = (take.expect("the take renders").iter())
-                .map(|&x| f32::from(pcm(x)) / f32::from(i16::MAX))
+            let written: Vec<Frame> = (take.expect("the take renders").iter())
+                .map(|frame| frame.map(|x| f32::from(pcm(x)) / f32::from(i16::MAX)))
                 .collect();
-            let lufs = gated_lufs(&written, SAMPLE_RATE);
+            let lufs = gated_lufs(&fold(&written), SAMPLE_RATE);
             assert!(
                 (lufs - TARGET_LUFS).abs() <= 0.1,
                 "{engine} writes {lufs:.3} LUFS"
@@ -407,8 +407,10 @@ mod tests {
     fn both_engines_write_a_take_from_silence_to_silence() {
         for engine in ["whole", "stream"] {
             let take = rendered(&["--engine", engine], 2);
-            let edges = take.map(|t| [t[0], t[t.len() - 1]].map(pcm)).ok();
-            assert_eq!(edges, Some([0, 0]), "{engine}'s first and last samples");
+            let edges = take
+                .map(|t| [t[0], t[t.len() - 1]].map(|frame| frame.map(pcm)))
+                .ok();
+            assert_eq!(edges, Some([[0; 2]; 2]), "{engine}'s first and last frames");
         }
     }
 
