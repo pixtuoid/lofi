@@ -486,10 +486,7 @@ fn every_seed_composes_the_score_it_did() {
 const EVERY_SEED_GOLDEN: u64 = 0x0e11_de19_bd24_d20f;
 
 #[test]
-fn every_chord_voice_sits_on_r7s_floor_or_above() {
-    let bible = include_str!("../../.claude/skills/procedural-lofi/reference/LOFI-BIBLE.md");
-    let r7 = format!("no interval <P5 below {CHORD_FLOOR}");
-    assert!(bible.contains(&r7), "LOFI-BIBLE.md no longer reads {r7:?}");
+fn every_chord_voice_sits_on_the_chord_floor_or_above() {
     for mood in [Mood::Day, Mood::Night] {
         for seed in 0..SWEEP {
             let s = compose(mood, seed);

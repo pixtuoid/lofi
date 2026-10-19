@@ -462,6 +462,13 @@ mod tests {
     }
 
     #[test]
+    fn the_chord_floor_is_lofi_bibles_low_interval_limit() {
+        let bible = include_str!("../.claude/skills/procedural-lofi/reference/LOFI-BIBLE.md");
+        let r7 = format!("no interval <P5 below {}", audition::CHORD_FLOOR);
+        assert!(bible.contains(&r7), "LOFI-BIBLE.md no longer reads {r7:?}");
+    }
+
+    #[test]
     fn the_bands_split_the_top_at_4_and_6_5_khz() {
         let labels: Vec<String> = bands().into_iter().map(band_label).collect();
         let want = [

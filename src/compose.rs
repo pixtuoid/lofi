@@ -375,7 +375,7 @@ const TRANSPOSE_MAX: i8 = 2;
 /// The lowest note a chord voice plays: LOFI-BIBLE.md R7's low-interval
 /// limit, under which the bass plays alone; the owner put the bible over the
 /// ratified pad register (2026-10-19).
-const CHORD_FLOOR: u8 = 48;
+pub const CHORD_FLOOR: u8 = 48;
 
 /// `n`, up an octave if it falls under [`CHORD_FLOOR`]: the voicing turns over
 /// rather than leave the floor.
