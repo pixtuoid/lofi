@@ -14,7 +14,7 @@ use crate::compose::{GEN_LOOP_BARS, HAT_JITTER_S, Mood, Score, compose};
 use crate::dsp::{NoiseStream, SAMPLE_RATE, splitmix_draw};
 use crate::synth::{CRACKLE_POPS_PER_SEC, Lane, Part, bar_onset, crackle_pop, part, samples_at};
 
-const LANES: usize = Lane::ALL.len();
+pub(crate) const LANES: usize = Lane::ALL.len();
 
 /// The most frames one step plays; any size plays the same frames.
 pub(crate) const BLOCK: usize = 1024;

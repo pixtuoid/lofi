@@ -5,7 +5,7 @@ use std::fmt;
 
 use crate::dsp::SAMPLE_RATE;
 use crate::stream::master::{Ceiling, TIER_INTENSITIES};
-use crate::stream::schedule::{BLOCK, Schedule};
+use crate::stream::schedule::{BLOCK, LANES, Schedule};
 
 /// One stereo frame, `[left, right]`, at [`SAMPLE_RATE`].
 pub type Frame = [f32; 2];
@@ -74,6 +74,25 @@ impl Controls {
             rain: unit(self.rain, default.rain),
         }
     }
+}
+
+/// What [`Performance::render_probed`] shows of the mix as it plays.
+pub(crate) trait Probe {
+    /// The lanes' sums, in [`Lane::ALL`](crate::synth::Lane::ALL) order,
+    /// and the plate's stereo return over a step, as they enter the mix:
+    /// before [`Performance::MASTER_GAIN`] and the ceiling.
+    fn step(&mut self, lanes: &[Vec<f64>; LANES], plate: &[Vec<f64>; 2]);
+
+    /// The gain the ceiling plays the next frame out at, a step's frames each
+    /// heard after the step.
+    fn gain(&mut self, gain: f64);
+}
+
+/// What [`Performance::render`] shows: nothing.
+impl Probe for () {
+    fn step(&mut self, _: &[Vec<f64>; LANES], _: &[Vec<f64>; 2]) {}
+
+    fn gain(&mut self, _: f64) {}
 }
 
 /// An endless run of the songs a seed composes. Its output is a pure function
@@ -148,10 +167,17 @@ impl Performance {
     /// play it at the listener's volume, with no further trim. May allocate,
     /// so callers render ahead, off the real-time thread.
     pub fn render(&mut self, out: &mut [Frame]) {
+        self.render_probed(out, &mut ());
+    }
+
+    /// [`render`](Self::render), showing `probe` the mix as it plays.
+    pub(crate) fn render_probed(&mut self, out: &mut [Frame], probe: &mut impl Probe) {
         let mut done = 0;
         while done < out.len() {
             self.mix_next(out.len() - done);
-            self.ceiling.limit(&mut self.mix);
+            probe.step(self.schedule.sums(), self.schedule.returned());
+            self.ceiling
+                .limit_heard(&mut self.mix, |gain| probe.gain(gain));
             for (frame, x) in out[done..].iter_mut().zip(&self.mix) {
                 *frame = x.map(|side| self.ceiling.clamp(side));
             }
@@ -727,7 +753,7 @@ mod tests {
 
     /// How late the ceiling plays the mix, in frames.
     fn lookahead() -> usize {
-        (crate::stream::master::LOOKAHEAD_S * f64::from(SAMPLE_RATE)) as usize
+        crate::stream::master::lookahead(SAMPLE_RATE)
     }
 
     #[test]

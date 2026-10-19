@@ -486,16 +486,26 @@ impl Batch {
     /// `seed`'s take as a `Performance` plays it, each call made at its
     /// frame.
     pub(crate) fn perform(&self, seed: u64) -> Vec<Frame> {
+        self.perform_with(seed, |performance, out| performance.render(out))
+    }
+
+    /// [`perform`](Self::perform), each stretch between its calls played by
+    /// `render`.
+    pub(crate) fn perform_with(
+        &self,
+        seed: u64,
+        mut render: impl FnMut(&mut Performance, &mut [Frame]),
+    ) -> Vec<Frame> {
         let timeline = self.timeline(seed);
         let mut frames = vec![Frame::default(); timeline.songs.iter().map(|&(_, len)| len).sum()];
         let mut performance = Performance::new(seed, self.controls());
         let mut done = 0;
         for &(at, controls) in &timeline.calls {
-            performance.render(&mut frames[done..at]);
+            render(&mut performance, &mut frames[done..at]);
             performance.set_controls(controls);
             done = at;
         }
-        performance.render(&mut frames[done..]);
+        render(&mut performance, &mut frames[done..]);
         frames
     }
 }
