@@ -280,11 +280,13 @@ mod tests {
     #[test]
     fn the_intensity_anchors_play_pixtuoids_tiers_lane_for_lane() {
         // pixtuoid's `TierGain`s (crates/pixtuoid-scene/src/audio/mod.rs at
-        // a63f178), each tier's lanes in `Lane::ALL` order
+        // a63f178), each tier's lanes in `Lane::ALL` order, the bass's under
+        // its trim
+        let bass = |gain: f32| gain * 10f32.powf(crate::stream::master::BASS_TRIM_DB / 20.0);
         let tiers: [(f32, [f32; Lane::ALL.len()]); 3] = [
-            (0.0, [0.75, 0.70, 0.0, 0.0, 0.78, 0.60]),
-            (0.5, [0.70, 0.0, 0.60, 0.35, 0.84, 0.70]),
-            (1.0, [0.65, 0.0, 0.70, 0.60, 0.78, 0.75]),
+            (0.0, [0.75, 0.70, 0.0, 0.0, 0.78, bass(0.60)]),
+            (0.5, [0.70, 0.0, 0.60, 0.35, 0.84, bass(0.70)]),
+            (1.0, [0.65, 0.0, 0.70, 0.60, 0.78, bass(0.75)]),
         ];
         let seed = 2;
         let mut whole = Schedule::new(seed, 0, SAMPLE_RATE);

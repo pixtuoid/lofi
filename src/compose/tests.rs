@@ -206,18 +206,21 @@ fn assert_well_formed(s: &Score, seed: u64) {
         "seed {seed}: the bass must anchor every bar's ONE"
     );
     for &(at, note, _) in &s.bass {
-        // 25 admits the leading-tone pickup one step under the root window
+        // 26 admits the leading-tone pickup one step under a root dropped an
+        // octave out of the 31..=42 window
         assert!(
-            (25..=38).contains(&note),
-            "seed {seed}: bass note {note} at {at}s out of the sub window"
+            (26..=42).contains(&note),
+            "seed {seed}: bass note {note} at {at}s out of the bass window"
         );
         // closed vocabulary: root/5th/pickup — anything else is a wrong join
         let bar = ((at / bar_s) as usize).min(GEN_LOOP_BARS - 1);
-        let root = super::sub_note(s.bar_roots[bar]);
-        let fifth = super::sub_note(s.bar_roots[bar] + 7);
+        let floor = |bar: usize| super::lowest(&s.bar_chords[bar]);
+        let root = super::sub_note(s.bar_roots[bar], floor(bar));
+        let fifth = super::sub_note(s.bar_roots[bar] + 7, floor(bar));
         let mut allowed = vec![root, fifth];
         if bar + 1 < GEN_LOOP_BARS {
-            allowed.push(super::sub_note(s.bar_roots[bar + 1]) - 1);
+            // a semitone under the root it leads to, as that bar folds it
+            allowed.push(super::sub_note(s.bar_roots[bar + 1], floor(bar + 1)) - 1);
         }
         assert!(
             allowed.contains(&note),
@@ -483,4 +486,43 @@ fn every_seed_composes_the_score_it_did() {
     assert_eq!(h, EVERY_SEED_GOLDEN, "{h:#018x}");
 }
 
-const EVERY_SEED_GOLDEN: u64 = 0xfd8d_51fc_dda2_5657;
+const EVERY_SEED_GOLDEN: u64 = 0xfbe8_fcb9_80c0_f157;
+
+#[test]
+fn no_bass_note_sounds_under_a_chord_voice_by_less_than_a_fifth_below_48() {
+    for mood in [Mood::Day, Mood::Night] {
+        for seed in 0..200 {
+            let s = compose(mood, seed);
+            let bar_s = s.bar_s();
+            let bar_of = |at: f32| ((at / bar_s) as usize).min(GEN_LOOP_BARS - 1);
+            for &(at, bass, _) in &s.bass {
+                let bar = bar_of(at);
+                let keys = (s.keys.iter())
+                    .filter(|&&(k, _, _)| bar_of(k) == bar)
+                    .map(|&(_, note, _)| note);
+                for voice in s.bar_chords[bar].iter().copied().chain(keys) {
+                    assert!(
+                        voice >= LOW_INTERVAL_LIMIT || voice.abs_diff(bass) >= 7,
+                        "{mood:?} seed {seed} bar {bar}: bass {bass} under {voice}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn a_bass_note_drops_an_octave_only_where_it_would_clash() {
+    // (pitch class, the bar's lowest chord voice, the bass note)
+    for (pc, floor, want) in [
+        (7, 45, 31),
+        (2, 45, 38),
+        (3, 45, 27),
+        (4, 45, 28),
+        (6, 47, 30),
+        (6, 48, 42),
+        (6 + 12, 48, 42),
+    ] {
+        assert_eq!(sub_note(pc, floor), want, "pc {pc} over {floor}");
+    }
+}

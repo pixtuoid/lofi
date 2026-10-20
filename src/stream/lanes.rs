@@ -56,13 +56,13 @@ fn staging(mood: Mood, lane: Lane) -> [f64; 2] {
         (Mood::Day, Lane::Keys) => [0.5419, 0.7848],
         (Mood::Day, Lane::Drums) => [0.6785, 0.6305],
         (Mood::Day, Lane::Texture) => [3.1570, 0.5869],
-        (Mood::Day, Lane::Bass) => [0.8075, 0.7210],
+        (Mood::Day, Lane::Bass) => [0.7840, 0.6245],
         (Mood::Night, Lane::Pad) => [0.2049, 0.7833],
         (Mood::Night, Lane::Sparkle) => [1.2683, 0.5361],
         (Mood::Night, Lane::Keys) => [1.0453, 0.6983],
         (Mood::Night, Lane::Drums) => [1.0628, 0.7487],
         (Mood::Night, Lane::Texture) => [3.0763, 0.6012],
-        (Mood::Night, Lane::Bass) => [1.2978, 0.6178],
+        (Mood::Night, Lane::Bass) => [1.2987, 0.6048],
     }
 }
 
@@ -944,10 +944,10 @@ mod tests {
         // is opinion, and a staging off by 2× misses it by 4.5 LU
         const TOLERANCE_LU: f64 = 1.5;
         let whole_lane: [(Mood, [f64; Lane::ALL.len()]); 2] = [
-            (Mood::Day, [-12.92, -18.55, -16.84, -17.98, -35.41, -12.75]),
+            (Mood::Day, [-12.92, -18.55, -16.84, -17.98, -35.41, -11.83]),
             (
                 Mood::Night,
-                [-11.75, -19.75, -16.84, -16.75, -36.06, -12.44],
+                [-11.75, -19.75, -16.84, -16.75, -36.06, -10.24],
             ),
         ];
         let sr = SAMPLE_RATE;

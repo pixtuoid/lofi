@@ -67,7 +67,7 @@ pub struct Score {
     pub(super) sparkle: Vec<(f32, u8, f32)>,
     pub(super) keys: Vec<(f32, u8, f32)>,
     pub(super) drums: Vec<(f32, DrumKind, f32)>,
-    /// The bass LANE's events — root/5th/leading-tone in the sub window (the
+    /// The bass LANE's events — root/5th/leading-tone in the bass window (the
     /// day pickup dips one step under); this lane owns the register the night
     /// pad no longer bakes.
     pub(super) bass: Vec<(f32, u8, f32)>,
@@ -854,11 +854,41 @@ fn night_drums(rng: &mut NoiseStream, beat_s: f32) -> (Vec<(f32, DrumKind, f32)>
     (out, kicks)
 }
 
-/// Fold a pitch class into the sub window (lands in 26..=37) — the ONE
-/// bass-register authority.
-fn sub_note(pc: u8) -> u8 {
-    let b = 24 + (pc % 12);
-    if b < 26 { b + 12 } else { b }
+/// The bass window's lowest note: a root folds into it and the eleven
+/// semitones above. Opinion, from the sweep the commit that set it records:
+/// the smallest move that puts the mix's power under 62 Hz, as a share of its
+/// power under 125 Hz, inside the reference corpus's interquartile range with
+/// room on both sides.
+pub const BASS_LOW: u8 = 31;
+
+/// The note under which no two voices sound closer than a fifth: LOFI-BIBLE.md
+/// R7's low-interval limit.
+pub const LOW_INTERVAL_LIMIT: u8 = 48;
+
+/// A perfect fifth, in semitones.
+const FIFTH: u8 = 7;
+
+/// Whether a `bass` note under `voice` sounds closer to it than a fifth below
+/// [`LOW_INTERVAL_LIMIT`].
+fn clashes(bass: u8, voice: u8) -> bool {
+    voice < LOW_INTERVAL_LIMIT && voice.abs_diff(bass) < FIFTH
+}
+
+/// A chord's lowest voice.
+fn lowest(chord: &[u8; 4]) -> u8 {
+    chord.iter().copied().fold(u8::MAX, u8::min)
+}
+
+/// Fold a pitch class into the bass window from [`BASS_LOW`], an octave under
+/// it where it would clash with `floor`, the bar's lowest chord voice — the
+/// ONE bass-register authority.
+fn sub_note(pc: u8, floor: u8) -> u8 {
+    let note = BASS_LOW + (pc % 12 + 12 - BASS_LOW % 12) % 12;
+    if clashes(note, floor) {
+        note - 12
+    } else {
+        note
+    }
 }
 
 /// The bass lane: the ONE on every bar, an optional answer, an occasional day
@@ -866,6 +896,7 @@ fn sub_note(pc: u8) -> u8 {
 /// lagging the beat so the kick keeps the transient.
 fn bass_events(
     rng: &mut NoiseStream,
+    bar_chords: &[[u8; 4]; GEN_LOOP_BARS],
     bar_roots: &[u8; GEN_LOOP_BARS],
     beat_s: f32,
     mood: Mood,
@@ -877,15 +908,16 @@ fn bass_events(
         Mood::Day => (0.55, 2.5, 0.4, 0.25, 0.62),
         Mood::Night => (0.7, 2.0, 0.2, 0.0, 0.55),
     };
+    let floor = |bar: usize| lowest(&bar_chords[bar]);
     let mut out = Vec::new();
     for bar in 0..GEN_LOOP_BARS {
         let b0 = bar as f32 * bar_s;
-        let root = sub_note(bar_roots[bar]);
+        let root = sub_note(bar_roots[bar], floor(bar));
         let at = b0 + 0.014 + 0.010 * rng.unit();
         out.push((at, root, vel_base + 0.08 * rng.unit()));
         if chance(rng, answer_p) {
             let note = if chance(rng, fifth_p) {
-                sub_note(bar_roots[bar] + 7)
+                sub_note(bar_roots[bar] + FIFTH, floor(bar))
             } else {
                 root
             };
@@ -897,9 +929,14 @@ fn bass_events(
         {
             // literal semitone below the folded next root (pc-folding rendered an
             // 11-semitone drop); no last-bar pickup — place() clips at the seam
-            let next = sub_note(next_root);
+            let next = sub_note(next_root, floor(bar + 1));
             let at = b0 + 3.5 * beat_s + 0.012 + 0.008 * rng.unit();
-            out.push((at, next - 1, 0.34 + 0.06 * rng.unit()));
+            let vel = 0.34 + 0.06 * rng.unit();
+            // one that would clash under this bar's chord is left out, its
+            // draws kept
+            if !clashes(next - 1, floor(bar)) {
+                out.push((at, next - 1, vel));
+            }
         }
     }
     out
@@ -995,7 +1032,7 @@ pub(crate) fn compose(mood: Mood, seed: u64) -> Score {
     };
 
     // the last musical draws
-    let bass = bass_events(&mut rng, &bar_roots, beat_s, mood);
+    let bass = bass_events(&mut rng, &bar_chords, &bar_roots, beat_s, mood);
 
     // drawn AFTER every musical draw, so a voice-registry change can never
     // silently recompose an already-blessed seed's notes; ONE banded unit draw

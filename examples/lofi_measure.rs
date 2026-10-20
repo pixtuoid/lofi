@@ -462,6 +462,19 @@ mod tests {
     }
 
     #[test]
+    fn the_bass_window_and_its_limit_are_lofi_bibles_r7() {
+        let bible = include_str!("../.claude/skills/procedural-lofi/reference/LOFI-BIBLE.md");
+        let low = audition::BASS_LOW;
+        let r7 = [
+            format!("bass root **{low}–{}**", low + 11),
+            format!("no interval <P5 below {}", audition::LOW_INTERVAL_LIMIT),
+        ];
+        for row in &r7 {
+            assert!(bible.contains(row), "LOFI-BIBLE.md no longer reads {row:?}");
+        }
+    }
+
+    #[test]
     fn the_bands_split_the_top_at_4_and_6_5_khz() {
         let labels: Vec<String> = bands().into_iter().map(band_label).collect();
         let want = [
