@@ -3,8 +3,12 @@
 
 use std::fmt;
 
+#[cfg(test)]
+use crate::compose::Form;
 use crate::dsp::SAMPLE_RATE;
 use crate::stream::master::{Ceiling, TIER_INTENSITIES};
+#[cfg(test)]
+use crate::stream::schedule::PLAIN_LOOPS;
 use crate::stream::schedule::{BLOCK, LANES, Schedule};
 
 /// One stereo frame, `[left, right]`, at [`SAMPLE_RATE`].
@@ -139,6 +143,16 @@ impl Performance {
         Self::from_song(seed, 0, controls)
     }
 
+    /// [`new`](Self::new), every song playing each of its loop's lanes in
+    /// every bar: what a test of a mechanism a form would mute plays.
+    #[cfg(test)]
+    pub(crate) fn plain(seed: u64, controls: Controls) -> Self {
+        let mut performance = Self::new(seed, controls);
+        performance.schedule =
+            Schedule::new(seed, 0, SAMPLE_RATE).with_form(Form::plain(PLAIN_LOOPS));
+        performance
+    }
+
     /// A performance of `seed`'s run from song `first` on.
     pub(crate) fn from_song(seed: u64, first: u64, controls: Controls) -> Self {
         Self {
@@ -237,9 +251,37 @@ impl Performance {
 mod tests {
     use super::*;
     use crate::audition;
+    use crate::compose::Score;
     use crate::dsp::NoiseStream;
-    use crate::stream::schedule::{ANTICIPATION_S, LOOPS_PER_SONG, UNITY};
+    use crate::stream::schedule::{ANTICIPATION_S, UNITY, bars_and_len};
     use crate::synth::Lane;
+
+    /// Song `k` of `seed`'s run under `c`, playing every lane of its loop in
+    /// every bar: what a test of a mechanism a form would mute plays.
+    fn plain_score(seed: u64, k: u64, c: Controls) -> Score {
+        let mut score = audition::song_score(seed, k, c);
+        score.form = Form::plain(PLAIN_LOOPS);
+        score
+    }
+
+    /// [`plain_score`]'s bars' first frames, and its length.
+    fn plain_bars(seed: u64, k: u64, c: Controls) -> (Vec<usize>, usize) {
+        bars_and_len(&plain_score(seed, k, c), SAMPLE_RATE)
+    }
+
+    /// Song `k`'s loop length under `c`.
+    fn loop_frames(seed: u64, k: u64, c: Controls) -> usize {
+        crate::synth::samples_at(audition::song_score(seed, k, c).loop_secs(), SAMPLE_RATE)
+    }
+
+    /// Asserts song `k` of `seed`'s run mutes some lane somewhere, so an
+    /// invariance proven over it is proven over a form.
+    fn assert_arranged(seed: u64, k: u64, c: Controls) {
+        assert!(
+            audition::song_score(seed, k, c).form().mutes_any(),
+            "song {k} of seed {seed} plays every lane in every bar"
+        );
+    }
 
     fn night() -> Controls {
         Controls::default().with_daylight(0.0)
@@ -287,10 +329,10 @@ mod tests {
             (1.0, [0.65, 0.0, 0.70, 0.60, 0.78, 0.75]),
         ];
         let seed = 2;
-        let mut whole = Schedule::new(seed, 0, SAMPLE_RATE);
+        let mut whole = Schedule::new(seed, 0, SAMPLE_RATE).with_form(Form::plain(PLAIN_LOOPS));
         whole.start_song_at(Controls::default(), UNITY);
         // the first loop, before any song but the first plays
-        let frames = whole.song_left() / LOOPS_PER_SONG;
+        let frames = loop_frames(seed, 0, Controls::default());
         let mut unity = vec![Vec::with_capacity(frames); Lane::ALL.len()];
         while unity[0].len() < frames {
             let n = BLOCK.min(frames - unity[0].len());
@@ -305,7 +347,7 @@ mod tests {
                 "intensity {intensity}"
             );
             let c = Controls::default().with_intensity(intensity);
-            let (_, got, _) = mixed(&mut Performance::new(seed, c), frames);
+            let (_, got, _) = mixed(&mut Performance::plain(seed, c), frames);
             let first_diff = (0..frames).position(|i| {
                 let lanes: f64 = (unity.iter().zip(gains))
                     .map(|(lane, gain)| f64::from(gain) * lane[i])
@@ -352,8 +394,8 @@ mod tests {
             let runs: Vec<_> = (runs.iter())
                 .map(|&(seed, a, b)| {
                     scope.spawn(move || {
-                        let span = audition::song_len(seed, 0, a)
-                            + audition::song_len(seed, 1, b) / LOOPS_PER_SONG;
+                        assert_arranged(seed, 0, a);
+                        let span = audition::song_len(seed, 0, a) + loop_frames(seed, 1, b);
                         // past song 0's last latch, so it plays its corner to
                         // its end and the next song latches the opposite one
                         let bars = audition::bar_frames(seed, 0, a);
@@ -487,7 +529,16 @@ mod tests {
         sizes: &[usize],
         frames: usize,
     ) -> Vec<Frame> {
-        let mut p = Performance::new(seed, controls);
+        play_from(Performance::new(seed, controls), asks, sizes, frames)
+    }
+
+    /// [`play`] from `p`.
+    fn play_from(
+        mut p: Performance,
+        asks: &[(usize, Controls)],
+        sizes: &[usize],
+        frames: usize,
+    ) -> Vec<Frame> {
         let mut out = Vec::with_capacity(frames);
         let mut asks = asks.iter().peekable();
         let mut sizes = sizes.iter();
@@ -526,7 +577,10 @@ mod tests {
         // each song asks for the next one's controls halfway through
         let asks = [(lens[0] / 2, order[1]), (bounds[0] + lens[1] / 2, order[2])];
         // through song 2's first loop, past every tail of song 1
-        let span = bounds[1] + lens[2] / LOOPS_PER_SONG;
+        let span = bounds[1] + loop_frames(seed, 2, order[2]);
+        for k in 0..3 {
+            assert_arranged(seed, k, order[k as usize]);
+        }
         let whole = play(seed, order[0], &asks, &[], span);
         assert!(
             [0, bounds[0], bounds[1]]
@@ -608,8 +662,9 @@ mod tests {
         let reached = playing.finish_song();
         let alone = audition::song(seed, 2, c, &[]);
         assert!(audible(&alone));
+        assert_arranged(seed, 2, c);
         assert_eq!(reached.len(), alone.len());
-        let first_loop = alone.len() / LOOPS_PER_SONG;
+        let first_loop = loop_frames(seed, 2, c);
         assert!(
             first_diff(&reached[..first_loop], &alone[..first_loop]).is_some(),
             "song 1's tails ring into song 2"
@@ -643,8 +698,8 @@ mod tests {
                             scope.spawn(move || {
                                 // song 0's second loop, the first its own
                                 // tails ring into, as they do every later one
-                                let loop_len = audition::song_len(seed, 0, c) / LOOPS_PER_SONG;
-                                let mut p = Performance::new(seed, c);
+                                let loop_len = loop_frames(seed, 0, c);
+                                let mut p = Performance::plain(seed, c);
                                 next(&mut p, loop_len);
                                 lufs(&next(&mut p, loop_len))
                             })
@@ -673,9 +728,17 @@ mod tests {
             night().with_intensity(0.0),
             Controls::default().with_intensity(1.0),
         ];
+        let ten = 10 * 60 * u64::from(SAMPLE_RATE);
+        // as many songs as start inside ten minutes at their own lengths
+        let (mut want, mut start) = (0, 0);
+        while start < ten {
+            assert_arranged(7, want, asks[want as usize % asks.len()]);
+            start += audition::song_len(7, want, asks[want as usize % asks.len()]) as u64;
+            want += 1;
+        }
         let mut p = Performance::new(7, asks[0]);
         let mut songs = 0;
-        while p.position() < 10 * 60 * u64::from(SAMPLE_RATE) {
+        while p.position() < ten {
             let from = p.position();
             let song = p.finish_song();
             songs += 1;
@@ -689,10 +752,11 @@ mod tests {
             );
         }
         assert!(
-            songs > 3,
+            want > 2,
             "ten minutes crossed only {} songs' boundaries",
-            songs - 1
+            want - 1
         );
+        assert_eq!(songs as u64, want, "the songs ten minutes played");
     }
 
     #[test]
@@ -760,10 +824,13 @@ mod tests {
     fn a_call_is_heard_from_the_next_bars_latch_and_the_last_call_before_it_wins() {
         let (seed, c) = (6, Controls::default());
         let busy = c.with_intensity(1.0);
-        let bars = audition::bar_frames(seed, 0, c);
+        let (bars, _) = plain_bars(seed, 0, c);
         let anticipation = crate::synth::samples_at(ANTICIPATION_S, SAMPLE_RATE);
         let [previous, latch, after] = [3, 4, 5].map(|bar| bars[bar] - anticipation);
         let frames = bars[6];
+        let play = |seed, c, asks: &[(usize, Controls)], sizes: &[usize], frames| {
+            play_from(Performance::plain(seed, c), asks, sizes, frames)
+        };
         let unasked = play(seed, c, &[], &[], frames);
         let at_latch = play(seed, c, &[(latch, busy)], &[], frames);
         let heard = first_diff(&at_latch, &unasked);
@@ -792,13 +859,13 @@ mod tests {
             "the last call didn't win"
         );
         // the first bar latches the controls a call before the first render asks for
-        let mut first = Performance::new(seed, c);
+        let mut first = Performance::plain(seed, c);
         first.set_controls(night());
         let second = SAMPLE_RATE as usize;
         assert_eq!(
             first_diff(
                 &next(&mut first, second),
-                &next(&mut Performance::new(seed, night()), second)
+                &next(&mut Performance::plain(seed, night()), second)
             ),
             None,
             "a call before the first render missed the first bar"
@@ -808,19 +875,18 @@ mod tests {
     #[test]
     fn the_daylight_grades_the_playing_song_and_picks_the_next_songs_family() {
         let seed = 6;
-        let boundary = audition::song_len(seed, 0, Controls::default());
-        let bars = audition::bar_frames(seed, 0, Controls::default());
+        let (bars, boundary) = plain_bars(seed, 0, Controls::default());
         let anticipation = crate::synth::samples_at(ANTICIPATION_S, SAMPLE_RATE);
         let latch = bars[8] - anticipation;
-        let mut p = Performance::new(seed, Controls::default());
+        let mut p = Performance::plain(seed, Controls::default());
         let mut heard = next(&mut p, latch);
         p.set_controls(night());
         heard.extend(next(&mut p, boundary - latch));
         assert_eq!(
             p.schedule.playing(),
-            Some(&audition::song_score(seed, 0, Controls::default()))
+            Some(&plain_score(seed, 0, Controls::default()))
         );
-        let unasked = next(&mut Performance::new(seed, Controls::default()), boundary);
+        let unasked = next(&mut Performance::plain(seed, Controls::default()), boundary);
         let graded = first_diff(&heard, &unasked);
         assert!(
             graded.is_some_and(|at| at >= latch + lookahead()),
@@ -829,7 +895,7 @@ mod tests {
         next(&mut p, 1);
         assert_eq!(
             p.schedule.playing(),
-            Some(&audition::song_score(seed, 1, night())),
+            Some(&plain_score(seed, 1, night())),
             "the next song isn't the night's"
         );
     }
@@ -861,8 +927,9 @@ mod tests {
         }
         reached.extend(playing.finish_song());
         let alone = audition::song(seed, 1, into, &calls);
+        assert_arranged(seed, 1, into);
         assert_eq!(reached.len(), alone.len());
-        let first_loop = alone.len() / LOOPS_PER_SONG;
+        let first_loop = loop_frames(seed, 1, into);
         assert!(
             first_diff(&reached[..first_loop], &alone[..first_loop]).is_some(),
             "song 0's tails ring into song 1"

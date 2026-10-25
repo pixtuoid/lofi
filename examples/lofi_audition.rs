@@ -205,7 +205,7 @@ impl Args {
         let mut take = match run.engine {
             Engine::WholeLane => {
                 let mut take = Vec::new();
-                for (k, &(controls, _)) in (0..).zip(&run.timeline(seed).songs) {
+                for (k, &(controls, len)) in (0..).zip(&run.timeline(seed).songs) {
                     let gains = match self.solo {
                         Some(s) => {
                             let mut gains = [0.0; Lane::ALL.len()];
@@ -215,7 +215,7 @@ impl Args {
                         None => lane_gains(controls),
                     };
                     let (beds, _) = render_take(&audition::song_score(seed, k, controls));
-                    take.extend(soak_mix(&beds, &gains).into_iter().map(|x| [x; 2]));
+                    take.extend(soak_mix(&beds, &gains, len).into_iter().map(|x| [x; 2]));
                 }
                 take
             }

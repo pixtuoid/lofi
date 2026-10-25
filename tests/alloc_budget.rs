@@ -56,6 +56,12 @@ fn fingerprint(frames: &[Frame]) -> u64 {
 /// `a`, `b` from its second bar, then song 1 under `b`; panics unless it
 /// played those two songs.
 fn high_water(seed: u64, a: Controls, b: Controls) -> usize {
+    // songs with an intro or an outro, which mute a lane: the budget holds
+    // for a song's form, not only for one that plays every lane throughout
+    for (k, c) in [(0, a), (1, b)] {
+        let form = audition::song_score(seed, k, c).form().clone();
+        assert!(form.intro() + form.outro() > 0, "song {k}: {form}");
+    }
     let span = audition::song_len(seed, 0, a) + audition::song_len(seed, 1, b);
     // a chunk as a player renders ahead, allocated before the count starts
     let mut chunk = vec![Frame::default(); SAMPLE_RATE as usize / 2];

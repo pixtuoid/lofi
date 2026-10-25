@@ -548,8 +548,9 @@ mod tests {
     use super::*;
     use crate::Controls;
     use crate::compose::DrumKind;
+    use crate::compose::Form;
     use crate::dsp::{SAMPLE_RATE, band_energy_share};
-    use crate::stream::schedule::{LOOPS_PER_SONG, Schedule, UNITY};
+    use crate::stream::schedule::{PLAIN_LOOPS, Schedule, UNITY};
     use crate::synth::{WOW, part};
 
     fn controls(mood: Mood) -> Controls {
@@ -558,6 +559,13 @@ mod tests {
             Mood::Night => 0.0,
         };
         Controls::default().with_daylight(daylight)
+    }
+
+    /// `seed`'s run from song `first` at `sr`, every song playing each lane
+    /// of its loop in every bar: what a test of a chain a form would mute
+    /// plays.
+    fn plain_run(seed: u64, first: u64, sr: u32) -> Schedule {
+        Schedule::new(seed, first, sr).with_form(Form::plain(PLAIN_LOOPS))
     }
 
     /// `run`'s next `frames` frames, each lane's apart.
@@ -922,6 +930,11 @@ mod tests {
         while played < samples_at(600.0, sr) {
             if run.song_left() == 0 {
                 run.start_song_at(controls(moods.next().unwrap()), UNITY);
+                let form = run.playing().expect("a song plays").form();
+                assert!(
+                    form.mutes_any(),
+                    "a song of every lane proves no form finite"
+                );
             }
             let n = run.song_left().min(BLOCK);
             for ((lane, sum), peak) in Lane::ALL.iter().zip(run.play(n)).zip(&mut peaks) {
@@ -955,9 +968,9 @@ mod tests {
         for (mood, want) in whole_lane {
             let mut lufs = vec![Vec::new(); Lane::ALL.len()];
             for seed in 0..6 {
-                let mut run = Schedule::new(seed, 0, sr);
+                let mut run = plain_run(seed, 0, sr);
                 run.start_song_at(controls(mood), UNITY);
-                let loop_len = run.song_left() / LOOPS_PER_SONG;
+                let loop_len = samples_at(run.playing().expect("a song plays").loop_secs(), sr);
                 // the second loop, which the first's tails ring into as every
                 // later one does
                 lanes(&mut run, loop_len);

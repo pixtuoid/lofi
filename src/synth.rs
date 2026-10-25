@@ -955,6 +955,20 @@ pub(crate) fn part(score: &Score, lane: Lane) -> Part<'_> {
     }
 }
 
+/// Whether `lane` strikes in song bar `bar` of `score`'s form: the ONE
+/// mapping from a lane to its row in a bar, as [`part`] maps it to its events.
+pub(crate) fn plays(score: &Score, lane: Lane, bar: usize) -> bool {
+    let plays = score.form().plays(bar);
+    match lane {
+        Lane::Pad => plays.pad,
+        Lane::Sparkle => plays.sparkle,
+        Lane::Keys => plays.keys,
+        Lane::Drums => plays.drums,
+        Lane::Texture => plays.texture,
+        Lane::Bass => plays.bass,
+    }
+}
+
 impl Part<'_> {
     /// Each note's first sample in the loop at `sr`, in event order: where
     /// [`render_lane`] places it at [`SAMPLE_RATE`].

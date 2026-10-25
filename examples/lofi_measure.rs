@@ -22,7 +22,7 @@ mod loudness;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
-use pixtuoid_lofi::audition::{self, LOOPS_PER_SONG, Stems};
+use pixtuoid_lofi::audition::{self, Stems};
 use pixtuoid_lofi::dsp::SAMPLE_RATE;
 
 use batch::{Batch, Engine, LANE_NAMES, lane_gains, render_take, soak_mix, usage_error};
@@ -83,7 +83,8 @@ fn run() -> std::io::Result<()> {
             let (lanes, mix, took, rendered) = match batch.engine {
                 Engine::WholeLane => {
                     let (beds, took) = render_take(&score);
-                    let mix = soak_mix(&beds, &lane_gains(batch.controls()));
+                    let len = audition::song_len(seed, 0, batch.controls());
+                    let mix = soak_mix(&beds, &lane_gains(batch.controls()), len);
                     let (rendered, all) = (beds[0].len(), took.iter().sum());
                     (Lanes::Whole(beds, took), mix, all, rendered)
                 }
@@ -98,7 +99,8 @@ fn run() -> std::io::Result<()> {
                     (Lanes::Stems(stems), mix, took, rendered)
                 }
             };
-            let loop_len = mix.len() / LOOPS_PER_SONG;
+            // the score's loop, rounded as the engine rounds it
+            let loop_len = (f64::from(score.loop_secs()) * SR).round() as usize;
             println!(
                 "{} seed {seed}: {}; lead {}, loop {:.2} s",
                 batch.mood_name(),
@@ -550,7 +552,11 @@ mod tests {
     fn the_whole_lane_mix_reads_at_the_stage_the_streams_does() {
         let (batch, seed) = (Batch::default(), 0);
         let (beds, _) = render_take(&batch.score(seed));
-        let whole = gated_lufs(&soak_mix(&beds, &lane_gains(batch.controls())), SAMPLE_RATE);
+        let len = audition::song_len(seed, 0, batch.controls());
+        let whole = gated_lufs(
+            &soak_mix(&beds, &lane_gains(batch.controls()), len),
+            SAMPLE_RATE,
+        );
         let stream = gated_lufs(&fold(&batch.perform(seed)), SAMPLE_RATE);
         // half the staging in dB, which a mix staged once less or once more
         // reads past

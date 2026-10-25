@@ -122,6 +122,19 @@ impl Form {
         &self.plays[bar]
     }
 
+    /// Whether some bar mutes some lane: a song whose invariance a test
+    /// proves must change somewhere.
+    #[cfg(test)]
+    pub(crate) fn mutes_any(&self) -> bool {
+        self.plays.iter().any(|&plays| plays != Plays::ALL)
+    }
+
+    /// The lanes song bar `bar` strikes, to change for a test.
+    #[cfg(test)]
+    pub(crate) fn plays_mut(&mut self, bar: usize) -> &mut Plays {
+        &mut self.plays[bar]
+    }
+
     /// `loops` loops of every lane, with no intro or outro: a song as it was
     /// before its form.
     #[cfg(test)]
