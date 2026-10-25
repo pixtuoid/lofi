@@ -164,17 +164,24 @@ impl Sweep {
     }
 
     /// What the sweep asks for in the middle of bar `bar` of a take `bars`
-    /// long, of songs `song_bars` long, `now` being what it asked for last.
-    fn call(self, bar: usize, song_bars: usize, bars: usize, now: Controls) -> Option<Controls> {
+    /// long, whose first song is `first_song_bars` long, `now` being what it
+    /// asked for last.
+    fn call(
+        self,
+        bar: usize,
+        first_song_bars: usize,
+        bars: usize,
+        now: Controls,
+    ) -> Option<Controls> {
         match self {
             Sweep::Intensity => middle_half(bar, bars).map(|on| {
                 let tier = if on { Tier::Busy } else { Tier::Empty };
                 now.with_intensity(tier.intensity())
             }),
             Sweep::Rain => middle_half(bar, bars).map(|on| now.with_rain(f32::from(u8::from(on)))),
-            Sweep::Dusk => (bar < song_bars).then(|| {
+            Sweep::Dusk => (bar < first_song_bars).then(|| {
                 let [(_, day), (_, night)] = MOODS;
-                let done = (bar + 1) as f32 / song_bars as f32;
+                let done = (bar + 1) as f32 / first_song_bars as f32;
                 now.with_daylight(day + (night - day) * done)
             }),
             Sweep::Twilight => None,
@@ -461,18 +468,21 @@ impl Batch {
         let mut asked = self.controls();
         let mut timeline = Timeline::default();
         let mut song_start = 0;
+        // each song's bars, which no control moves, so the take's are known
+        // before a call is made
+        let counts: Vec<usize> = (0..songs).map(|k| audition::song_bars(seed, k)).collect();
+        let take_bars = counts.iter().sum();
+        let mut bar = 0;
         for k in 0..songs {
             let bars = audition::bar_frames(seed, k, asked);
             let len = audition::song_len(seed, k, asked);
             timeline.songs.push((asked, len));
-            // every song has as many bars, whatever its tempo
-            let take_bars = bars.len() * songs as usize;
             for (j, &onset) in bars.iter().enumerate() {
                 let end = bars.get(j + 1).copied().unwrap_or(len);
-                let bar = k as usize * bars.len() + j;
-                if let Some(next) =
-                    (self.sweep).and_then(|sweep| sweep.call(bar, bars.len(), take_bars, asked))
-                {
+                let call =
+                    (self.sweep).and_then(|sweep| sweep.call(bar, counts[0], take_bars, asked));
+                bar += 1;
+                if let Some(next) = call {
                     timeline
                         .calls
                         .push((song_start + onset.midpoint(end), next));
@@ -560,6 +570,37 @@ mod tests {
         let applied = batch.parse_flag(flag, &mut std::iter::once(value.to_owned()))?;
         assert!(applied, "{flag} is the batch's");
         Ok(batch)
+    }
+
+    #[test]
+    fn a_sweeps_middle_half_spans_its_songs_however_many_bars_each_has() {
+        let mut batch = Batch::default();
+        for (flag, value) in [("--songs", "3"), ("--sweep", "intensity")] {
+            let applied = batch.parse_flag(flag, &mut std::iter::once(value.to_owned()));
+            assert!(applied.expect("the flag parses"), "{flag} is the batch's");
+        }
+        for run in batch.runs() {
+            let timeline = run.timeline(0);
+            let (mut bars, mut start) = (Vec::new(), 0);
+            for (k, &(controls, len)) in (0..).zip(&timeline.songs) {
+                bars.extend(
+                    audition::bar_frames(0, k, controls)
+                        .iter()
+                        .map(|&at| start + at),
+                );
+                start += len;
+            }
+            let counts: Vec<usize> = (0..3).map(|k| audition::song_bars(0, k)).collect();
+            assert!(
+                counts.windows(2).any(|w| w[0] != w[1]),
+                "the songs share a length: {counts:?}"
+            );
+            let quarter = bars.len() / 4;
+            let middle =
+                |bar: usize| bars[bar].midpoint(bars.get(bar + 1).copied().unwrap_or(start));
+            let calls: Vec<usize> = timeline.calls.iter().map(|&(at, _)| at).collect();
+            assert_eq!(calls, [middle(quarter), middle(bars.len() - quarter)]);
+        }
     }
 
     #[test]

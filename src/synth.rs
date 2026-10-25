@@ -1009,10 +1009,11 @@ impl Part<'_> {
     }
 }
 
-/// Render one lane of `score` to mono f32 at [`SAMPLE_RATE`], peaking at most
-/// 1.0. Every lane but the day [`Lane::Texture`] is a whole number of the song's
-/// loops long, so a caller loops them in phase; the day texture runs free on its
-/// own length.
+/// Render one lane of `score`'s loop to mono f32 at [`SAMPLE_RATE`], peaking
+/// at most 1.0, never its form: lofi's tools audition the material, and the
+/// frozen fingerprint pins guard the voices through it. Every lane but the day
+/// [`Lane::Texture`] is a whole number of the score's loops long, so a caller
+/// loops them in phase; the day texture runs free on its own length.
 pub fn render_lane(score: &Score, lane: Lane, rng: &mut NoiseStream) -> Vec<f32> {
     let loop_s = score.loop_secs();
     let (r0, r1, r2) = lane_recipe(score.mood, lane);

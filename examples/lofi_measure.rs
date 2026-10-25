@@ -102,11 +102,13 @@ fn run() -> std::io::Result<()> {
             // the score's loop, rounded as the engine rounds it
             let loop_len = (f64::from(score.loop_secs()) * SR).round() as usize;
             println!(
-                "{} seed {seed}: {}; lead {}, loop {:.2} s",
+                "{} seed {seed}: {}; lead {}, loop {:.2} s; song {:.1} s: {}",
                 batch.mood_name(),
                 rail(f64::from(score.bpm()), BPM_RAIL, " bpm"),
                 score.lead_voice_name(),
-                loop_len as f64 / SR
+                loop_len as f64 / SR,
+                score.song_secs(),
+                score.form()
             );
             let header = cells(&|lo, hi| band_label((lo, hi)));
             print_row("lane", "LUFS", &header, "centroid", "seam", "ms");
