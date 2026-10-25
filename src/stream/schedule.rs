@@ -4,7 +4,7 @@
 
 use std::collections::VecDeque;
 
-use super::lanes::Chain;
+use super::lanes::{Chain, Sweep};
 use super::master::{lane_gain, resting_gain};
 use super::plate::{self, Plate};
 use super::rain::{self, RAIN_RAMP_BARS};
@@ -12,7 +12,7 @@ use super::ramp::{Ramp, Shape};
 use crate::Controls;
 #[cfg(test)]
 use crate::compose::Form;
-use crate::compose::{GEN_LOOP_BARS, HAT_JITTER_S, Mood, Score, compose};
+use crate::compose::{Edge, GEN_LOOP_BARS, HAT_JITTER_S, Mood, Score, compose};
 use crate::dsp::{NoiseStream, SAMPLE_RATE, splitmix_draw};
 use crate::synth::{
     CRACKLE_POPS_PER_SEC, Lane, Part, bar_onset, crackle_pop, part, plays, samples_at,
@@ -32,6 +32,11 @@ pub(crate) const PLAIN_LOOPS: usize = 4;
 /// composer's earliest anticipation, a downbeat hat's half of
 /// [`HAT_JITTER_S`], so an anticipated downbeat joins the bar it anticipates.
 pub(crate) const ANTICIPATION_S: f32 = HAT_JITTER_S / 2.0;
+
+/// The level a fading edge starts a music lane from or ends it at, in dB:
+/// silence a `Shape::Db` ramp can start from. Opinion; the corpus's detector
+/// calls a fade one whose far end is at least 9 dB down.
+pub(crate) const FADE_FLOOR_DB: f64 = -36.0;
 
 /// How long, in beats, a lane's level takes to reach the one a latch asks
 /// for: no longer than a beat, which gated lanes fade over at most. Opinion.
@@ -328,6 +333,55 @@ struct Song {
     plate: Plate,
     send: Vec<f64>,
     wet: [Vec<f64>; 2],
+    /// The music lanes' level through the intro's edge and the outro's, each
+    /// held at 1 where its edge is plain.
+    edges: [Ramp; 2],
+}
+
+/// The level of `score`'s music lanes through its form's edges in `window`:
+/// a fade rises from [`FADE_FLOOR_DB`] across the intro, or falls to it across
+/// the outro, linear in dB.
+fn edges(score: &Score, window: &Window) -> [Ramp; 2] {
+    let form = score.form();
+    let floor = 10f64.powf(FADE_FLOOR_DB / 20.0);
+    let body = window.bars[form.intro()];
+    let outro = (window.bars.get(form.intro() + form.body())).map_or(window.len, |&at| at);
+    let mut entry = Ramp::held(1.0, Shape::Db);
+    if form.entry() == Edge::Fade {
+        entry = Ramp::held(floor, Shape::Db);
+        entry.toward(0, 1.0, body);
+    }
+    let mut exit = Ramp::held(1.0, Shape::Db);
+    if form.exit() == Edge::Fade {
+        exit.toward(outro, floor, window.len - outro);
+    }
+    [entry, exit]
+}
+
+/// `score`'s low-pass automation in `window`, if its form has one: a filtered
+/// intro opening to the body's first line, a dip shutting over `ramp` frames
+/// from its bar's line and opening over as many from the next, and a filtered
+/// outro shutting to the song's end.
+fn sweep(score: &Score, window: &Window, ramp: usize) -> Option<Sweep> {
+    let form = score.form();
+    let bar = |b: usize| window.bars.get(b).copied().unwrap_or(window.len);
+    let mut points = Vec::new();
+    if form.entry() == Edge::Filter {
+        points.extend([(0, 0.0), (bar(form.intro()), 1.0)]);
+    }
+    if let Some(dip) = form.dip() {
+        let (line, next) = (bar(dip), bar(dip + 1));
+        points.extend([
+            (line, 1.0),
+            (line + ramp, 0.0),
+            (next, 0.0),
+            (next + ramp, 1.0),
+        ]);
+    }
+    if form.exit() == Edge::Filter {
+        points.extend([(bar(form.intro() + form.body()), 1.0), (window.len, 0.0)]);
+    }
+    (!points.is_empty()).then(|| Sweep::new(points))
 }
 
 impl Song {
@@ -369,16 +423,24 @@ impl Song {
             .filter(|&(_, bar, _)| plays(&score, Lane::Drums, bar))
             .map(|(at, ..)| at)
             .collect();
-        let chains = Lane::ALL
-            .map(|lane| Chain::new(mood, lane, &part(&score, lane), len, &kicks, controls, sr));
+        let level_ramp = samples_at(LEVEL_RAMP_BEATS * score.beat_s(), sr);
+        let sweep = sweep(&score, &window, level_ramp);
+        let chains = Lane::ALL.map(|lane| {
+            let chain = Chain::new(mood, lane, &part(&score, lane), len, &kicks, controls, sr);
+            match &sweep {
+                Some(sweep) => chain.swept(sweep),
+                None => chain,
+            }
+        });
         let present = Lane::ALL.map(|lane| lane_gain(lane, controls.intensity) > 0.0);
         let levels = Lane::ALL
             .map(|lane| Ramp::held(f64::from(resting_gain(lane, controls.intensity)), Shape::Db));
         Self {
+            edges: edges(&score, &window),
             bars: window.bars,
             latched: 1,
             anticipation: samples_at(ANTICIPATION_S, sr),
-            level_ramp: samples_at(LEVEL_RAMP_BEATS * score.beat_s(), sr),
+            level_ramp,
             grade_ramp: samples_at(GRADE_RAMP_BARS * score.bar_s(), sr),
             rain: Ramp::held(f64::from(controls.rain), Shape::Linear),
             rain_ramp: samples_at(RAIN_RAMP_BARS * score.bar_s(), sr),
@@ -456,7 +518,23 @@ impl Song {
     /// Lane `i`'s gain into the mix on frame `n`: its intensity's level, and
     /// rain's on it.
     fn gain(&self, i: usize, n: usize) -> f64 {
-        self.levels[i].at(n) * rain::level(Lane::ALL[i], self.rain.at(n))
+        self.levels[i].at(n) * rain::level(Lane::ALL[i], self.rain.at(n)) * self.edge(i, n)
+    }
+
+    /// Lane `i`'s gain through the form's edges on frame `n`: none on the
+    /// texture, which links one song to the next.
+    fn edge(&self, i: usize, n: usize) -> f64 {
+        if Lane::ALL[i] == Lane::Texture {
+            return 1.0;
+        }
+        self.edges[0].at(n) * self.edges[1].at(n)
+    }
+
+    /// Lane `i`'s edge gain over frames `from..to`, if it holds one there.
+    fn edge_over(&self, i: usize, from: usize, to: usize) -> Option<f64> {
+        let flat =
+            Lane::ALL[i] == Lane::Texture || self.edges.iter().all(|e| e.flat_over(from, to));
+        flat.then(|| self.edge(i, from))
     }
 
     /// Strikes each note whose onset falls in the next `n` frames, then adds
@@ -499,17 +577,19 @@ impl Song {
             ring.take(buf);
             self.chains[i].process(buf, &mut cues.noise);
             let level = &self.levels[i];
-            // the lane at its gain, once: what both its sum and its send hear
-            match (rain.end() <= self.played).then(|| rain::level(lane, rain.to())) {
-                Some(wet) if level.end() <= self.played => {
-                    let gain = level.to() * wet;
+            let wet = (rain.end() <= self.played).then(|| rain::level(lane, rain.to()));
+            // the lane at its gain, once: what both its sum and its send hear,
+            // each frame's product in the order `gain` takes it
+            match wet.zip(self.edge_over(i, self.played, end)) {
+                Some((wet, edge)) if level.end() <= self.played => {
+                    let gain = level.to() * wet * edge;
                     for x in buf.iter_mut() {
                         *x *= gain;
                     }
                 }
-                Some(wet) => {
+                Some((wet, edge)) => {
                     for (x, at) in buf.iter_mut().zip(self.played..) {
-                        *x *= level.at(at) * wet;
+                        *x *= level.at(at) * wet * edge;
                     }
                 }
                 None => {
@@ -670,6 +750,8 @@ pub(crate) const UNITY: [f64; LANES] = [1.0; LANES];
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compose::Edge;
+    use crate::stream::lanes::{COEFF_BLOCK, FILTERED_HZ};
 
     /// Every lane of the loop in every bar, as a song played before its
     /// form: what a test of a mechanism a form would mute plays.
@@ -1470,6 +1552,159 @@ mod tests {
             energy(&got[start..end]) > energy(&want[start..end]),
             "the room ducked under kicks the break never struck"
         );
+    }
+
+    /// The first seed whose song 0 under `c` has a form `want` holds.
+    fn seed_where(c: Controls, want: impl Fn(&Form) -> bool) -> u64 {
+        (0..512)
+            .find(|&seed| want(song_score(seed, 0, c).form()))
+            .expect("a seed draws the form")
+    }
+
+    #[test]
+    fn an_edge_fades_monotonically_between_its_ends() {
+        let c = Controls::default();
+        let floor = 10f64.powf(FADE_FLOOR_DB / 20.0);
+        let seed = seed_where(c, |f| f.entry() == Edge::Fade && f.exit() == Edge::Fade);
+        let song = Song::new(seed, 0, c, SAMPLE_RATE);
+        let form = song.score.form();
+        let (body, outro) = (
+            song.bars[form.intro()],
+            song.bars[form.intro() + form.body()],
+        );
+        for (i, lane) in Lane::ALL.iter().enumerate() {
+            let full = song.gain(i, body);
+            let at = |n: usize| song.gain(i, n) / full;
+            if *lane == Lane::Texture {
+                assert!(
+                    [0, body, outro, song.len].iter().all(|&n| at(n) == 1.0),
+                    "the room faded"
+                );
+                continue;
+            }
+            assert_eq!(at(0), floor, "{lane:?} enters off the floor");
+            assert_eq!(at(outro), 1.0, "{lane:?} leaves the body below it");
+            assert_eq!(at(song.len), floor, "{lane:?} ends off the floor");
+            let rising: Vec<f64> = (0..=body).step_by(97).map(at).collect();
+            let falling: Vec<f64> = (outro..=song.len).step_by(97).map(at).collect();
+            assert!(rising.is_sorted(), "{lane:?}'s fade-in falls somewhere");
+            assert!(
+                falling.is_sorted_by(|a, b| a >= b),
+                "{lane:?}'s fade-out rises somewhere"
+            );
+        }
+    }
+
+    /// Each lane's tuned tone corner after each [`COEFF_BLOCK`] from `song`'s
+    /// first frame to `to`, latching `latch` on the latch frames it reaches.
+    fn corners(song: &mut Song, to: usize, latch: Option<Controls>) -> Vec<[Option<f32>; LANES]> {
+        let (mut sums, mut buf): ([Vec<f64>; LANES], _) = Default::default();
+        let mut out = Vec::new();
+        while song.played < to {
+            if let Some(c) = latch
+                && song.next_latch() == Some(song.played)
+            {
+                song.latch(c);
+            }
+            let n = COEFF_BLOCK.min(
+                song.next_latch()
+                    .unwrap_or(to)
+                    .saturating_sub(song.played)
+                    .max(1),
+            );
+            for sum in &mut sums {
+                sum.clear();
+                sum.resize(n, 0.0);
+            }
+            song.play(&mut sums, &mut [vec![0.0; n], vec![0.0; n]], &mut buf, n);
+            out.push(song.chains.each_ref().map(Chain::tuned_hz));
+        }
+        out
+    }
+
+    #[test]
+    fn a_filtered_intro_opens_to_the_lanes_own_corner() {
+        let c = Controls::default();
+        let seed = seed_where(c, |f| f.entry() == Edge::Filter);
+        let mut filtered = Song::new(seed, 0, c, SAMPLE_RATE).at_levels(UNITY);
+        let mut open = plain_song(seed, 0, c, SAMPLE_RATE).at_levels(UNITY);
+        let body = filtered.bars[filtered.score.form().intro()];
+        let to = body + BLOCK;
+        let (got, want) = (
+            corners(&mut filtered, to, None),
+            corners(&mut open, to, None),
+        );
+        for (i, lane) in Lane::ALL
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| **l != Lane::Texture)
+        {
+            let own = want[0][i].expect("a tape tunes");
+            let path: Vec<f32> = got.iter().map(|c| c[i].expect("a tape tunes")).collect();
+            assert_eq!(
+                path[0],
+                FILTERED_HZ.min(own),
+                "{lane:?} opens from elsewhere"
+            );
+            assert!(path.is_sorted(), "{lane:?} closes somewhere in the intro");
+            assert_eq!(
+                path[path.len() - 1],
+                own,
+                "{lane:?} never reaches its own corner"
+            );
+        }
+    }
+
+    #[test]
+    fn a_sweep_and_a_grade_take_the_lower_corner() {
+        // a day song graded brighter across its filtered intro, and a night one
+        // whose bass sits under the sweep's corner
+        let day = Controls::default().with_daylight(0.6);
+        let night = Controls::default().with_daylight(0.0);
+        for (c, latch) in [(day, Some(day.with_daylight(1.0))), (night, None)] {
+            let seed = seed_where(c, |f| f.entry() == Edge::Filter);
+            let mut filtered = Song::new(seed, 0, c, SAMPLE_RATE).at_levels(UNITY);
+            let mut open = plain_song(seed, 0, c, SAMPLE_RATE).at_levels(UNITY);
+            let body = filtered.bars[filtered.score.form().intro()];
+            let to = body + BLOCK;
+            let (got, want) = (
+                corners(&mut filtered, to, latch),
+                corners(&mut open, to, latch),
+            );
+            for (i, lane) in Lane::ALL
+                .iter()
+                .enumerate()
+                .filter(|(_, l)| **l != Lane::Texture)
+            {
+                for (step, (g, w)) in got.iter().zip(&want).enumerate() {
+                    let (g, w) = (g[i].expect("a tape"), w[i].expect("a tape"));
+                    assert!(g <= w, "{c:?} {lane:?} step {step}: {g} over its own {w}");
+                    if w <= FILTERED_HZ {
+                        assert_eq!(g, w, "{lane:?} under the sweep moved");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_dip_closes_and_reopens_within_a_beat() {
+        let c = Controls::default();
+        let seed = seed_where(c, |f| f.dip().is_some());
+        let mut song = Song::new(seed, 0, c, SAMPLE_RATE).at_levels(UNITY);
+        let dip = song.score.form().dip().expect("a dip");
+        let beat = samples_at(song.score.beat_s(), SAMPLE_RATE);
+        let (line, next) = (song.bars[dip], song.bars[dip + 1]);
+        let keys = index(Lane::Keys);
+        let path = corners(&mut song, next + beat + 2 * COEFF_BLOCK, None);
+        let at = |n: usize| path[n / COEFF_BLOCK][keys].expect("a tape");
+        let own = at(line - COEFF_BLOCK);
+        assert_eq!(
+            at(line + beat + COEFF_BLOCK),
+            FILTERED_HZ,
+            "the dip never closed"
+        );
+        assert_eq!(at(next + beat + COEFF_BLOCK), own, "the dip never reopened");
     }
 
     #[test]

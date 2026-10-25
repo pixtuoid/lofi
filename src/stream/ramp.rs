@@ -46,6 +46,12 @@ impl Ramp {
         }
     }
 
+    /// Whether the ramp holds one value over frames `from..to`: its value on
+    /// `from`, which [`at`](Self::at) gives every frame of them.
+    pub(crate) fn flat_over(&self, from: usize, to: usize) -> bool {
+        to <= self.start + 1 || from >= self.end()
+    }
+
     /// Ramps from the value on frame `n` to `to` over `len` frames; one
     /// already headed for `to` keeps its course, so a latch asking for
     /// nothing new starts no ramp and a ramp longer than a bar still lands.

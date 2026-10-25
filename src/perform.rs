@@ -651,6 +651,34 @@ mod tests {
     }
 
     #[test]
+    fn every_edge_plays_the_same_however_it_is_chunked() {
+        use crate::compose::{Edge, Form};
+        let c = Controls::default();
+        type Kind = (&'static str, fn(&Form) -> bool);
+        let kinds: [Kind; 5] = [
+            ("fade-in", |f| f.entry() == Edge::Fade),
+            ("filtered intro", |f| f.entry() == Edge::Filter),
+            ("dip", |f| f.dip().is_some()),
+            ("fade-out", |f| f.exit() == Edge::Fade),
+            ("filtered outro", |f| f.exit() == Edge::Filter),
+        ];
+        let mut rng = NoiseStream::new(2);
+        for (name, kind) in kinds {
+            let seed = (0..512)
+                .find(|&seed| kind(audition::song_score(seed, 0, c).form()))
+                .expect("a seed draws the edge");
+            let whole = audition::song(seed, 0, c, &[]);
+            let mut p = Performance::from_song(seed, 0, c);
+            let mut chunked = Vec::with_capacity(whole.len());
+            while chunked.len() < whole.len() {
+                let size = (1 + (rng.unit() * 6000.0) as usize).min(whole.len() - chunked.len());
+                chunked.extend(next(&mut p, size));
+            }
+            assert_eq!(first_diff(&chunked, &whole), None, "{name}");
+        }
+    }
+
+    #[test]
     fn a_song_plays_the_same_reached_by_playback_or_alone() {
         let (seed, c) = (5, Controls::default());
         // songs before it at other controls, which it must not remember
