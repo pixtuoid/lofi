@@ -11,11 +11,16 @@ pub const TIER_INTENSITIES: [f32; 3] = [0.0, 0.5, 1.0];
 
 /// Each lane's gain at each of [`TIER_INTENSITIES`]: pixtuoid's `TierGain`s,
 /// moved here from
-/// <https://github.com/pixtuoid/pixtuoid/blob/a63f1782f477c357666e71a9c1147090b47fe17d/crates/pixtuoid-scene/src/audio/mod.rs#L98-L107>.
+/// <https://github.com/pixtuoid/pixtuoid/blob/a63f1782f477c357666e71a9c1147090b47fe17d/crates/pixtuoid-scene/src/audio/mod.rs#L98-L107>,
+/// but the lead's at the working tiers.
 fn tier_gains(lane: Lane) -> [f32; 3] {
     match lane {
         Lane::Pad => [0.75, 0.70, 0.65],
-        Lane::Sparkle => [0.70, 0.0, 0.0],
+        // a melodic layer at every tier, as lofi tracks carry one (Fields-Meyer
+        // 2025, pp.117-118), now that a song's form keeps it to the dense
+        // cores: under the keys, and a little more where "busy adds"
+        // (docs/phase0-ratification.md); the levels are opinion
+        Lane::Sparkle => [0.70, 0.50, 0.55],
         Lane::Keys => [0.0, 0.60, 0.70],
         Lane::Drums => [0.0, 0.35, 0.60],
         // far past the Phase-0 ratification: at its ratified level the hiss
@@ -214,8 +219,6 @@ mod tests {
         for (lane, intensity, want) in [
             (Lane::Drums, empty, lane_gain(Lane::Drums, moderate)),
             (Lane::Keys, empty, lane_gain(Lane::Keys, moderate)),
-            (Lane::Sparkle, busy, lane_gain(Lane::Sparkle, empty)),
-            (Lane::Sparkle, moderate, lane_gain(Lane::Sparkle, empty)),
             (Lane::Pad, busy, lane_gain(Lane::Pad, busy)),
         ] {
             assert_eq!(

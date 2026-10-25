@@ -207,7 +207,7 @@ pub(crate) const JUDGE_MIN_UNTIED: usize = 8;
 
 /// The judge batch's seeds at `empty`, per mood in [`MOODS`] order: the fewest
 /// from 0 that give every lead voice the mood draws [`JUDGE_MIN_UNTIED`] takes,
-/// since `empty` is the one tier the lead plays at.
+/// since `empty` is the tier where the lead sings alone over no beat or keys.
 const JUDGE_EMPTY_SEEDS: [u64; MOODS.len()] = [29, 28];
 
 /// The judge batch's seeds at each louder tier: [`JUDGE_MIN_UNTIED`] or more

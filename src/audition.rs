@@ -137,10 +137,10 @@ pub const WHOLE_LANE_SEEDS: Range<u64> = 0..24;
 /// prints it over those seeds at the row's `--tier` and `--mood`. A run's
 /// songs may vary up to [`lufs_sd_bound`], a non-regression, not a target.
 pub const WHOLE_LANE_LUFS_SD: [(f32, f32, f64); 4] = [
-    (TIER_INTENSITIES[1], 1.0, 0.3336),
-    (TIER_INTENSITIES[1], 0.0, 0.2277),
-    (TIER_INTENSITIES[0], 1.0, 0.3795),
-    (TIER_INTENSITIES[2], 1.0, 0.3427),
+    (TIER_INTENSITIES[1], 1.0, 0.3387),
+    (TIER_INTENSITIES[1], 0.0, 0.2321),
+    (TIER_INTENSITIES[0], 1.0, 0.3847),
+    (TIER_INTENSITIES[2], 1.0, 0.3517),
 ];
 
 /// The most a run's songs may vary against `whole_lane`, a

@@ -320,13 +320,14 @@ mod tests {
     }
 
     #[test]
-    fn the_intensity_anchors_play_pixtuoids_tiers_lane_for_lane() {
+    fn the_intensity_anchors_play_their_tiers_lane_for_lane() {
         // pixtuoid's `TierGain`s (crates/pixtuoid-scene/src/audio/mod.rs at
-        // a63f178), each tier's lanes in `Lane::ALL` order
+        // a63f178), but the lead's at the working tiers, each tier's lanes in
+        // `Lane::ALL` order
         let tiers: [(f32, [f32; Lane::ALL.len()]); 3] = [
             (0.0, [0.75, 0.70, 0.0, 0.0, 0.78, 0.60]),
-            (0.5, [0.70, 0.0, 0.60, 0.35, 0.84, 0.70]),
-            (1.0, [0.65, 0.0, 0.70, 0.60, 0.78, 0.75]),
+            (0.5, [0.70, 0.50, 0.60, 0.35, 0.84, 0.70]),
+            (1.0, [0.65, 0.55, 0.70, 0.60, 0.78, 0.75]),
         ];
         let seed = 2;
         let mut whole = Schedule::new(seed, 0, SAMPLE_RATE).with_form(Form::plain(PLAIN_LOOPS));
