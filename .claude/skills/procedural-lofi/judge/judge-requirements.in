@@ -1,6 +1,6 @@
 # The judge's direct pins. judge-requirements.txt locks them, transitive
 # dependencies and hashes included, for every platform; SKILL.md's step 5 and
-# modal_judge.py's image both install it with --require-hashes.
+# modal_judge.py's image install it, and build from it, with hashes required.
 audiobox_aesthetics==0.0.4
 fadtk==1.1.0
 huggingface_hub==0.36.2
