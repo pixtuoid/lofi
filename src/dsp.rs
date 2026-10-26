@@ -544,13 +544,37 @@ mod tests {
         let _ = bandpass(&[0.0; 64], 800.0, 300.0);
     }
 
+    #[test]
+    #[should_panic(expected = "a band-pass keeps the band from lo_hz up to hi_hz")]
+    fn a_band_pass_from_nan_is_refused() {
+        let _ = bandpass(&[0.0; 64], f32::NAN, 100.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "a band-pass keeps the band from lo_hz up to hi_hz")]
+    fn a_negative_low_pass_is_refused() {
+        let _ = lowpass(&[0.0; 64], -1.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "a band runs up from a frequency of at least 0")]
+    fn a_band_from_under_0_hz_is_refused() {
+        let _ = Band::new(-1.0, 100.0, 0.5);
+    }
+
+    #[test]
+    #[should_panic(expected = "a band's share is a fraction of the power")]
+    fn a_band_with_a_nan_share_is_refused() {
+        let _ = Band::new(10.0, 100.0, f32::NAN);
+    }
+
     /// The shares a loop of each length plays on average over seeds: one
-    /// loop's share of a band of few bins is as random as their noise. Bins'
-    /// smoothing biased a loop of 2^12 by 4.7 points over these seeds, and the
-    /// smoothing in Hz by 1.3 (opinion, between the two).
+    /// loop's share of a band of few bins is as random as their noise.
     #[test]
     fn shaped_noise_plays_its_envelope_on_average_at_every_loop_length() {
         const SEEDS: u64 = 32;
+        // above the mean's spread across these seeds, and under the bias
+        // smoothing in bins left at the shortest loop (opinion)
         const TOLERANCE: f32 = 0.02;
         for n in [1 << 12, 1 << 14, 1 << 16] {
             let loops: Vec<_> = (0..SEEDS)
