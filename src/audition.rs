@@ -207,6 +207,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn every_lane_draws_its_own_noise() {
+        let firsts: Vec<f32> = lane_noise(9).iter_mut().map(|noise| noise.unit()).collect();
+        for (i, a) in firsts.iter().enumerate() {
+            assert!(
+                firsts[i + 1..].iter().all(|b| a != b),
+                "two lanes share a stream: {firsts:?}"
+            );
+        }
+    }
+
+    #[test]
     #[should_panic(expected = "calls out of order")]
     fn a_song_refuses_calls_out_of_order() {
         let c = Controls::default();
