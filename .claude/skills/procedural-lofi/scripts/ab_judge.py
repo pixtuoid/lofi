@@ -82,8 +82,10 @@ from scipy import signal
 
 # no __pycache__ beside it, since the next batch renders from a clean tree
 sys.dont_write_bytecode = True
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from ab_listen import NAME
+HERE = Path(__file__).resolve().parent
+# `judge/` sits beside `scripts/` here and in the Modal image alike
+sys.path[:0] = [str(HERE), str(HERE.parent / "judge")]
+from validate_batch import NAME, Invalid, scored, validate
 from verdict import JUDGES, exit_message, judged
 
 # the clone of https://github.com/dgtql/MuQ-Eval that SKILL.md's setup and
@@ -435,26 +437,18 @@ def main():
     args = ap.parse_args()
     base_dir, cand_dir = args.dir / "base", args.dir / "cand"
 
-    base = {p.name for p in base_dir.glob("*.wav")}
-    cand = {p.name for p in cand_dir.glob("*.wav")}
-    if base ^ cand:
-        print(f"unpaired, left out: {', '.join(sorted(base ^ cand))}")
-    # a --shuffle run draws its own take_XX order, so equal names there are
-    # different takes
-    opaque = sorted(n for n in base & cand if not NAME.fullmatch(n))
-    if opaque:
-        sys.exit(f"not unshuffled lofi_audition names, so a pair may hold two takes: {', '.join(opaque)}")
-    names = sorted(base & cand)
-    if not names:
-        sys.exit("no .wav name is in both directories")
+    try:
+        takes = validate(args.dir)
+    except Invalid as e:
+        sys.exit(f"invalid batch: {e}")
+    if takes.new or takes.gone:
+        print(f"unpaired, left out: {', '.join(takes.new + takes.gone)}")
     commits = {"base": read_commit(base_dir), "cand": read_commit(cand_dir)}
     sides = (("base", base_dir), ("cand", cand_dir))
-    # a pair the change left byte for byte as it was can only tie, so no judge
-    # hears it
-    changed = [n for n in names if args.score_identical or (base_dir / n).read_bytes() != (cand_dir / n).read_bytes()]
+    changed = scored(args.dir, takes, args.score_identical)
     pairs = [
         {"take": n.removesuffix(".wav"), "mood": NAME.fullmatch(n)["mood"], "identical": n not in changed}
-        for n in names
+        for n in takes.paired
     ]
     record = {"dir": str(args.dir.resolve()), "commits": commits, "floor_re_take_db": FLOOR_RE_TAKE_DB}
 
