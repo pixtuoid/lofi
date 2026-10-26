@@ -6,20 +6,13 @@ use std::io;
 use std::ops::Range;
 use std::time::{Duration, Instant};
 
-use pixtuoid_lofi::audition::{
-    self, LOOPS_PER_SONG, Lane, Score, TIER_INTENSITIES, lane_gain, render_lane,
-};
+use pixtuoid_lofi::audition::{self, Lane, Score, TIER_INTENSITIES, lane_gain, render_lane};
 use pixtuoid_lofi::dsp::NoiseStream;
 use pixtuoid_lofi::{Controls, Frame, Performance};
 
 /// The `--mood` vocabulary paired with the daylight it plays at, so the parse
 /// and the error message can't list different spellings.
 const MOODS: [(&str, f32); 2] = [("day", 1.0), ("night", 0.0)];
-
-/// The lanes in [`Lane::ALL`] order: the ONE spelling the tools print and
-/// `--solo` accepts.
-pub(crate) const LANE_NAMES: [&str; Lane::ALL.len()] =
-    ["pad", "sparkle", "keys", "drums", "texture", "bass"];
 
 /// How busy pixtuoid's office is, which picks the intensity a take plays at.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -54,12 +47,15 @@ impl Tier {
     }
 }
 
-/// Which engine renders a take. Both play the same score, so a batch from each
-/// is a blind A/B of the engines.
+/// Which engine renders a take. Both play the same score for as long, the
+/// whole-lane engine its loop unarranged, so a batch from each is a blind A/B
+/// of the stream and its song's form against the loop as the office played it
+/// before.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) enum Engine {
-    /// The lanes rendered whole as one loop each, then looped and mixed: how
-    /// pixtuoid's office played lofi before the stream.
+    /// The lanes rendered whole as one loop each, then looped and mixed as long
+    /// as the song: how pixtuoid's office played lofi before the stream, and
+    /// before songs had a form.
     WholeLane,
     /// A `Performance`, which is what lofi ships, so a sound change is heard
     /// as its listeners will hear it.
@@ -163,17 +159,24 @@ impl Sweep {
     }
 
     /// What the sweep asks for in the middle of bar `bar` of a take `bars`
-    /// long, of songs `song_bars` long, `now` being what it asked for last.
-    fn call(self, bar: usize, song_bars: usize, bars: usize, now: Controls) -> Option<Controls> {
+    /// long, whose first song is `first_song_bars` long, `now` being what it
+    /// asked for last.
+    fn call(
+        self,
+        bar: usize,
+        first_song_bars: usize,
+        bars: usize,
+        now: Controls,
+    ) -> Option<Controls> {
         match self {
             Sweep::Intensity => middle_half(bar, bars).map(|on| {
                 let tier = if on { Tier::Busy } else { Tier::Empty };
                 now.with_intensity(tier.intensity())
             }),
             Sweep::Rain => middle_half(bar, bars).map(|on| now.with_rain(f32::from(u8::from(on)))),
-            Sweep::Dusk => (bar < song_bars).then(|| {
+            Sweep::Dusk => (bar < first_song_bars).then(|| {
                 let [(_, day), (_, night)] = MOODS;
-                let done = (bar + 1) as f32 / song_bars as f32;
+                let done = (bar + 1) as f32 / first_song_bars as f32;
                 now.with_daylight(day + (night - day) * done)
             }),
             Sweep::Twilight => None,
@@ -206,7 +209,7 @@ pub(crate) const JUDGE_MIN_UNTIED: usize = 8;
 
 /// The judge batch's seeds at `empty`, per mood in [`MOODS`] order: the fewest
 /// from 0 that give every lead voice the mood draws [`JUDGE_MIN_UNTIED`] takes,
-/// since `empty` is the one tier the lead plays at.
+/// since `empty` is the tier where the lead sings alone over no beat or keys.
 const JUDGE_EMPTY_SEEDS: [u64; MOODS.len()] = [29, 28];
 
 /// The judge batch's seeds at each louder tier: [`JUDGE_MIN_UNTIED`] or more
@@ -460,18 +463,21 @@ impl Batch {
         let mut asked = self.controls();
         let mut timeline = Timeline::default();
         let mut song_start = 0;
+        // each song's bars, which no control moves, so the take's are known
+        // before a call is made
+        let counts: Vec<usize> = (0..songs).map(|k| audition::song_bars(seed, k)).collect();
+        let take_bars = counts.iter().sum();
+        let mut bar = 0;
         for k in 0..songs {
             let bars = audition::bar_frames(seed, k, asked);
             let len = audition::song_len(seed, k, asked);
             timeline.songs.push((asked, len));
-            // every song has as many bars, whatever its tempo
-            let take_bars = bars.len() * songs as usize;
             for (j, &onset) in bars.iter().enumerate() {
                 let end = bars.get(j + 1).copied().unwrap_or(len);
-                let bar = k as usize * bars.len() + j;
-                if let Some(next) =
-                    (self.sweep).and_then(|sweep| sweep.call(bar, bars.len(), take_bars, asked))
-                {
+                let call =
+                    (self.sweep).and_then(|sweep| sweep.call(bar, counts[0], take_bars, asked));
+                bar += 1;
+                if let Some(next) = call {
                     timeline
                         .calls
                         .push((song_start + onset.midpoint(end), next));
@@ -508,7 +514,34 @@ impl Batch {
         render(&mut performance, &mut frames[done..]);
         frames
     }
+
+    /// `seed`'s take through the whole-lane engine: each song of its
+    /// [`timeline`](Self::timeline) rendered whole under the controls its
+    /// first bar latches, and mixed at `gains` of them, so it lasts as long
+    /// as the take a `Performance` plays.
+    pub(crate) fn whole(
+        &self,
+        seed: u64,
+        gains: impl Fn(Controls) -> [f32; Lane::ALL.len()],
+    ) -> Vec<WholeSong> {
+        (0..)
+            .zip(self.timeline(seed).songs)
+            .map(|(k, (controls, len))| {
+                let (beds, took) = render_take(&audition::song_score(seed, k, controls));
+                let mix = soak_mix(&beds, &gains(controls), len);
+                (beds, took, mix)
+            })
+            .collect()
+    }
 }
+
+/// One song of a whole-lane take: each lane rendered whole in [`Lane::ALL`]
+/// order, how long each took, and their mix, as long as the song.
+pub(crate) type WholeSong = (
+    [Vec<f32>; Lane::ALL.len()],
+    [Duration; Lane::ALL.len()],
+    Vec<f32>,
+);
 
 /// Each lane's gain under `controls`, in [`Lane::ALL`] order: lofi's, at the
 /// intensity a `Performance` mixes it at.
@@ -518,9 +551,7 @@ pub(crate) fn lane_gains(controls: Controls) -> [f32; Lane::ALL.len()] {
 
 /// Every lane of `score` in [`Lane::ALL`] order, drawn from one rng stream as a
 /// take renders, and how long each took.
-pub(crate) fn render_take(
-    score: &Score,
-) -> ([Vec<f32>; Lane::ALL.len()], [Duration; Lane::ALL.len()]) {
+fn render_take(score: &Score) -> ([Vec<f32>; Lane::ALL.len()], [Duration; Lane::ALL.len()]) {
     let mut rng = NoiseStream::new(LANE_SEED);
     let mut took = [Duration::ZERO; Lane::ALL.len()];
     let beds = std::array::from_fn(|i| {
@@ -532,12 +563,11 @@ pub(crate) fn render_take(
     (beds, took)
 }
 
-/// `beds` at `gains`, each looping on its own length, summed over as many
-/// loops of the first bed as a `Performance` plays a song's, and mastered at
-/// its [`Performance::MASTER_GAIN`]: the whole-lane mix, as long and at the stage where
-/// the engine's own mix meets its ceiling.
-pub(crate) fn soak_mix(beds: &[Vec<f32>], gains: &[f32]) -> Vec<f32> {
-    let mut mix = vec![0.0f32; beds[0].len() * LOOPS_PER_SONG];
+/// `beds` at `gains`, each looping on its own length, summed over `frames`
+/// frames at [`Performance::MASTER_GAIN`]: the stage where the engine's own
+/// mix meets its ceiling.
+fn soak_mix(beds: &[Vec<f32>], gains: &[f32], frames: usize) -> Vec<f32> {
+    let mut mix = vec![0.0f32; frames];
     for (bed, &gain) in beds.iter().zip(gains) {
         let gain = gain * Performance::MASTER_GAIN as f32;
         for (i, slot) in mix.iter_mut().enumerate() {
@@ -559,6 +589,37 @@ mod tests {
         let applied = batch.parse_flag(flag, &mut std::iter::once(value.to_owned()))?;
         assert!(applied, "{flag} is the batch's");
         Ok(batch)
+    }
+
+    #[test]
+    fn a_sweeps_middle_half_spans_its_songs_however_many_bars_each_has() {
+        let mut batch = Batch::default();
+        for (flag, value) in [("--songs", "3"), ("--sweep", "intensity")] {
+            let applied = batch.parse_flag(flag, &mut std::iter::once(value.to_owned()));
+            assert!(applied.expect("the flag parses"), "{flag} is the batch's");
+        }
+        for run in batch.runs() {
+            let timeline = run.timeline(0);
+            let (mut bars, mut start) = (Vec::new(), 0);
+            for (k, &(controls, len)) in (0..).zip(&timeline.songs) {
+                bars.extend(
+                    audition::bar_frames(0, k, controls)
+                        .iter()
+                        .map(|&at| start + at),
+                );
+                start += len;
+            }
+            let counts: Vec<usize> = (0..3).map(|k| audition::song_bars(0, k)).collect();
+            assert!(
+                counts.windows(2).any(|w| w[0] != w[1]),
+                "the songs share a length: {counts:?}"
+            );
+            let quarter = bars.len() / 4;
+            let middle =
+                |bar: usize| bars[bar].midpoint(bars.get(bar + 1).copied().unwrap_or(start));
+            let calls: Vec<usize> = timeline.calls.iter().map(|&(at, _)| at).collect();
+            assert_eq!(calls, [middle(quarter), middle(bars.len() - quarter)]);
+        }
     }
 
     #[test]

@@ -14,7 +14,7 @@ use super::dsp::{
 const SR: f32 = SAMPLE_RATE as f32;
 
 /// `dur_s` in samples at `sr`.
-pub(crate) fn samples_at(dur_s: f32, sr: u32) -> usize {
+pub fn samples_at(dur_s: f32, sr: u32) -> usize {
     (dur_s * sr as f32).round() as usize
 }
 
@@ -823,6 +823,7 @@ pub(super) fn day_take_drums(take: &score::DayTake, rng: &mut NoiseStream) -> Ve
     drums_core(take.loop_secs(), take.drums, cutoff, drive, peak, rng)
 }
 
+pub use super::compose::Lane;
 use super::compose::{GEN_LOOP_BARS, LeadVoice, Mood, Score};
 
 /// The bright master's one-pole tilt shelf: its corner, and how far above
@@ -851,36 +852,6 @@ fn lead_voice_fn(score: &Score) -> NoteVoice {
         LeadVoice::Kalimba => kalimba_note,
         LeadVoice::Vibraphone => vibe_note,
     }
-}
-
-/// One lane of a generated take. A take's lanes render in [`Lane::ALL`] order
-/// from one rng stream, so that order is part of the sound.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Lane {
-    /// Sustained chord bed.
-    Pad,
-    /// The lead voice's melody.
-    Sparkle,
-    /// The keys part under the melody.
-    Keys,
-    /// The drum kit.
-    Drums,
-    /// The ambient texture bed.
-    Texture,
-    /// Bass line.
-    Bass,
-}
-
-impl Lane {
-    /// Every lane, in render order.
-    pub const ALL: [Lane; 6] = [
-        Lane::Pad,
-        Lane::Sparkle,
-        Lane::Keys,
-        Lane::Drums,
-        Lane::Texture,
-        Lane::Bass,
-    ];
 }
 
 /// The per-`(mood, lane)` render recipe — the ONE authority the [`render_lane`]
@@ -995,10 +966,11 @@ impl Part<'_> {
     }
 }
 
-/// Render one lane of `score` to mono f32 at [`SAMPLE_RATE`], peaking at most
-/// 1.0. Every lane but the day [`Lane::Texture`] is a whole number of the song's
-/// loops long, so a caller loops them in phase; the day texture runs free on its
-/// own length.
+/// Render one lane of `score`'s loop to mono f32 at [`SAMPLE_RATE`], peaking
+/// at most 1.0: lofi's tools audition the material, and the
+/// frozen fingerprint pins guard the voices through it. Every lane but the day
+/// [`Lane::Texture`] is a whole number of the score's loops long, so a caller
+/// loops them in phase; the day texture runs free on its own length.
 pub fn render_lane(score: &Score, lane: Lane, rng: &mut NoiseStream) -> Vec<f32> {
     let loop_s = score.loop_secs();
     let (r0, r1, r2) = lane_recipe(score.mood, lane);

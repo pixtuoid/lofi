@@ -11,7 +11,7 @@ use pixtuoid_lofi::{Controls, Frame, Performance, audition};
 /// The most heap a `Performance` may hold at once, in bytes: the highest
 /// high-water this test measured plus 25 %, both of which the commit that set
 /// it records.
-const BUDGET: usize = 11_134_025;
+const BUDGET: usize = 11_331_440;
 
 /// Bytes allocated and not yet freed, and the most there have been.
 static LIVE: AtomicUsize = AtomicUsize::new(0);
@@ -56,6 +56,10 @@ fn fingerprint(frames: &[Frame]) -> u64 {
 /// `a`, `b` from its second bar, then song 1 under `b`; panics unless it
 /// played those two songs.
 fn high_water(seed: u64, a: Controls, b: Controls) -> usize {
+    // the budget holds for a song's form, not only for one that plays every
+    // layer throughout
+    audition::spans_a_form(&[(0, a), (1, b)].map(|(k, c)| audition::song_form(seed, k, c)))
+        .unwrap();
     let span = audition::song_len(seed, 0, a) + audition::song_len(seed, 1, b);
     // a chunk as a player renders ahead, allocated before the count starts
     let mut chunk = vec![Frame::default(); SAMPLE_RATE as usize / 2];

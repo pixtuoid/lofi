@@ -16,6 +16,13 @@
 
 use super::dsp::NoiseStream;
 
+mod form;
+
+#[cfg(test)]
+pub(crate) use form::Plays;
+pub(crate) use form::{Edge, Layer, arrange};
+pub use form::{Form, spans_a_form};
+
 /// The listening context a song is composed for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum Mood {
@@ -23,6 +30,47 @@ pub(crate) enum Mood {
     Day,
     /// The night-time pool of progressions and lead voices.
     Night,
+}
+
+/// One lane of a generated take. A take's lanes render in [`Lane::ALL`] order
+/// from one rng stream, so that order is part of the sound; a song's form
+/// names which of their layers strike in each bar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Lane {
+    /// Sustained chord bed.
+    Pad,
+    /// The lead voice's melody.
+    Sparkle,
+    /// The keys part under the melody.
+    Keys,
+    /// The drum kit.
+    Drums,
+    /// The ambient texture bed.
+    Texture,
+    /// Bass line.
+    Bass,
+}
+
+impl Lane {
+    /// Every lane, in render order, which is also each lane's index.
+    pub const ALL: [Lane; 6] = [
+        Lane::Pad,
+        Lane::Sparkle,
+        Lane::Keys,
+        Lane::Drums,
+        Lane::Texture,
+        Lane::Bass,
+    ];
+
+    /// Each lane's name in [`Lane::ALL`] order: the ONE spelling lofi prints
+    /// and its tools' `--solo` accepts.
+    pub const NAMES: [&'static str; Lane::ALL.len()] =
+        ["pad", "sparkle", "keys", "drums", "texture", "bass"];
+
+    /// The lane's name.
+    pub const fn name(self) -> &'static str {
+        Self::NAMES[self as usize]
+    }
 }
 
 /// The add-an-instrument seam: a new timbre = one synth voice fn, one variant
@@ -105,7 +153,9 @@ impl Score {
         self.beat_s() * BEATS_PER_BAR
     }
 
-    pub(crate) fn loop_secs(&self) -> f32 {
+    /// The loop's length in seconds: the material every bar of the song cuts
+    /// from.
+    pub fn loop_secs(&self) -> f32 {
         self.bar_s() * GEN_LOOP_BARS as f32
     }
 

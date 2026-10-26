@@ -42,8 +42,9 @@ solves all three:
   enough** not to fatigue (the day loop doubled from 4 to 8 bars because a short looped
   melody *was* audibly repetitive — "loop the bed" does not mean "make it short"); (2) a
   consumer scatters genuinely-stochastic layers fresh at runtime (pixtuoid's rain drops and
-  keystrokes); (3) a `Performance` sets each lane's gain by `Controls::intensity`, which a
-  consumer sets, e.g. by how busy an office is, so the arrangement changes while the notes don't.
+  keystrokes); (3) each song has a form (LOFI-BIBLE R11) that mutes and restores lanes over
+  its loop, and a `Performance` layers each lane's gain by `Controls::intensity` on top, which
+  a consumer sets, e.g. by how busy an office is.
 
 The one law of the whole method:
 
@@ -120,8 +121,8 @@ Port the numpy synth to your runtime language reading the frozen tables. Key eng
 - **Loop the frozen composition, scatter only the stochastic layers.** All the musical
   stems (pad/drums/keys/sparkle) tile in lockstep on one loop length — make that loop long
   enough to not fatigue; then scatter the truly-random layers (rain drops, keystrokes) fresh
-  each frame and fade whole stems by busy-ness (see "Never repeats" above). Tiny RAM: one
-  copy of each stem loop.
+  each frame, and let the song's form and the busy-ness mute and fade whole stems (see "Never
+  repeats" above). Tiny RAM: one copy of each stem loop.
 - **Keep the sub band clear.** The sub-bass register must belong to the bass alone or the
   low end turns to mud. Two ways to get there: the textbook one is to high-pass every
   non-bass stem ~140 Hz (LOFI-BIBLE §4); the cheaper one this project used is to *voice the
@@ -198,6 +199,7 @@ constraint and re-batch), and every taste axis is a data table or named const wi
 | room-tone crackle          | `synth::CRACKLE_POPS_PER_SEC` (one knob, both beds)      |
 | lane gains, mix level      | `stream::master`: `tier_gains`; `Performance::MASTER_GAIN` |
 | staging, bed crossfade     | `stream::lanes`: `staging`, `BED_CROSSFADE_S`            |
+| song form (intro, sections, outro, edges) | `compose::form`'s consts; edges' depth and corner: `stream::schedule::FADE_FLOOR_DB`, `stream::lanes::FILTERED_HZ` |
 | **a new instrument**       | see the checklist below                                  |
 
 **Add-an-instrument checklist** (executed once for the `Pluck` lead — repeat verbatim):
@@ -210,13 +212,7 @@ constraint and re-batch), and every taste axis is a data table or named const wi
 4. Extend the distribution property test; run the compose suite (fast — no synthesis).
 5. Render the batch the judge scores (`cargo run --release --example lofi_audition -- --batch
    judge`; `--engine whole --solo sparkle` isolates a lane) → `ab_judge.py` gates it → tighten
-   or ship. A change to a shipped sound first diffs `tier_gains` against pixtuoid's (no output: in step),
-   ```bash
-   diff <(gh api repos/pixtuoid/pixtuoid/contents/crates/pixtuoid-scene/src/audio/mod.rs --jq .content | base64 -d |
-            sed -nE 's/^const (PAD|SPARKLE|KEYS|DRUMS|TEXTURE|BASS)_GAIN: TierGain = TierGain::new\((.*)\);$/\1 \2/p' | tr '[:upper:]' '[:lower:]') \
-        <(sed -nE 's/^ *Lane::([A-Za-z]+) => (\[.*\]),$/\1 \2/p' src/stream/master.rs | tr '[:upper:]' '[:lower:]')
-   ```
-   then renders it at the merge-base (`git merge-base origin/main HEAD`) into `DIR/base` and at
+   or ship. A change to a shipped sound renders it at the merge-base (`git merge-base origin/main HEAD`) into `DIR/base` and at
    the branch into `DIR/cand`, DIR durable and outside the repo (`~/Desktop/lofi-listen/<change>`),
    each from a clean tree with its `git rev-parse HEAD` in `DIR/{base,cand}/COMMIT`, and
    `ab_judge.py` gates them (its header holds the verdict rule and each measure's blind spots)
@@ -232,8 +228,6 @@ constraint and re-batch), and every taste axis is a data table or named const wi
    ```
    The owner's blind listen is optional and, when given, overrides the judge:
    `python3 .claude/skills/procedural-lofi/scripts/ab_listen.py DIR/base DIR/cand --out DIR/verdict.json`.
-   A change of engine renders `--engine whole --out DIR/base` and `--engine stream --out DIR/cand`
-   on one commit: a take keeps its name and score, under a `--sweep NAME` too.
 
 Mix LANES stay instrument-blind (`stream::master::lane_gain` sees lanes, never voices; a
 consumer sets `Controls` and receives `Frame`s) — a lane is a busy-ness ROLE, an instrument a

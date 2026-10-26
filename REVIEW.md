@@ -6,7 +6,7 @@ What the automatic review ([`claude-review.yml`](.github/workflows/claude-review
 
 ## Traps: the obvious reading is wrong here
 
-- **The rng draw order is the sound.** A draw added anywhere but the tail of `compose`'s stream, or a re-pinned `every_seed_composes_the_score_it_did`, `a_seeded_groove_lays_every_hit_where_it_did` or `day_take_stems_match_the_ratified_fingerprints`, is a sound change, never a test fix: CI goes green on a recomposed office.
+- **The rng draw order is the sound.** A draw added anywhere but the tail of `compose`'s stream or of `form::arrange`'s, or a re-pinned `every_seed_composes_the_score_it_did`, `every_seed_arranges_the_form_it_did`, `a_seeded_groove_lays_every_hit_where_it_did` or `day_take_stems_match_the_ratified_fingerprints`, is a sound change, never a test fix: CI goes green on a recomposed office.
 - **The score is bit-identical; samples are not.** A transcendental function on `compose`'s path splits a seed's score across platforms, and a test pinning rendered sample values passes on one OS or toolchain and fails on another.
 - **Semver rides the title the squash merge takes** (the PR's, or a lone commit's), which is the changelog line. A change [`AGENTS.md`](AGENTS.md#workflow) says takes `!`, without `!` there, ships a break as a patch.
 

@@ -17,7 +17,7 @@ use std::hint::black_box;
 use std::ops::Range;
 use std::process::ExitCode;
 
-use pixtuoid_lofi::audition::{self, TIER_INTENSITIES, WHOLE_LANE_LUFS_SD};
+use pixtuoid_lofi::audition::{self, SONG_LUFS_SD, TIER_INTENSITIES};
 use pixtuoid_lofi::dsp::SAMPLE_RATE;
 use pixtuoid_lofi::{Controls, Frame, Performance};
 
@@ -96,6 +96,11 @@ fn main() -> ExitCode {
 fn slowest_chunk(buf: &mut [Frame]) -> Result<(f64, u64, u64), String> {
     let day = Controls::default().with_intensity(1.0);
     let night = day.with_daylight(0.0).with_rain(1.0);
+    // songs with no form would time a render of less than the forms play
+    let forms: Vec<_> = (SEEDS.flat_map(|seed| [(seed, 0, day), (seed, 1, night)]))
+        .map(|(seed, k, c)| audition::song_form(seed, k, c))
+        .collect();
+    audition::spans_a_form(&forms).map_err(|e| format!("the timed songs: {e}"))?;
     let mut worst = (0.0, SEEDS.start, 0);
     for seed in SEEDS {
         let span = audition::song_len(seed, 0, day) + audition::song_len(seed, 1, night);
@@ -150,14 +155,12 @@ fn slowest_chunk(buf: &mut [Frame]) -> Result<(f64, u64, u64), String> {
 /// Plays [`ROOM_S`] of `room` under `controls` in `buf`-long chunks, and
 /// says whether it passed its gates: the mean real-time factor within
 /// [`MEAN_RTF`], every frame finite, and its songs' gated loudness varying
-/// within [`audition::lufs_sd_bound`] of the whole-lane mix's at its controls.
+/// within [`audition::lufs_sd_bound`] of its songs' played alone.
 fn play_room(buf: &mut [Frame], room: &str, controls: Controls) -> bool {
-    let Some(&(.., whole_lane)) = (WHOLE_LANE_LUFS_SD.iter())
-        .find(|&&(i, d, _)| i == controls.intensity && d == controls.daylight)
+    let Some(&(.., alone)) =
+        (SONG_LUFS_SD.iter()).find(|&&(i, d, _)| i == controls.intensity && d == controls.daylight)
     else {
-        say(&format!(
-            "{room} room: no whole-lane loudness to hold it to"
-        ));
+        say(&format!("{room} room: no songs' loudness to hold it to"));
         return false;
     };
     let seed = SEEDS.start;
@@ -187,7 +190,7 @@ fn play_room(buf: &mut [Frame], room: &str, controls: Controls) -> bool {
     let rtf = took / played;
     let (sd, bound) = (
         audition::lufs_sd(&songs),
-        audition::lufs_sd_bound(whole_lane),
+        audition::lufs_sd_bound(alone, songs.len()),
     );
     say(&format!(
         "{room} room, {:.1} min: mean real-time factor {rtf:.4} (gate {MEAN_RTF}); {} songs, every frame finite, gated loudness sd {sd:.4} LU (gate {bound:.4})",
