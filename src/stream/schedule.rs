@@ -688,7 +688,7 @@ impl Song {
         for (i, lane) in Lane::ALL.into_iter().enumerate() {
             let part = part(&self.score, lane);
             let voice: &dyn Fn(usize) -> f32 = match part {
-                Part::Hits(_) => &hit,
+                Part::Hits { .. } => &hit,
                 _ => &unity,
             };
             let (ring, present) = (&mut self.rings[i], self.present[i]);
@@ -796,7 +796,7 @@ impl Cues {
             && at < to
         {
             let voice = voice.filter(|_| !muted);
-            if voice.is_some() || matches!(part, Part::Hits(_)) {
+            if voice.is_some() || matches!(part, Part::Hits { .. }) {
                 let (snippet, gain) = part.note(i, &mut self.noise, sr);
                 if let Some(voice) = voice {
                     ring.add(at - from, &snippet, gain * voice(at));

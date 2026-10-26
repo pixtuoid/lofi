@@ -1,5 +1,5 @@
-//! Each lane's chain for one song: the whole-lane recipe (`synth`'s
-//! `lane_recipe`, `lofi_post`, `master` and `brighten`) over causal filters,
+//! Each lane's chain for one song: the whole-lane recipe (`synth`'s lane
+//! recipes, `lofi_post`, `master` and `brighten`) over causal filters,
 //! with fixed gains where a whole lane normalized to its peak. A song's chains
 //! start at rest on its first frame, so how it sounds never depends on the
 //! songs before it.
@@ -19,8 +19,8 @@ use crate::compose::Mood;
 use crate::dsp::NoiseStream;
 use crate::synth::{
     DRIVE, DUCK_DB, DUCK_RELEASE_S, HEAD_BUMP_HZ, HEAD_BUMP_MIX, HISS_HZ, HISS_LEVEL, HUM_HZ,
-    HUM_SWELL_HZ, Lane, PadTone, Part, ROLLOFF_HZ, TILT_HZ, TILT_LIFT, WARPS, lane_recipe,
-    room_tone, samples_at,
+    HUM_SWELL_HZ, Lane, PadTone, Part, ROLLOFF_HZ, TILT_HZ, TILT_LIFT, WARPS, room_tone,
+    samples_at,
 };
 
 /// The order of each slope that stands in for a whole-lane brickwall.
@@ -104,8 +104,6 @@ impl Chain {
         sr: u32,
     ) -> Self {
         let gains = staging(mood, lane);
-        let [(night0, night1, _), (day0, day1, _)] =
-            [Mood::Night, Mood::Day].map(|mood| lane_recipe(mood, lane));
         let darkens = rain::darkens(lane);
         let tape = |own, pad| Self::Tape(Tape::new(own, pad, darkens, gains, automation, sr));
         match part {
@@ -117,12 +115,18 @@ impl Chain {
                 };
                 tape(own, Some(pad))
             }
-            Part::Notes { .. } => tape(
-                Tone::Graded(Grade::new([night1, day1], [DRIVE, DRIVE])),
+            Part::Notes { recipes: r, .. } => tape(
+                Tone::Graded(Grade::new(
+                    [r.night.cutoff_hz, r.day.cutoff_hz],
+                    [DRIVE, DRIVE],
+                )),
                 None,
             ),
-            Part::Hits(_) => tape(
-                Tone::Graded(Grade::new([night0, day0], [night1, day1])),
+            Part::Hits { recipes: r, .. } => tape(
+                Tone::Graded(Grade::new(
+                    [r.night.cutoff_hz, r.day.cutoff_hz],
+                    [r.night.drive, r.day.drive],
+                )),
                 None,
             ),
             Part::Bed => Self::Room(Room::new(len, kicks, gains, sr)),
@@ -725,7 +729,11 @@ mod tests {
         // early sounds before the kick
         let onset = samples_at(0.25 / WOW.0, sr);
         let hits = [(0.0, DrumKind::Kick, 1.0)];
-        let part = Part::Hits(&hits);
+        let part = Part::Hits {
+            hits: &hits,
+            recipes: crate::synth::DRUMS,
+            mood: Mood::Day,
+        };
         let (kick, gain) = part.note(0, &mut NoiseStream::new(9), sr);
         let mut echoes = Vec::new();
         for mood in [Mood::Day, Mood::Night] {
@@ -870,10 +878,17 @@ mod tests {
 
     /// `lane`'s tone corner and drive in `mood`'s recipe.
     fn recipe(mood: Mood, lane: Lane) -> (f32, f64) {
-        let (r0, r1, _) = lane_recipe(mood, lane);
+        use crate::synth::{BASS, DRUMS, KEYS, SPARKLE};
+        let note = |r: crate::synth::NoteRecipe| (r.cutoff_hz, f64::from(DRIVE));
         match lane {
-            Lane::Drums => (r0, f64::from(r1)),
-            _ => (r1, f64::from(DRIVE)),
+            Lane::Drums => {
+                let r = DRUMS.at(mood);
+                (r.cutoff_hz, f64::from(r.drive))
+            }
+            Lane::Sparkle => note(SPARKLE.at(mood)),
+            Lane::Keys => note(KEYS.at(mood)),
+            Lane::Bass => note(BASS.at(mood)),
+            Lane::Pad | Lane::Texture => panic!("{lane:?} doesn't grade"),
         }
     }
 
@@ -1019,7 +1034,11 @@ mod tests {
     fn a_tape_saturates_bumps_rolls_off_and_tilts() {
         let sr = SAMPLE_RATE;
         // the drums' tone, the brightest, so the roll-off is what shapes the top
-        let (cutoff, drive, _) = lane_recipe(Mood::Day, Lane::Drums);
+        let crate::synth::HitRecipe {
+            cutoff_hz: cutoff,
+            drive,
+            ..
+        } = crate::synth::DRUMS.day;
         let play = |input: &[f32]| -> Vec<f32> {
             let own = Tone::Fixed {
                 corner_hz: cutoff,

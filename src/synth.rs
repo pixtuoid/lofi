@@ -156,8 +156,8 @@ pub(crate) const WARPS: [(f32, f32); 2] = [WOW, (8.0, 0.0006)];
 /// it by name, not by place.
 pub(crate) const WOW: (f32, f32) = (0.7, 0.0025);
 
-/// The tape drive of every musical lane but the drums, which
-/// [`lane_recipe`] gives their own.
+/// The tape drive of every musical lane but the drums, which [`DRUMS`]
+/// gives their own.
 pub(crate) const DRIVE: f32 = 1.6;
 
 /// The tape's head bump: the band it lifts, and how much of that band adds
@@ -597,14 +597,14 @@ fn events_stem_voiced(
 
 #[cfg(test)]
 pub(crate) fn night_keys() -> Vec<f32> {
-    let (dur, cutoff, peak) = lane_recipe(Mood::Night, Lane::Keys);
-    night_events_stem(&score::NIGHT_KEYS, dur, cutoff, peak)
+    let r = KEYS.night;
+    night_events_stem(&score::NIGHT_KEYS, r.dur_s, r.cutoff_hz, r.peak)
 }
 
 #[cfg(test)]
 pub(crate) fn night_sparkle() -> Vec<f32> {
-    let (dur, cutoff, peak) = lane_recipe(Mood::Night, Lane::Sparkle);
-    night_events_stem(&score::NIGHT_SPARKLE, dur, cutoff, peak)
+    let r = SPARKLE.night;
+    night_events_stem(&score::NIGHT_SPARKLE, r.dur_s, r.cutoff_hz, r.peak)
 }
 
 /// NOISE content is fresh per call; only timing/gain are frozen.
@@ -619,7 +619,11 @@ fn drum_hit(rng: &mut NoiseStream, kind: DrumKind, sr: u32) -> Vec<f32> {
 
 #[cfg(test)]
 pub(crate) fn night_drums(rng: &mut NoiseStream) -> Vec<f32> {
-    let (cutoff, drive, peak) = lane_recipe(Mood::Night, Lane::Drums);
+    let HitRecipe {
+        cutoff_hz: cutoff,
+        drive,
+        peak,
+    } = DRUMS.night;
     drums_core(
         score::night_loop_secs(),
         &score::NIGHT_DRUMS,
@@ -807,20 +811,27 @@ fn day_take_events_stem(
 
 #[cfg(test)]
 pub(super) fn day_take_sparkle(take: &score::DayTake) -> Vec<f32> {
-    let (dur, cutoff, peak) = lane_recipe(Mood::Day, Lane::Sparkle);
-    day_take_events_stem(take, take.sparkle, dur, cutoff, peak)
+    let r = SPARKLE.day;
+    day_take_events_stem(take, take.sparkle, r.dur_s, r.cutoff_hz, r.peak)
 }
 
 #[cfg(test)]
 pub(super) fn day_take_keys(take: &score::DayTake) -> Vec<f32> {
-    let (dur, cutoff, peak) = lane_recipe(Mood::Day, Lane::Keys);
-    day_take_events_stem(take, take.keys, dur, cutoff, peak)
+    let r = KEYS.day;
+    day_take_events_stem(take, take.keys, r.dur_s, r.cutoff_hz, r.peak)
 }
 
 #[cfg(test)]
 pub(super) fn day_take_drums(take: &score::DayTake, rng: &mut NoiseStream) -> Vec<f32> {
-    let (cutoff, drive, peak) = lane_recipe(Mood::Day, Lane::Drums);
-    drums_core(take.loop_secs(), take.drums, cutoff, drive, peak, rng)
+    let r = DRUMS.day;
+    drums_core(
+        take.loop_secs(),
+        take.drums,
+        r.cutoff_hz,
+        r.drive,
+        r.peak,
+        rng,
+    )
 }
 
 pub use super::compose::Lane;
@@ -854,25 +865,91 @@ fn lead_voice_fn(score: &Score) -> NoteVoice {
     }
 }
 
-/// The per-`(mood, lane)` render recipe — the ONE authority the [`render_lane`]
-/// arms, the lane chains and the frozen `#[cfg(test)]` delegations read, so the
-/// frozen fingerprint pins transitively guard the params that actually ship. The
-/// triple is that lane's core-call args IN ORDER: sparkle/keys/bass =
-/// `(dur_s, cutoff_hz, peak)`; drums = `(cutoff_hz, drive, peak)`.
-/// Pad/texture lanes read the `(0.0, 0.0, 0.0)` fallback and ignore it.
-pub(crate) fn lane_recipe(mood: Mood, lane: Lane) -> (f32, f32, f32) {
-    match (mood, lane) {
-        (Mood::Day, Lane::Sparkle) => (2.0, 3200.0, 0.6),
-        (Mood::Day, Lane::Keys) => (0.9, 2400.0, 0.8),
-        (Mood::Day, Lane::Drums) => (7500.0, 2.2, 0.85),
-        (Mood::Day, Lane::Bass) => (1.5, 900.0, 0.8),
-        (Mood::Night, Lane::Sparkle) => (2.2, 2800.0, 0.5),
-        (Mood::Night, Lane::Keys) => (1.1, 2000.0, 0.7),
-        (Mood::Night, Lane::Drums) => (6000.0, 2.0, 0.8),
-        (Mood::Night, Lane::Bass) => (1.7, 700.0, 0.8),
-        _ => (0.0, 0.0, 0.0),
+/// A lane's recipe at night and by day.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct ByMood<T> {
+    pub(crate) night: T,
+    pub(crate) day: T,
+}
+
+impl<T: Copy> ByMood<T> {
+    /// The recipe a `mood` song plays.
+    pub(crate) const fn at(&self, mood: Mood) -> T {
+        match mood {
+            Mood::Night => self.night,
+            Mood::Day => self.day,
+        }
     }
 }
+
+/// A note lane's recipe: how long each note rings, its stem's low-pass corner
+/// and its stem's peak.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct NoteRecipe {
+    pub(crate) dur_s: f32,
+    pub(crate) cutoff_hz: f32,
+    pub(crate) peak: f32,
+}
+
+/// The drums' recipe: their stem's low-pass corner, the tape's drive and the
+/// stem's peak.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct HitRecipe {
+    pub(crate) cutoff_hz: f32,
+    pub(crate) drive: f32,
+    pub(crate) peak: f32,
+}
+
+/// Each lane's recipe: the ONE authority [`render_lane`], the lane chains and
+/// the frozen takes read, so the takes' fingerprint pins guard what ships.
+pub(crate) const SPARKLE: ByMood<NoteRecipe> = ByMood {
+    night: NoteRecipe {
+        dur_s: 2.2,
+        cutoff_hz: 2800.0,
+        peak: 0.5,
+    },
+    day: NoteRecipe {
+        dur_s: 2.0,
+        cutoff_hz: 3200.0,
+        peak: 0.6,
+    },
+};
+pub(crate) const KEYS: ByMood<NoteRecipe> = ByMood {
+    night: NoteRecipe {
+        dur_s: 1.1,
+        cutoff_hz: 2000.0,
+        peak: 0.7,
+    },
+    day: NoteRecipe {
+        dur_s: 0.9,
+        cutoff_hz: 2400.0,
+        peak: 0.8,
+    },
+};
+pub(crate) const BASS: ByMood<NoteRecipe> = ByMood {
+    night: NoteRecipe {
+        dur_s: 1.7,
+        cutoff_hz: 700.0,
+        peak: 0.8,
+    },
+    day: NoteRecipe {
+        dur_s: 1.5,
+        cutoff_hz: 900.0,
+        peak: 0.8,
+    },
+};
+pub(crate) const DRUMS: ByMood<HitRecipe> = ByMood {
+    night: HitRecipe {
+        cutoff_hz: 6000.0,
+        drive: 2.0,
+        peak: 0.8,
+    },
+    day: HitRecipe {
+        cutoff_hz: 7500.0,
+        drive: 2.2,
+        peak: 0.85,
+    },
+};
 
 /// What one lane of a score plays: the ONE mapping from a lane to its events
 /// and voice, read by [`render_lane`] and by the stream alike.
@@ -883,20 +960,26 @@ pub(crate) enum Part<'a> {
         bar_s: f32,
         voice: ChordVoice,
     },
-    /// `(at_s, midi, vel)` notes, each `dur_s` long.
+    /// `(at_s, midi, vel)` notes, played as `recipes` gives a `mood` song.
     Notes {
         events: &'a [(f32, u8, f32)],
         voice: NoteVoice,
-        dur_s: f32,
+        recipes: ByMood<NoteRecipe>,
+        mood: Mood,
     },
-    /// `(at_s, kind, gain)` drum hits.
-    Hits(&'a [(f32, DrumKind, f32)]),
+    /// `(at_s, kind, gain)` drum hits, played as `recipes` gives a `mood`
+    /// song.
+    Hits {
+        hits: &'a [(f32, DrumKind, f32)],
+        recipes: ByMood<HitRecipe>,
+        mood: Mood,
+    },
     /// The texture: a bed, with no notes.
     Bed,
 }
 
 pub(crate) fn part(score: &Score, lane: Lane) -> Part<'_> {
-    let (dur_s, ..) = lane_recipe(score.mood, lane);
+    let mood = score.mood;
     match lane {
         Lane::Pad => Part::Chords {
             chords: &score.bar_chords,
@@ -909,19 +992,26 @@ pub(crate) fn part(score: &Score, lane: Lane) -> Part<'_> {
         Lane::Sparkle => Part::Notes {
             events: &score.sparkle,
             voice: lead_voice_fn(score),
-            dur_s,
+            recipes: SPARKLE,
+            mood,
         },
         Lane::Keys => Part::Notes {
             events: &score.keys,
             voice: ep_pluck_vel,
-            dur_s,
+            recipes: KEYS,
+            mood,
         },
         Lane::Bass => Part::Notes {
             events: &score.bass,
             voice: bass_note,
-            dur_s,
+            recipes: BASS,
+            mood,
         },
-        Lane::Drums => Part::Hits(&score.drums),
+        Lane::Drums => Part::Hits {
+            hits: &score.drums,
+            recipes: DRUMS,
+            mood,
+        },
         Lane::Texture => Part::Bed,
     }
 }
@@ -935,7 +1025,7 @@ impl Part<'_> {
                 .map(|bar| bar_onset(bar, bar_s, sr))
                 .collect(),
             Part::Notes { events, .. } => events.iter().map(|&(at, ..)| onset(at, sr)).collect(),
-            Part::Hits(hits) => hits.iter().map(|&(at, ..)| onset(at, sr)).collect(),
+            Part::Hits { hits, .. } => hits.iter().map(|&(at, ..)| onset(at, sr)).collect(),
             Part::Bed => Vec::new(),
         }
     }
@@ -952,12 +1042,13 @@ impl Part<'_> {
             Part::Notes {
                 events,
                 voice,
-                dur_s,
+                recipes,
+                mood,
             } => {
                 let (_, midi, vel) = events[i];
-                (voice(midi, dur_s, vel, sr), 1.0)
+                (voice(midi, recipes.at(mood).dur_s, vel, sr), 1.0)
             }
-            Part::Hits(hits) => {
+            Part::Hits { hits, .. } => {
                 let (_, kind, gain) = hits[i];
                 (drum_hit(rng, kind, sr), gain)
             }
@@ -973,7 +1064,6 @@ impl Part<'_> {
 /// loops them in phase; the day texture runs free on its own length.
 pub fn render_lane(score: &Score, lane: Lane, rng: &mut NoiseStream) -> Vec<f32> {
     let loop_s = score.loop_secs();
-    let (r0, r1, r2) = lane_recipe(score.mood, lane);
     let mut bed = match (score.mood, part(score, lane)) {
         (
             Mood::Day,
@@ -997,10 +1087,24 @@ pub fn render_lane(score: &Score, lane: Lane, rng: &mut NoiseStream) -> Vec<f32>
             Part::Notes {
                 events,
                 voice,
-                dur_s,
+                recipes,
+                mood,
             },
-        ) => events_stem_voiced(loop_s, events, dur_s, r1, r2, voice),
-        (_, Part::Hits(hits)) => drums_core(loop_s, hits, r0, r1, r2, rng),
+        ) => {
+            let r = recipes.at(mood);
+            events_stem_voiced(loop_s, events, r.dur_s, r.cutoff_hz, r.peak, voice)
+        }
+        (
+            _,
+            Part::Hits {
+                hits,
+                recipes,
+                mood,
+            },
+        ) => {
+            let r = recipes.at(mood);
+            drums_core(loop_s, hits, r.cutoff_hz, r.drive, r.peak, rng)
+        }
         (Mood::Day, Part::Bed) => texture_bed(rng),
         (Mood::Night, Part::Bed) => night_texture_core(loop_s, &score.kick_times, rng),
     };
@@ -1012,19 +1116,6 @@ pub fn render_lane(score: &Score, lane: Lane, rng: &mut NoiseStream) -> Vec<f32>
 mod tests {
     use super::*;
     use crate::dsp::{band_energy_share, centroid_hz};
-
-    #[test]
-    fn lane_recipe_is_the_ratified_shipping_params() {
-        use crate::compose::Mood;
-        assert_eq!(lane_recipe(Mood::Day, Lane::Sparkle), (2.0, 3200.0, 0.6));
-        assert_eq!(lane_recipe(Mood::Day, Lane::Keys), (0.9, 2400.0, 0.8));
-        assert_eq!(lane_recipe(Mood::Day, Lane::Drums), (7500.0, 2.2, 0.85));
-        assert_eq!(lane_recipe(Mood::Day, Lane::Bass), (1.5, 900.0, 0.8));
-        assert_eq!(lane_recipe(Mood::Night, Lane::Sparkle), (2.2, 2800.0, 0.5));
-        assert_eq!(lane_recipe(Mood::Night, Lane::Keys), (1.1, 2000.0, 0.7));
-        assert_eq!(lane_recipe(Mood::Night, Lane::Drums), (6000.0, 2.0, 0.8));
-        assert_eq!(lane_recipe(Mood::Night, Lane::Bass), (1.7, 700.0, 0.8));
-    }
 
     #[test]
     fn a_day_lead_sits_above_its_pad() {
