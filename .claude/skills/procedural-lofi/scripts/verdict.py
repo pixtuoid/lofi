@@ -17,6 +17,8 @@ GROUPS = ("day", "night", "twilight", "rain")
 
 # from worst: a group's verdict, and the batch's
 RANKS = ("REGRESSION", "INSUFFICIENT", "PASS", "UNCHANGED")
+# the verdicts that fail a batch
+FAILING = RANKS[:2]
 
 
 def tail_p(losses, untied):

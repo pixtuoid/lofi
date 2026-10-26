@@ -28,7 +28,7 @@ jobs:
       group: release-plz-pr
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -58,7 +58,7 @@ jobs:
         id: detect
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_BRANCH_PREFIX: release-plz- # release-plz.toml's pr_branch_prefix
+          PR_BRANCH_PREFIX: release-plz- # release-plz's default pr_branch_prefix
           REPOSITORY: ${{ github.repository }}
           SHA: ${{ github.sha }}
         run: |
@@ -95,7 +95,7 @@ jobs:
       id-token: write
       pull-requests: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false

@@ -4,7 +4,7 @@
 refs-lofigirl/
 /docs/superpowers/
 # Reference recordings are copyrighted and rendered takes are local auditions:
-# no audio file is ever committed (CI enforces it too).
+# no audio file is ever committed (CI fails on a tracked file this ignores).
 *.wav
 *.mp3
 *.flac
@@ -12,3 +12,5 @@ refs-lofigirl/
 *.aif
 *.m4a
 *.ogg
+*.opus
+*.aac

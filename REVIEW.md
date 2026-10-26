@@ -7,7 +7,6 @@ What the automatic review ([`claude-review.yml`](.github/workflows/claude-review
 ## Traps: the obvious reading is wrong here
 
 - **The rng draw order is the sound.** A draw added anywhere but the tail of a `compose::Stage`'s stream, or a re-pinned `every_seed_composes_the_score_it_did`, `every_seed_arranges_the_form_it_did`, `a_seeded_groove_lays_every_hit_where_it_did` or `day_take_stems_match_the_ratified_fingerprints`, is a sound change, never a test fix: CI goes green on a recomposed office.
-- **The score is bit-identical; samples are not.** A transcendental function on `compose`'s path splits a seed's score across platforms, and a test pinning rendered sample values passes on one OS or toolchain and fails on another.
 - **Semver rides the title the squash merge takes** (the PR's, or a lone commit's), which is the changelog line. A change [`AGENTS.md`](AGENTS.md#workflow) says takes `!`, without `!` there, ships a break as a patch.
 
 ## Always check
@@ -33,7 +32,6 @@ What the automatic review ([`claude-review.yml`](.github/workflows/claude-review
 ## Design
 
 1. **Consumers**: trace each changed `pub` item to its consumers here (`examples/`, the README's doctest) and to pixtuoid, whose office plays a `Performance` and whose foley calls `dsp`.
-2. **Layering**: `compose` makes a `Score`, `synth`'s voices render its notes from `dsp`'s primitives, `stream` plays them through each lane's chain and mixes them under the ceiling, and `score` is test-only.
-3. **Proportion**: a branch, helper, parameter, type or test machinery that serves no reachable case; an invariant held by prose where a type could hold it; a hand-rolled mechanism `std` already provides ("reuse X", never a new dependency). The zero dependencies, the chunk-invariant and history-free render, and the frozen chains are load-bearing.
-4. **Naming**: a new or renamed name says what the item is at the head, reads right without this PR's context, uses the domain's existing word, and is the shortest that stays clear ([Rust API Guidelines](https://rust-lang.github.io/api-guidelines/naming.html)).
-5. **Sourced practice**: an external claim in the diff or the PR body that cites no source and is not labeled opinion breaches AGENTS.md's conventions.
+2. **Proportion**: a branch, helper, parameter, type or test machinery that serves no reachable case; an invariant held by prose where a type could hold it; a hand-rolled mechanism `std` already provides ("reuse X", never a new dependency). The zero dependencies, the chunk-invariant and history-free render, and the frozen chains are load-bearing.
+3. **Naming**: a new or renamed name says what the item is at the head, reads right without this PR's context, uses the domain's existing word, and is the shortest that stays clear ([Rust API Guidelines](https://rust-lang.github.io/api-guidelines/naming.html)).
+4. **Sourced practice**: an external claim in the diff or the PR body that cites no source and is not labeled opinion breaches AGENTS.md's conventions.

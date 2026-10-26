@@ -2,15 +2,15 @@
 name         = "pixtuoid-lofi"
 version      = "0.2.0"
 edition      = "2024"
+rust-version = "1.88"
 description  = "Procedural lofi in Rust: a seed composes an endless run of songs, synthesized from constants — no samples, no dependencies."
 license      = "MIT"
 repository   = "https://github.com/pixtuoid/lofi"
 readme       = "README.md"
 keywords     = ["lofi", "music", "procedural", "synthesis", "audio"]
 categories   = ["multimedia::audio"]
-# An allowlist, so a repo-only file added later doesn't ship. `cargo publish`'s
-# verify build compiles `/src` but no example (cargo 1.98.1), so nothing would
-# catch a missing `/examples/common`, which the shipped `lofi_audition` includes.
+# An allowlist, so a repo-only file added later doesn't ship. ci.yml builds the
+# packaged examples, which cargo 1.99.1's verify build doesn't (observed).
 include      = ["/src", "/examples/lofi_audition.rs", "/examples/common", "/LICENSE", "/README.md"]
 
 # The synthesis tests render whole takes, so unoptimized code sets the suite's
