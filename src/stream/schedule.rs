@@ -32,8 +32,7 @@ pub(crate) const PLAIN_LOOPS: usize = 4;
 pub(crate) const ANTICIPATION_S: f32 = HAT_JITTER_S / 2.0;
 
 /// The level a fading edge starts a music lane from or ends it at, in dB:
-/// silence a `Shape::Db` ramp can start from. Opinion; the corpus's detector
-/// calls a fade one whose far end is at least 9 dB down.
+/// silence a `Shape::Db` ramp can start from. Opinion.
 pub(crate) const FADE_FLOOR_DB: f64 = -36.0;
 
 /// How long, in beats, a lane's level takes to reach the one a latch asks

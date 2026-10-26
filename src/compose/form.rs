@@ -227,8 +227,8 @@ enum Closing {
 }
 
 /// The intros and their weights: LOFI-BIBLE R11's start counts, the sparse
-/// ones split by the lanes out and its 10 unsplit ones left out. The lead
-/// sits out every intro.
+/// ones split by the lanes out and its unsplit ones left out. The lead sits
+/// out every intro.
 const INTRO_KINDS: [(Opening, u32); 8] = [
     (Opening::Sparse(Plays::BED.with(Lane::Keys, true)), 27),
     (
@@ -250,7 +250,7 @@ const INTRO_KINDS: [(Opening, u32); 8] = [
 ];
 
 /// The outros and their weights: R11's end counts, the sparse ones split by
-/// the lanes out, its 8 noise-only ones joining the ring-out and its 5 unsplit
+/// the lanes out, its noise-only ones joining the ring-out and its unsplit
 /// ones left out.
 const OUTRO_KINDS: [(Closing, u32); 7] = [
     (Closing::Sparse(Plays::BED.with(Lane::Keys, true)), 14),
@@ -286,8 +286,8 @@ const THINNINGS: [(Thinning, u32); 3] = [
     (Thinning::Rest, 2),
 ];
 
-/// Short and long intros' bars, and the long one's share: the corpus counts 26
-/// eight-bar intros to 14 four-bar ones.
+/// Short and long intros' bars, and the long one's share: R11's count of
+/// eight-bar intros against four-bar ones.
 const INTRO_BARS: [usize; 2] = [4, 8];
 const LONG_INTRO_P: f32 = 0.65;
 
@@ -296,8 +296,7 @@ const LONG_INTRO_P: f32 = 0.65;
 const PHRASES: [usize; 3] = [4, 5, 6];
 
 /// A sparse or edged outro's bars, short or long, the long one's share for
-/// each, and the ring-out's bars: fitted to the corpus's outro lengths, P25
-/// 7 s, P50 16 s, P75 28 s (opinion).
+/// each, and the ring-out's bars: fitted to R11's outro lengths (opinion).
 const OUTRO_BARS: [usize; 2] = [4, 8];
 const LONG_SPARSE_OUTRO_P: f32 = 0.4;
 const LONG_EDGED_OUTRO_P: f32 = 0.5;
@@ -305,22 +304,20 @@ const RING_OUT_BARS: usize = 2;
 
 /// The thinning's span: the phrase's last half, or with this chance all of it.
 const WHOLE_THINNING_P: f32 = 0.4;
-/// The bass leaves with the beat in a break: the corpus's 52%.
+/// The bass leaves with the beat in a break, as R11's drum drop-outs take it.
 const LOW_WITH_BREAK_P: f32 = 0.5;
 
 /// Whether a song cuts its beat at all, then each dense phrase from
 /// `FIRST_CUT_PHRASE` on cuts its last bars with `CUT_P`, so the cuts cluster
-/// as the corpus's do (drops per track P50 1, P75 2, P90 3); the first dense
-/// core plays through, as the first drop sits near the track's middle (P50
-/// 0.45). Fitted to the corpus (opinion).
+/// as R11's drops per track do; the first dense core plays through, as R11's
+/// first drop sits near the track's middle. Fitted to R11 (opinion).
 const CUTTING_P: f32 = 0.5;
 const CUT_P: f32 = 0.75;
 const FIRST_CUT_PHRASE: usize = 1;
 
-/// A cut's bars and their weights, fitted to the corpus's drop lengths (1 bar
-/// 40 %, 2 bars 13 %, 3 bars 15 % of drops, a break making the rest), and
-/// the chance the bass leaves with it (the corpus's bass drops are 41 % in
-/// the beat's).
+/// A cut's bars and their weights, fitted to R11's drop lengths with a break
+/// making the rest, and the chance the bass leaves with it, fitted to R11's
+/// bass drops that keep the beat (opinion).
 const CUT_BARS: [(usize, u32); 3] = [(1, 55), (2, 20), (3, 25)];
 const LOW_WITH_CUT_P: f32 = 0.3;
 
@@ -329,8 +326,8 @@ const LOW_WITH_CUT_P: f32 = 0.3;
 const BASS_DROP_P: f32 = 0.2;
 const BASS_DROP_MIN_PHRASES: usize = 5;
 
-/// A song low-passes phrase 1's last bar with this chance: the corpus's 20% of
-/// tracks with a mid-track filter moment, mostly one bar long.
+/// A song low-passes phrase 1's last bar with this chance: R11's mid-track
+/// filter moments.
 const DIP_P: f32 = 0.2;
 
 /// The band one unit draw `u` falls in, each band as wide as its weight.
@@ -735,8 +732,8 @@ mod tests {
             (
                 "drum drops per song, P90",
                 percentile(counts, 0.9),
-                2.0,
-                4.0,
+                3.0,
+                3.0,
             ),
             ("1-bar share of drum drops", bars(1), 0.3, 0.5),
             ("3-bar share of drum drops", bars(3), 0.08, 0.25),
@@ -747,7 +744,7 @@ mod tests {
                 0.45,
                 0.7,
             ),
-            ("outro s, P75", percentile(outros.clone(), 0.75), 14.0, 42.0),
+            ("outro s, P75", percentile(outros.clone(), 0.75), 20.0, 42.0),
         ];
         for (name, value, lo, hi) in checks {
             assert!(
