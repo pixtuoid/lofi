@@ -59,10 +59,6 @@ fn normalize(buf: &mut [f32], peak: f32) {
 /// A voice that plays one `(midi, dur_s, vel)` note at a sample rate.
 type NoteVoice = fn(u8, f32, f32, u32) -> Vec<f32>;
 
-/// A voice that holds one chord through a bar `bar_s` long, and its ring, at
-/// a sample rate.
-type ChordVoice = fn(&[u8; 4], f32, u32) -> Vec<f32>;
-
 const MIDI_A4: f32 = 440.0;
 fn midi_freq(m: f32) -> f32 {
     MIDI_A4 * 2f32.powf((m - 69.0) / 12.0)
@@ -491,8 +487,9 @@ const NIGHT_PAD_SUB_GAIN: f32 = 3.2;
 #[cfg(test)]
 pub(crate) fn night_pad() -> Vec<f32> {
     let (chords, bar_s) = (&score::NIGHT_CHORDS, night_bar_s());
-    night_pad_core(bar_s, score::NIGHT_LOOP_BARS, |bar| {
-        let mut sig = night_chord(&chords[bar % chords.len()], bar_s, SAMPLE_RATE);
+    pad_core(Mood::Night, bar_s, score::NIGHT_LOOP_BARS, |bar| {
+        let tone = ChordTone::of(Mood::Night);
+        let mut sig = chord(tone, &chords[bar % chords.len()], bar_s, SAMPLE_RATE);
         let roots = &score::NIGHT_BASS_ROOTS;
         bake_night_sub(&mut sig, roots[bar % roots.len()], bar_s);
         sig
@@ -523,39 +520,83 @@ fn bake_night_sub(sig: &mut [f32], root: u8, bar_s: f32) {
     }
 }
 
-/// One night pad chord, held through the bar and its ring.
-fn night_chord(chord: &[u8; 4], bar_s: f32, sr: u32) -> Vec<f32> {
+/// A pad's chord voice: how long a chord rings past its bar, its notes'
+/// attack, each note's later by a step, their release, the 2nd and 3rd
+/// harmonics' weights, and the voice's gain.
+#[derive(Clone, Copy, Debug)]
+struct ChordTone {
+    ring_s: f32,
+    attack_s: f32,
+    attack_step_s: f32,
+    release_s: f32,
+    h2: f32,
+    h3: f32,
+    gain: f32,
+}
+
+impl ChordTone {
+    const fn of(mood: Mood) -> Self {
+        match mood {
+            Mood::Day => Self {
+                ring_s: 0.9,
+                attack_s: 0.25,
+                attack_step_s: 0.08,
+                release_s: 1.2,
+                h2: 0.30,
+                h3: 0.08,
+                gain: 1.0,
+            },
+            Mood::Night => Self {
+                ring_s: 1.2,
+                attack_s: 0.5,
+                attack_step_s: 0.1,
+                release_s: 1.8,
+                h2: 0.22,
+                h3: 0.05,
+                gain: 0.8,
+            },
+        }
+    }
+}
+
+/// One pad chord in `tone`, held through the bar and its ring.
+fn chord(tone: ChordTone, chord: &[u8; 4], bar_s: f32, sr: u32) -> Vec<f32> {
     let tau = std::f32::consts::TAU;
-    let nd = samples_at(bar_s + 1.2, sr);
+    let nd = samples_at(bar_s + tone.ring_s, sr);
     let mut sig = vec![0.0f32; nd];
     for (i, &m) in chord.iter().enumerate() {
         let f = midi_freq(f32::from(m));
-        let env = env_ar(nd, 0.5 + 0.1 * i as f32, 1.8, sr);
+        let env = env_ar(
+            nd,
+            tone.attack_s + tone.attack_step_s * i as f32,
+            tone.release_s,
+            sr,
+        );
         for (j, slot) in sig.iter_mut().enumerate() {
             let t = j as f32 / sr as f32;
-            let tone = (tau * f * t).sin()
-                + 0.22 * (tau * 2.0 * f * t).sin()
-                + 0.05 * (tau * 3.0 * f * t).sin();
-            *slot += tone * env(j) * 0.8;
+            let partials = (tau * f * t).sin()
+                + tone.h2 * (tau * 2.0 * f * t).sin()
+                + tone.h3 * (tau * 3.0 * f * t).sin();
+            *slot += partials * env(j) * tone.gain;
         }
     }
     sig
 }
 
-/// The night pad over `loop_bars` bars `bar_s` long, `bar` giving each bar's
-/// sound: the generated take's chord alone, its sub riding the bass lane.
-fn night_pad_core(bar_s: f32, loop_bars: usize, bar: impl Fn(usize) -> Vec<f32>) -> Vec<f32> {
+/// A `mood` pad over `loop_bars` bars `bar_s` long, `bar` giving each bar's
+/// sound: a generated take's chord alone, its sub riding the bass lane.
+fn pad_core(mood: Mood, bar_s: f32, loop_bars: usize, bar: impl Fn(usize) -> Vec<f32>) -> Vec<f32> {
     let mut buf = vec![0.0f32; n_samples(bar_s * loop_bars as f32)];
     for b in 0..loop_bars {
         place(&mut buf, &bar(b), b as f32 * bar_s, 1.0);
     }
-    let tone = PadTone::of(Mood::Night);
+    let tone = PadTone::of(mood);
     let mut buf = lowpass(&buf, tone.cutoff_hz);
     for (i, v) in buf.iter_mut().enumerate() {
         *v *= tone.bed_swell(i);
     }
-    normalize(&mut buf, 0.75);
-    master(&buf, DRIVE, 0.75)
+    normalize(&mut buf, tone.peak);
+    master(&buf, DRIVE, tone.peak)
 }
 
 /// The dispatch point a new lead voice plugs into: `note_fn` renders one note
@@ -729,39 +770,14 @@ pub(super) fn day_take_pad(take: &score::DayTake) -> Vec<f32> {
     day_take_part(take, &pad, &mut NoiseStream::new(0))
 }
 
-/// A `mood` song's pad chord voice.
-const fn chord_voice(mood: Mood) -> ChordVoice {
-    match mood {
-        Mood::Day => day_chord,
-        Mood::Night => night_chord,
-    }
-}
-
-/// One day pad chord, held through the bar and its ring.
-fn day_chord(chord: &[u8; 4], bar_s: f32, sr: u32) -> Vec<f32> {
-    let tau = std::f32::consts::TAU;
-    let nd = samples_at(bar_s + 0.9, sr);
-    let mut chord_sig = vec![0.0f32; nd];
-    for (i, &m) in chord.iter().enumerate() {
-        let f = midi_freq(f32::from(m));
-        let env = env_ar(nd, 0.25 + 0.08 * i as f32, 1.2, sr);
-        for (j, slot) in chord_sig.iter_mut().enumerate() {
-            let t = j as f32 / sr as f32;
-            let tone = (tau * f * t).sin()
-                + 0.30 * (tau * 2.0 * f * t).sin()
-                + 0.08 * (tau * 3.0 * f * t).sin();
-            *slot += tone * env(j);
-        }
-    }
-    chord_sig
-}
-
 /// A generated pad's tone before the tape: a low-pass, then a slow swell.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PadTone {
     pub(crate) cutoff_hz: f32,
     pub(crate) swell_hz: f32,
     swell_depth: f32,
+    /// Its whole-lane stem's peak.
+    peak: f32,
 }
 
 impl PadTone {
@@ -771,11 +787,13 @@ impl PadTone {
                 cutoff_hz: 2600.0,
                 swell_hz: 0.22,
                 swell_depth: 0.05,
+                peak: 0.7,
             },
             Mood::Night => Self {
                 cutoff_hz: 2200.0,
                 swell_hz: 0.15,
                 swell_depth: 0.04,
+                peak: 0.75,
             },
         }
     }
@@ -790,25 +808,6 @@ impl PadTone {
     fn bed_swell(self, i: usize) -> f32 {
         self.swell(std::f32::consts::TAU * self.swell_hz * i as f32 / SR)
     }
-}
-
-fn day_pad_core(chords: &[[u8; 4]], bar_s: f32, loop_bars: usize, voice: ChordVoice) -> Vec<f32> {
-    let mut buf = vec![0.0f32; n_samples(bar_s * loop_bars as f32)];
-    for (bar, chord) in chords.iter().cycle().take(loop_bars).enumerate() {
-        place(
-            &mut buf,
-            &voice(chord, bar_s, SAMPLE_RATE),
-            bar as f32 * bar_s,
-            1.0,
-        );
-    }
-    let tone = PadTone::of(Mood::Day);
-    let mut buf = lowpass(&buf, tone.cutoff_hz);
-    for (i, v) in buf.iter_mut().enumerate() {
-        *v *= tone.bed_swell(i);
-    }
-    normalize(&mut buf, 0.7);
-    master(&buf, DRIVE, 0.7)
 }
 
 #[cfg(test)]
@@ -1048,7 +1047,7 @@ impl Part<'_> {
                 chords,
                 bar_s,
                 mood,
-            } => (chord_voice(mood)(&chords[i], bar_s, sr), 1.0),
+            } => (chord(ChordTone::of(mood), &chords[i], bar_s, sr), 1.0),
             Part::Notes {
                 events,
                 voice,
@@ -1089,18 +1088,14 @@ fn whole_lane(score: &Score, lane: Lane, rng: &mut NoiseStream) -> Vec<f32> {
 /// [`whole_lane`] plays a score's lane through, and the frozen takes' parts.
 fn render_part(part: &Part<'_>, loop_s: f32, rng: &mut NoiseStream) -> Vec<f32> {
     match *part {
-        Part::Chords {
-            chords,
-            bar_s,
-            mood: Mood::Day,
-        } => day_pad_core(chords, bar_s, GEN_LOOP_BARS, day_chord),
         // the generated night pad renders NO baked sub — the bass lane owns that register
         Part::Chords {
             chords,
             bar_s,
-            mood: Mood::Night,
-        } => night_pad_core(bar_s, GEN_LOOP_BARS, |bar| {
-            night_chord(&chords[bar % chords.len()], bar_s, SAMPLE_RATE)
+            mood,
+        } => pad_core(mood, bar_s, GEN_LOOP_BARS, |bar| {
+            let tone = ChordTone::of(mood);
+            chord(tone, &chords[bar % chords.len()], bar_s, SAMPLE_RATE)
         }),
         Part::Notes {
             events,
@@ -1206,15 +1201,15 @@ mod tests {
             ("vibe", vibe_note),
             ("bass", bass_note),
         ];
-        let chords: [(&str, ChordVoice); 2] =
-            [("day chord", day_chord), ("night chord", night_chord)];
+        let chords = [("day chord", Mood::Day), ("night chord", Mood::Night)];
         type Render = Box<dyn Fn(u32) -> Vec<f32>>;
         let mut voices: Vec<(&str, Render, (f64, f64))> = Vec::new();
         for (name, voice) in notes {
             voices.push((name, Box::new(move |sr| voice(69, 1.0, 0.8, sr)), a4));
         }
-        for (name, voice) in chords {
-            voices.push((name, Box::new(move |sr| voice(&[69; 4], 1.0, sr)), a4));
+        for (name, mood) in chords {
+            let tone = ChordTone::of(mood);
+            voices.push((name, Box::new(move |sr| chord(tone, &[69; 4], 1.0, sr)), a4));
         }
         for (name, kind, band) in [
             ("kick", DrumKind::Kick, (30.0, 200.0)),
