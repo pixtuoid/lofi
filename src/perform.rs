@@ -481,13 +481,19 @@ mod tests {
     }
 
     impl Heard {
-        /// Renders `n` frames of `p`, hearing what its ceiling did to each.
+        /// Renders `n` frames of `p`, a step at most at a time, hearing what
+        /// its ceiling did to each.
         fn play(&mut self, p: &mut Performance, n: usize) {
-            let (mut out, mut probe) = (vec![Frame::default(); n], Ceilinged::default());
-            p.render_probed(&mut out, &mut probe);
-            self.loudest = self.loudest.max(probe.loudest);
-            for ((&gain, &limited), clamped) in probe.gains.iter().zip(&probe.limited).zip(out) {
-                self.hear(gain, clamped, limited);
+            let mut out = vec![Frame::default(); BLOCK];
+            for k in (0..n).step_by(BLOCK).map(|at| BLOCK.min(n - at)) {
+                let mut probe = Ceilinged::default();
+                p.render_probed(&mut out[..k], &mut probe);
+                self.loudest = self.loudest.max(probe.loudest);
+                for ((&gain, &limited), &clamped) in
+                    probe.gains.iter().zip(&probe.limited).zip(&out[..k])
+                {
+                    self.hear(gain, clamped, limited);
+                }
             }
         }
 

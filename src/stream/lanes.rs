@@ -225,12 +225,18 @@ impl Automation {
         }
     }
 
-    /// From frame `at`, grades toward `controls`' daylight over `grade`
-    /// frames and darkens toward their rain over `rain` frames.
-    pub(crate) fn latch(&mut self, at: usize, controls: Controls, grade: usize, rain: usize) {
+    /// From frame `at`, grades toward `controls`' daylight over `grade_ramp`
+    /// frames and darkens toward their rain over `rain_ramp` frames.
+    pub(crate) fn latch(
+        &mut self,
+        at: usize,
+        controls: Controls,
+        grade_ramp: usize,
+        rain_ramp: usize,
+    ) {
         self.daylight
-            .toward(at, f64::from(controls.daylight), grade);
-        self.rain.toward(at, f64::from(controls.rain), rain);
+            .toward(at, f64::from(controls.daylight), grade_ramp);
+        self.rain.toward(at, f64::from(controls.rain), rain_ramp);
     }
 
     /// Holds every timeline where it is on frame `at`, the song's end.
