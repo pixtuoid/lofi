@@ -1,11 +1,11 @@
 //! The procedural sound recipes. Every constant is an owner-ratified value:
 //! change it through an A/B batch (`examples/lofi_audition.rs`) and
-//! `ab_judge.py`'s verdict, which the commit records. All functions are PURE
-//! mono f32 sample-buffer generators, whole-buffer and FFT-backed, never
-//! inside an audio callback, since callers render ahead: a voice renders one
-//! note at the rate it is given as the engine reaches it, and [`render_lane`]
-//! a whole lane at [`SAMPLE_RATE`] for lofi's own tools. The engine plays the
-//! same recipe through `stream::lanes`' causal chains.
+//! `ab_judge.py`'s verdict, which the commit records. The voices render into
+//! mono f32 buffers, FFT-backed, never inside an audio callback, since
+//! callers render ahead: a voice renders one note at the rate it is given as
+//! the engine reaches it, and [`render_lane`] a whole lane at
+//! [`SAMPLE_RATE`] for lofi's own tools. The engine plays the same recipe
+//! through `stream::lanes`' causal chains.
 
 use super::dsp::{
     NoiseStream, SAMPLE_RATE, bandpass, bandpass_at, highpass, lowpass, white_noise_gain,
@@ -169,9 +169,9 @@ pub(crate) const WOW: (f32, f32) = (0.7, 0.0025);
 /// gives their own.
 pub(crate) const DRIVE: f32 = 1.6;
 
-/// The tape's head bump: the band it lifts, and how much of that band adds
-/// back. Tape 15ips head-bump ≈ 60Hz — low enough to catch the bass
-/// fundamentals (`.claude/skills/procedural-lofi/reference/LOFI-BIBLE.md` §4).
+/// The tape's head bump: the band it lifts, low enough to catch the bass
+/// fundamentals (`.claude/skills/procedural-lofi/reference/LOFI-BIBLE.md`
+/// §4), and how much of that band adds back.
 pub(crate) const HEAD_BUMP_HZ: (f32, f32) = (60.0, 120.0);
 pub(crate) const HEAD_BUMP_MIX: f32 = 0.35;
 
@@ -449,7 +449,8 @@ fn kalimba_note(midi: u8, dur_s: f32, vel: f32, sr: u32) -> Vec<f32> {
     let tau = std::f32::consts::TAU;
     // higher tines die faster; the vel BITS jitter decay per note, not an rng,
     // so identical inputs still render identical buffers (the purity contract)
-    let pitch_k = (1.0 + (f32::from(midi) - 72.0) * 0.025).max(0.2); // d stays positive below midi 32
+    // floored, so a low note still dies away
+    let pitch_k = (1.0 + (f32::from(midi) - 72.0) * 0.025).max(0.2);
     let breath = 0.9 + 0.2 * (vel * 91.7).fract();
     let d = 2.6 * pitch_k * breath;
     let mut buf: Vec<f32> = (0..n)
@@ -634,8 +635,8 @@ fn pad_core(mood: Mood, bar_s: f32, loop_bars: usize, bar: impl Fn(usize) -> Vec
     master(&buf, DRIVE, tone.peak)
 }
 
-/// The dispatch point a new lead voice plugs into: `note_fn` renders one note
-/// from `(midi, dur_s, vel)`.
+/// A note lane's stem over a loop `loop_secs` long: each of `events` through
+/// `note_fn`, then the stem's low-pass, its peak and the tape.
 fn events_stem_voiced(
     loop_secs: f32,
     events: &[(f32, u8, f32)],
@@ -728,9 +729,9 @@ pub(crate) const DUCK_RELEASE_S: f32 = 0.15;
 /// NOT a power of two, so its FFT-shaped hiss is not circularly seamless.
 const NIGHT_TEXTURE_SPLICE_S: f32 = 0.03;
 
-/// The night texture: the day room-tone recipe at the NIGHT loop length with the
-/// kick-duck BAKED IN — pre-multiplying the frozen kick envelope keeps it
-/// phase-locked with the drums by construction, no runtime sidechain machinery.
+/// The night texture: the day room-tone recipe at the NIGHT loop length with
+/// the kick-duck BAKED IN, so the whole lane ducks in phase with its drums by
+/// construction.
 #[cfg(test)]
 pub(crate) fn night_texture(rng: &mut NoiseStream) -> Vec<f32> {
     let kicks = score::night_kick_times();
@@ -864,8 +865,7 @@ pub(super) fn day_take_drums(take: &score::DayTake, rng: &mut NoiseStream) -> Ve
     day_take_part(take, &drums, rng)
 }
 
-pub use super::compose::Lane;
-use super::compose::{GEN_LOOP_BARS, LeadVoice, Mood, Score};
+use super::compose::{GEN_LOOP_BARS, Lane, LeadVoice, Mood, Score};
 
 /// The bright master's one-pole tilt shelf: its corner, and how far above
 /// it the top lifts.
@@ -886,12 +886,15 @@ fn brighten(buf: &mut [f32]) {
     normalize(buf, pre_peak.max(1e-6));
 }
 
-fn lead_voice_fn(score: &Score) -> NoteVoice {
-    match score.lead_voice {
-        LeadVoice::EpVel => ep_pluck_vel,
-        LeadVoice::Pluck => pluck_note,
-        LeadVoice::Kalimba => kalimba_note,
-        LeadVoice::Vibraphone => vibe_note,
+impl LeadVoice {
+    /// The voice that sings the lead.
+    fn voice(self) -> NoteVoice {
+        match self {
+            Self::EpVel => ep_pluck_vel,
+            Self::Pluck => pluck_note,
+            Self::Kalimba => kalimba_note,
+            Self::Vibraphone => vibe_note,
+        }
     }
 }
 
@@ -1019,7 +1022,7 @@ pub(crate) fn part(score: &Score, lane: Lane) -> Part<'_> {
         },
         Lane::Sparkle => Part::Notes {
             events: &score.sparkle,
-            voice: lead_voice_fn(score),
+            voice: score.lead_voice.voice(),
             recipes: SPARKLE,
             mood,
         },

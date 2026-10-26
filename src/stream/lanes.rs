@@ -15,12 +15,11 @@ use super::onepole::Tilt;
 use super::rain;
 use super::ramp::{Ramp, Shape};
 use crate::Controls;
-use crate::compose::Mood;
+use crate::compose::{Lane, Mood};
 use crate::dsp::NoiseStream;
 use crate::synth::{
     DRIVE, DUCK_DB, DUCK_RELEASE_S, HEAD_BUMP_HZ, HEAD_BUMP_MIX, HISS_HZ, HISS_LEVEL, HUM_HZ,
-    HUM_SWELL_HZ, Lane, PadTone, Part, ROLLOFF_HZ, TILT_HZ, TILT_LIFT, WARPS, room_tone,
-    samples_at,
+    HUM_SWELL_HZ, PadTone, Part, ROLLOFF_HZ, TILT_HZ, TILT_LIFT, WARPS, room_tone, samples_at,
 };
 
 /// The order of each slope that stands in for a whole-lane brickwall.

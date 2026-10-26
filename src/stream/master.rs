@@ -3,7 +3,7 @@
 
 use std::collections::VecDeque;
 
-use crate::synth::Lane;
+use crate::compose::Lane;
 
 /// The intensities at which the mix plays pixtuoid's Empty, Moderate and Busy
 /// offices.

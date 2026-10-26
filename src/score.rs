@@ -1,4 +1,4 @@
-//! The FROZEN musical composition. These tables ARE one owner-ratified
+//! The FROZEN musical compositions. Each take's tables ARE one owner-ratified
 //! realization's events — deterministic data, not a re-roll. The day-1 tables
 //! regenerate via `.claude/skills/procedural-lofi/scripts/export_score.py`; a
 //! regen is a NEW take and needs a fresh A/B verdict before it ships.
@@ -143,15 +143,14 @@ pub(super) fn night_loop_secs() -> f32 {
     night_beat_s() * BEATS_PER_BAR * NIGHT_LOOP_BARS as f32
 }
 
-/// Am7 – Fmaj7 – Cmaj7 – Em7, one bar each, cycled over the 8 bars.
+/// Am7 – F – Cmaj7 – Em7, one bar each, cycled over the 8 bars.
 pub(super) const NIGHT_CHORDS: [[u8; 4]; 4] = [
     [57, 60, 64, 67],
     [53, 57, 60, 65],
     [48, 52, 55, 59],
     [52, 55, 59, 62],
 ];
-/// The sub-bass floor per bar (A1 F1 C2 E1) — deliberately absent from the
-/// day track.
+/// The sub-bass floor per bar — deliberately absent from the day track.
 pub(super) const NIGHT_BASS_ROOTS: [u8; 4] = [33, 29, 36, 28];
 
 pub(super) fn night_chord_at_bar(bar: usize) -> ([u8; 4], u8) {
@@ -273,9 +272,9 @@ mod night_tests {
 // SHARED cores (pad/events/drums renderers) still produce the ratified sound.
 // Same freeze contract as night — humanization baked into the at-seconds
 // timestamps; their exporter was not kept either, and a regen needs a fresh
-// A/B verdict. Day 2 "morning": royal-road IV-V-iii-vi in C, 76 BPM, boom-bap
+// A/B verdict. Day 2 "morning": royal-road IV-V-iii-vi in C, boom-bap
 // backbeats on 2&4, a hand-written lead motif. Day 3 "golden hour": I-vi-ii-V
-// turnaround with voice-led inversions, 74 BPM, half-time.
+// turnaround with voice-led inversions, half-time.
 
 /// Every day take is 8 bars of 4/4.
 pub(super) const DAY_TAKE_LOOP_BARS: usize = 8;

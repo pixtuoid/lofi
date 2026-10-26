@@ -9,7 +9,8 @@ use super::biquad::{Cascade, butter_highpass};
 use super::delay::DelayLine;
 use super::flush;
 use super::onepole::OnePole;
-use crate::synth::{Lane, samples_at};
+use crate::compose::Lane;
+use crate::synth::samples_at;
 
 /// Each wet lane's send into the plate, in dB on its mix level: set so its
 /// return reads 12, 14 and 16 LU under its dry lane on the fold, as the

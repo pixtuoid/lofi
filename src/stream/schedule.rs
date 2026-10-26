@@ -12,11 +12,12 @@ use super::rain::{self, RAIN_RAMP_BARS};
 use super::ramp::{Ramp, Shape};
 use super::{BLOCK, LANES, gain_of_db};
 use crate::Controls;
+use crate::compose::Lane;
 use crate::compose::{
     Edge, Form, GEN_LOOP_BARS, HAT_JITTER_S, Layer, Mood, Score, arrange, compose,
 };
 use crate::dsp::{NoiseStream, SAMPLE_RATE, splitmix_draw};
-use crate::synth::{CRACKLE_POPS_PER_SEC, Lane, Part, bar_onset, crackle_pop, part, samples_at};
+use crate::synth::{CRACKLE_POPS_PER_SEC, Part, bar_onset, crackle_pop, part, samples_at};
 
 /// How long before its bar line a bar latches the controls asked for: the
 /// composer's earliest anticipation, a downbeat hat's half of
