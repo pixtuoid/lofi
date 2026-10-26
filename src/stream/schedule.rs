@@ -1325,8 +1325,9 @@ mod tests {
             .map(|&(at, ..)| at)
             .collect();
         // a bar whose latch a hit of the bar before still rings over, alone
-        // until the bar's own first hit
-        let (bar, first) = (1..bars.len() - 2)
+        // until the bar's own first hit, the bar before not the song's first,
+        // whose latch is the song's own controls
+        let (bar, first) = (2..bars.len() - 2)
             .find_map(|bar| {
                 let latch = bars[bar] - anticipation;
                 let first = onsets.iter().copied().find(|&at| at >= latch)?;
