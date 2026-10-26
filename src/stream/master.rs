@@ -13,7 +13,7 @@ pub const TIER_INTENSITIES: [f32; 3] = [0.0, 0.5, 1.0];
 /// Each lane's gain at each of [`TIER_INTENSITIES`]: pixtuoid's `TierGain`s,
 /// moved here from
 /// <https://github.com/pixtuoid/pixtuoid/blob/a63f1782f477c357666e71a9c1147090b47fe17d/crates/pixtuoid-scene/src/audio/mod.rs#L98-L107>,
-/// but the lead's at the working tiers.
+/// but the lead's at the working tiers, and the bass's under [`BASS_TRIM_DB`].
 fn tier_gains(lane: Lane) -> [f32; 3] {
     match lane {
         Lane::Pad => [0.75, 0.70, 0.65],
