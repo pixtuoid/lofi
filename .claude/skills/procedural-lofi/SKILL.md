@@ -205,7 +205,7 @@ constraint and re-batch), and every taste axis is a data table or named const wi
 1. Write the voice as a pure note fn in `synth.rs`, a `NoteVoice` rendered at the rate it
    is given, physics-first then tuned by ear/fingerprint (Phase 1-2 of this skill still apply).
 2. Add a `compose::LeadVoice` variant + its arm in `LeadVoice::voice` (the ONE dispatch).
-3. Give it a weight in its mood's `Style::voices` — the voice draws from its own `Stage`'s
+3. Give it a weight in its mood's `Style::voices` — the voice draws from `Stage::LeadVoice`'s
    stream, so a new voice never recomposes a seed's notes.
 4. Extend the distribution property test; run the compose suite (fast — no synthesis).
 5. Render the batch the judge scores (`cargo run --release --example lofi_audition -- --batch

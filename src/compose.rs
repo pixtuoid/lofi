@@ -452,7 +452,7 @@ pub(crate) enum Stage {
     Keys = 5,
     Drums = 6,
     Bass = 7,
-    Voice = 8,
+    LeadVoice = 8,
 }
 
 impl Stage {
@@ -1608,7 +1608,7 @@ fn composed(mood: Mood, seed: u64) -> (Score, Harmony) {
     let keys = keys(&mut stream(Stage::Keys), &harmony.bars, &style.keys, beat_s);
     let drums = drums(&mut stream(Stage::Drums), &style.drums, beat_s);
     let bass = bass(&mut stream(Stage::Bass), &harmony.bars, &style.bass, beat_s);
-    let lead_voice = kind(stream(Stage::Voice).unit(), style.voices);
+    let lead_voice = kind(stream(Stage::LeadVoice).unit(), style.voices);
     let score = Score {
         mood,
         bpm,
