@@ -1472,8 +1472,9 @@ fn groove(rng: &mut NoiseStream, g: &GrooveTemplate, beat_s: f32) -> Vec<Hit> {
 /// both sides.
 pub const BASS_LOW: u8 = 31;
 
-/// The note under which no two voices sound closer than a fifth: LOFI-BIBLE.md
-/// R7's low-interval limit.
+/// The note a chord voice under which, within a fifth of the bass, drops the
+/// bass an octave: LOFI-BIBLE.md R7's rule for the bass against the chords,
+/// whose own voices keep R7's low interval limits.
 pub const LOW_INTERVAL_LIMIT: u8 = 48;
 
 /// Whether a `bass` note sounds within a fifth of `voice` under
