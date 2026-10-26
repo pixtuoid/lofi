@@ -341,11 +341,12 @@ const LONG_INTRO_P: f32 = 0.65;
 /// the median song between the two corpora's.
 const PHRASES: [usize; 3] = [4, 5, 6];
 
-/// A sparse outro's bars, an edged one's (short, long), and the long one's
-/// share; the ring-out's bars. Opinion within the corpus's outro lengths.
-const SPARSE_OUTRO_BARS: usize = 4;
-const EDGED_OUTRO_BARS: [usize; 2] = [4, 8];
-const LONG_EDGED_OUTRO_P: f32 = 0.3;
+/// A sparse or edged outro's bars, short or long, the long one's share for
+/// each, and the ring-out's bars: fitted to the corpus's outro lengths, P25
+/// 7 s, P50 16 s, P75 28 s (opinion).
+const OUTRO_BARS: [usize; 2] = [4, 8];
+const LONG_SPARSE_OUTRO_P: f32 = 0.4;
+const LONG_EDGED_OUTRO_P: f32 = 0.5;
 const RING_OUT_BARS: usize = 2;
 
 /// The thinning's span: the phrase's last half, or with this chance all of it.
@@ -353,11 +354,21 @@ const WHOLE_THINNING_P: f32 = 0.4;
 /// The bass leaves with the beat in a break: the corpus's 52%.
 const LOW_WITH_BREAK_P: f32 = 0.5;
 
-/// A dense phrase cuts its beat for its last bar or two with this chance,
-/// the two-bar cut with the second.
-const CUT_P: f32 = 0.15;
-const LONG_CUT_P: f32 = 0.3;
-const CUT_BARS: [usize; 2] = [1, 2];
+/// Whether a song cuts its beat at all, then each dense phrase from
+/// `FIRST_CUT_PHRASE` on cuts its last bars with `CUT_P`, so the cuts cluster
+/// as the corpus's do (drops per track P50 1, P75 2, P90 3); the first dense
+/// core plays through, as the first drop sits near the track's middle (P50
+/// 0.45). Fitted to the corpus (opinion).
+const CUTTING_P: f32 = 0.5;
+const CUT_P: f32 = 0.75;
+const FIRST_CUT_PHRASE: usize = 1;
+
+/// A cut's bars and their weights, fitted to the corpus's drop lengths (1 bar
+/// 40 %, 2 bars 13 %, 3 bars 15 % of drops, a break making the rest), and
+/// the chance the bass leaves with it (the corpus's bass drops are 41 % in
+/// the beat's).
+const CUT_BARS: [(usize, u32); 3] = [(1, 55), (2, 20), (3, 25)];
+const LOW_WITH_CUT_P: f32 = 0.3;
 
 /// The bass sits out the last half of the phrase after the thinning with this
 /// chance, in bodies of at least `BASS_DROP_MIN_PHRASES`.
@@ -399,15 +410,17 @@ pub(crate) fn arrange(seed: u64) -> Form {
     let thinning = kind(rng.unit(), &THINNINGS);
     let whole = chance(&mut rng, WHOLE_THINNING_P);
     let low_with_break = chance(&mut rng, LOW_WITH_BREAK_P);
-    let cuts: [Option<usize>; PHRASES[PHRASES.len() - 1]] = std::array::from_fn(|_| {
+    let cutting = chance(&mut rng, CUTTING_P);
+    let cuts: [Option<(usize, bool)>; PHRASES[PHRASES.len() - 1]] = std::array::from_fn(|_| {
         let cut = chance(&mut rng, CUT_P);
-        let long = chance(&mut rng, LONG_CUT_P);
-        cut.then_some(CUT_BARS[usize::from(long)])
+        let bars = kind(rng.unit(), &CUT_BARS);
+        let low = chance(&mut rng, LOW_WITH_CUT_P);
+        (cutting && cut).then_some((bars, low))
     });
     let bass_drop = chance(&mut rng, BASS_DROP_P);
     let dip = chance(&mut rng, DIP_P);
     let closing = kind(rng.unit(), &OUTRO_KINDS);
-    let long_outro = chance(&mut rng, LONG_EDGED_OUTRO_P);
+    let long_outro = rng.unit();
 
     let (intro_plays, intro, entry) = match opening {
         Opening::Sparse(plays) => (plays, INTRO_BARS[usize::from(long_intro)], Edge::Plain),
@@ -445,13 +458,15 @@ pub(crate) fn arrange(seed: u64) -> Form {
     let opens_on_beat = |p: usize| p != thin || !(thinning == Thinning::Break && whole);
     let mut phrase_1_cut = false;
     for (p, cut) in cuts.iter().enumerate().take(phrases - 1) {
-        if let Some(len) = cut
+        if let Some((len, low)) = cut
+            && p >= FIRST_CUT_PHRASE
             && p != thin
             && opens_on_beat(p + 1)
         {
             let end = (p + 1) * GEN_LOOP_BARS;
             for bar in &mut body[end - len..end] {
                 bar.drums = false;
+                bar.bass &= !low;
             }
             phrase_1_cut |= p == 1;
         }
@@ -466,8 +481,9 @@ pub(crate) fn arrange(seed: u64) -> Form {
 
     let (outro, exit) = match closing {
         Closing::Sparse(p) => {
-            plays.extend([p; SPARSE_OUTRO_BARS]);
-            (SPARSE_OUTRO_BARS, Edge::Plain)
+            let bars = OUTRO_BARS[usize::from(long_outro < LONG_SPARSE_OUTRO_P)];
+            plays.extend(std::iter::repeat_n(p, bars));
+            (bars, Edge::Plain)
         }
         Closing::RingOut => {
             plays.extend([
@@ -480,7 +496,7 @@ pub(crate) fn arrange(seed: u64) -> Form {
             (RING_OUT_BARS, Edge::Plain)
         }
         Closing::Edged(edge) => {
-            let bars = EDGED_OUTRO_BARS[usize::from(long_outro)];
+            let bars = OUTRO_BARS[usize::from(long_outro < LONG_EDGED_OUTRO_P)];
             plays.extend(std::iter::repeat_n(Plays::BAND, bars));
             (bars, edge)
         }
@@ -588,15 +604,16 @@ mod tests {
             // a row changes on a 4-bar line, but for a cut or a ring-out
             let cuts: Vec<(usize, usize)> = runs(&form, body(&form), |p| !p.drums)
                 .into_iter()
-                .filter(|&(_, len)| len <= 2)
+                .filter(|&(_, len)| len <= CUT_BARS[CUT_BARS.len() - 1].0)
                 .collect();
             for bar in 1..form.bars() {
                 if ring_out && bar == last {
                     continue;
                 }
                 let (mut a, b) = (*form.plays(bar - 1), *form.plays(bar));
+                // a cut may take the bass with the beat
                 if cuts.iter().any(|&(first, _)| first == bar) {
-                    a.drums = b.drums;
+                    (a.drums, a.bass) = (b.drums, b.bass);
                 }
                 if a != b {
                     assert_eq!(
@@ -679,9 +696,14 @@ mod tests {
         assert_eq!(OUTRO_KINDS.map(|(_, w)| w), [14, 11, 10, 18, 31, 7, 4]);
     }
 
-    fn median(mut xs: Vec<f32>) -> f32 {
+    /// The value a share `p` of `xs` sits at or under.
+    fn percentile(mut xs: Vec<f32>, p: f32) -> f32 {
         xs.sort_by(f32::total_cmp);
-        xs[xs.len() / 2]
+        xs[((xs.len() as f32 * p) as usize).min(xs.len() - 1)]
+    }
+
+    fn median(xs: Vec<f32>) -> f32 {
+        percentile(xs, 0.5)
     }
 
     fn share(hits: usize, of: usize) -> f32 {
@@ -695,6 +717,8 @@ mod tests {
     fn the_forms_land_in_the_measured_corpus() {
         let (mut songs, mut outros) = (Vec::new(), Vec::new());
         let (mut intros, mut eight, mut drum, mut bass, mut first) = (0, 0, 0, 0, Vec::new());
+        let (mut counts, mut lengths, mut long, mut alone, mut with) =
+            (Vec::new(), Vec::new(), 0, 0, 0);
         for (seed, form) in forms() {
             for mood in [Mood::Day, Mood::Night] {
                 let bar_s = compose(mood, seed).bar_s();
@@ -705,20 +729,59 @@ mod tests {
             eight += usize::from(form.intro() == 8);
             let drops = runs(&form, body(&form), |p| !p.drums);
             drum += usize::from(!drops.is_empty());
-            bass += usize::from(!runs(&form, body(&form), |p| !p.bass).is_empty());
+            counts.push(drops.len() as f32);
+            lengths.extend(drops.iter().map(|&(_, len)| len));
+            long += usize::from(drops.iter().any(|&(_, len)| len >= 4));
+            let bass_drops = runs(&form, body(&form), |p| !p.bass);
+            bass += usize::from(!bass_drops.is_empty());
+            for (at, len) in bass_drops {
+                let beat_kept = (at..at + len).all(|bar| form.plays(bar).drums);
+                (alone, with) = (
+                    alone + usize::from(beat_kept),
+                    with + usize::from(!beat_kept),
+                );
+            }
             if let Some(&(bar, _)) = drops.first() {
                 first.push(bar as f32 / form.bars() as f32);
             }
         }
+        let bars = |n: usize| {
+            share(
+                lengths.iter().filter(|&&len| len == n).count(),
+                lengths.len(),
+            )
+        };
         let n = FORMS as usize;
         let checks = [
             ("median song s", median(songs), 147.0, 212.0),
             ("intro share", share(intros, n), 0.9, 1.0),
             ("8-bar share of intros", share(eight, intros), 0.55, 0.75),
-            ("median outro s", median(outros), 7.0, 28.0),
+            ("median outro s", median(outros.clone()), 7.0, 28.0),
             ("drum-drop share", share(drum, n), 0.5, 0.7),
             ("median first-drop position", median(first), 0.38, 0.56),
             ("bass-drop share", share(bass, n), 0.64, 0.84),
+            (
+                "drum drops per song, P75",
+                percentile(counts.clone(), 0.75),
+                2.0,
+                3.0,
+            ),
+            (
+                "drum drops per song, P90",
+                percentile(counts, 0.9),
+                2.0,
+                4.0,
+            ),
+            ("1-bar share of drum drops", bars(1), 0.3, 0.5),
+            ("3-bar share of drum drops", bars(3), 0.08, 0.25),
+            ("share with a 4+ bar drum drop", share(long, n), 0.15, 0.35),
+            (
+                "bass drops that keep the beat",
+                share(alone, alone + with),
+                0.45,
+                0.7,
+            ),
+            ("outro s, P75", percentile(outros.clone(), 0.75), 14.0, 42.0),
         ];
         for (name, value, lo, hi) in checks {
             assert!(
@@ -754,7 +817,7 @@ mod tests {
         assert_eq!(h, FORM_GOLDEN, "{h:#018x}");
     }
 
-    const FORM_GOLDEN: u64 = 0x369c_4d6c_bf26_9767;
+    const FORM_GOLDEN: u64 = 0xf625_62fa_d799_fb89;
 
     #[test]
     fn a_form_prints_its_parts() {
