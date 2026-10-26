@@ -200,10 +200,7 @@ impl Performance {
     /// `max`, [`BLOCK`] and the frames to the playing song's next latch, so
     /// each bar latches on its own frame however the calls chunk the render.
     fn mix_next(&mut self, max: usize) {
-        self.start_due_song();
-        self.schedule.latch_due(self.asked.clamped());
-        let n = max.min(BLOCK).min(self.schedule.until_latch());
-        self.schedule.play(n);
+        let n = self.schedule.step(self.asked.clamped(), max);
         let (lanes, plate) = (self.schedule.sums(), self.schedule.returned());
         self.mix.clear();
         self.mix.extend((0..n).map(|i| {
@@ -218,18 +215,10 @@ impl Performance {
         self.position
     }
 
-    /// Starts the next song if [`position`](Self::position) is its first bar,
-    /// under the controls asked for last.
-    fn start_due_song(&mut self) {
-        if self.schedule.song_left() == 0 {
-            self.schedule.start_song(self.asked.clamped());
-        }
-    }
-
     /// The frames from [`position`](Self::position) to the next song's first
     /// bar, the song at `position` started first if it is due.
     pub(crate) fn finish_song(&mut self) -> Vec<Frame> {
-        self.start_due_song();
+        self.schedule.start_if_due(self.asked.clamped());
         let mut out = vec![Frame::default(); self.schedule.song_left()];
         self.render(&mut out);
         out

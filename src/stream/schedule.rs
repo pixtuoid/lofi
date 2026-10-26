@@ -304,9 +304,33 @@ impl Schedule {
         self.song.as_ref().map(|song| &song.score)
     }
 
+    /// Plays the next step under `controls`, the ones asked for last: the
+    /// next song started if its first bar is due and the playing song's next
+    /// bar latched if this is its latch frame, then at most `max` frames,
+    /// [`BLOCK`] and the frames to the next latch, as CLAP's process loop
+    /// handles "every events that happrens at the frame "i"" and then
+    /// processes "every samples until the next event"
+    /// (<https://github.com/free-audio/clap/blob/main/src/plugin-template.c>).
+    /// Returns the frames it played, whose sums [`sums`](Self::sums) and
+    /// [`returned`](Self::returned) read.
+    pub(crate) fn step(&mut self, controls: Controls, max: usize) -> usize {
+        self.start_if_due(controls);
+        self.latch_due(controls);
+        let n = max.min(BLOCK).min(self.until_latch());
+        self.play(n);
+        n
+    }
+
+    /// Starts the next song under `controls` if its first bar is due.
+    pub(crate) fn start_if_due(&mut self, controls: Controls) {
+        if self.song_left() == 0 {
+            self.start_song(controls);
+        }
+    }
+
     /// Starts the next song, composed for `controls`, which its first bar
     /// latches.
-    pub(crate) fn start_song(&mut self, controls: Controls) {
+    fn start_song(&mut self, controls: Controls) {
         let song = self.next_song(controls);
         self.start(song);
     }
@@ -330,7 +354,7 @@ impl Schedule {
 
     /// Frames until the playing song's next latch frame or its end, whichever
     /// comes first: as far as one step may play.
-    pub(crate) fn until_latch(&self) -> usize {
+    fn until_latch(&self) -> usize {
         self.song.as_ref().map_or(0, |song| {
             let next = song.next_latch().unwrap_or(song.window.len);
             next.min(song.window.len) - song.played
@@ -339,7 +363,7 @@ impl Schedule {
 
     /// Latches `controls` for the playing song's next bar if this is its latch
     /// frame.
-    pub(crate) fn latch_due(&mut self, controls: Controls) {
+    fn latch_due(&mut self, controls: Controls) {
         if let Some(song) = &mut self.song
             && song.next_latch() == Some(song.played)
         {
@@ -968,16 +992,9 @@ mod tests {
                 asked = c;
                 calls.next();
             }
-            if run.song_left() == 0 {
-                run.start_song(asked);
-            }
-            run.latch_due(asked);
             let next_call = calls.peek().map_or(to, |&&(call, _)| call);
-            let n = BLOCK
-                .min(run.until_latch())
-                .min(next_call - at)
-                .min(to - at);
-            for (lane, sum) in lanes.iter_mut().zip(run.play(n)) {
+            let n = run.step(asked, (next_call - at).min(to - at));
+            for (lane, sum) in lanes.iter_mut().zip(run.sums()) {
                 lane.extend_from_slice(sum);
             }
             at += n;
@@ -1636,16 +1653,9 @@ mod tests {
             if at == call {
                 asked = moderate;
             }
-            if run.song_left() == 0 {
-                run.start_song(asked);
-            }
-            run.latch_due(asked);
             let next_call = if at < call { call } else { bars[6] };
-            let n = BLOCK
-                .min(run.until_latch())
-                .min(next_call - at)
-                .min(bars[6] - at);
-            heard.extend_from_slice(&run.play(n)[drums()]);
+            run.step(asked, (next_call - at).min(bars[6] - at));
+            heard.extend_from_slice(&run.sums()[drums()]);
         }
         assert_eq!(
             energy(&heard[..entry]),
