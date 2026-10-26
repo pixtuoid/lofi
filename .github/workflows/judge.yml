@@ -29,7 +29,7 @@ jobs:
     permissions:
       contents: read
     outputs:
-      changed: ${{ steps.compare.outputs.changed }}
+      changed: ${{ steps.validate.outputs.changed }}
       merge-base: ${{ steps.merge-base.outputs.sha }}
       new: ${{ steps.validate.outputs.new }}
       gone: ${{ steps.validate.outputs.gone }}
@@ -62,10 +62,11 @@ jobs:
             test -z "$(git -C "$tree" status --porcelain)"
             git -C "$tree" rev-parse HEAD > "$out/COMMIT"
           done
-      # the judge's own validator: a take on one side only, as a grown matrix
-      # or a rename leaves, is listed new or gone and left unscored, never
-      # read as "no sound change"
-      - name: Validate the rendered batch
+      # the judge's own validator pairs the batch: a take on one side only, as
+      # a grown matrix or a rename leaves, is listed new or gone and left
+      # unscored, never read as "no sound change"; a byte-identical pair can
+      # only tie, so only the pairs that differ go up, with a list of the rest
+      - name: Validate the rendered batch and stage the pairs that differ
         id: validate
         env:
           MERGE_BASE: ${{ steps.merge-base.outputs.sha }}
@@ -73,37 +74,17 @@ jobs:
         run: |
           set -uo pipefail
           if ! takes=$(python3 -I .claude/skills/procedural-lofi/judge/validate_batch.py "$RUNNER_TEMP/batch" \
-            --base "$MERGE_BASE" --cand "$HEAD_SHA" 2>&1); then
+            --base "$MERGE_BASE" --cand "$HEAD_SHA" --stage "$RUNNER_TEMP/ab-batch" 2>&1); then
             printf '%s\n' "$takes" >> "$GITHUB_STEP_SUMMARY"
             printf '::error::%s\n' "$takes"
             exit 1
           fi
-          printf '%s\n' "$takes" | jq -r '"new=\(.new | join(" "))", "gone=\(.gone | join(" "))"' >> "$GITHUB_OUTPUT"
-      # a byte-identical pair can only tie, so only the pairs that differ go up
-      - id: compare
-        run: |
-          set -euo pipefail
-          batch="$RUNNER_TEMP/batch" up="$RUNNER_TEMP/ab-batch"
-          mkdir -p "$up/base" "$up/cand"
-          cp "$batch/base/COMMIT" "$up/base/COMMIT"
-          cp "$batch/cand/COMMIT" "$up/cand/COMMIT"
-          pairs=0 differ=0
-          for take in "$batch"/base/*.wav; do
-            name=$(basename "$take")
-            [ -f "$batch/cand/$name" ] || continue
-            pairs=$((pairs + 1))
-            if ! cmp -s "$take" "$batch/cand/$name"; then
-              mv "$take" "$up/base/$name"
-              mv "$batch/cand/$name" "$up/cand/$name"
-              differ=$((differ + 1))
-            fi
-          done
-          echo "$differ of $pairs pairs differ" >> "$GITHUB_STEP_SUMMARY"
-          if [ "$differ" -gt 0 ]; then echo changed=true; else echo changed=false; fi >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$takes" | jq -r '"\(.differ | length) of \(.paired | length) pairs differ"' >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' "$takes" | jq -r '"new=\(.new | join(" "))", "gone=\(.gone | join(" "))", "changed=\(.differ | length > 0)"' >> "$GITHUB_OUTPUT"
       # `judge` skips a fork's PR, whose run gets no secret
       # (https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflows-in-forked-repositories),
       # so no job would read it
-      - if: steps.compare.outputs.changed == 'true' && github.event.pull_request.head.repo.full_name == github.repository
+      - if: steps.validate.outputs.changed == 'true' && github.event.pull_request.head.repo.full_name == github.repository
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ab-batch
@@ -142,19 +123,14 @@ jobs:
         with:
           name: ab-batch
           path: ${{ runner.temp }}/ab-batch
-      - name: Validate the batch
+      # the base branch's validator checks the batch against the commits it
+      # must have rendered at, before any byte of it goes up
+      - name: Judge on Modal
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          set -euo pipefail
-          merge_base=$(gh api "repos/$REPO/compare/$BASE_SHA...$HEAD_SHA" --jq .merge_base_commit.sha)
-          python3 -I .claude/skills/procedural-lofi/judge/validate_batch.py "$RUNNER_TEMP/ab-batch" \
-            --base "$merge_base" --cand "$HEAD_SHA"
-      - name: Judge on Modal
-        env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
         # the default shell is "bash -e {0}"
@@ -162,9 +138,11 @@ jobs:
         # so the exit code is caught, not left to end the step
         run: |
           set -uo pipefail
+          merge_base=$(gh api "repos/$REPO/compare/$BASE_SHA...$HEAD_SHA" --jq .merge_base_commit.sha) || exit 2
           code=0
           "$RUNNER_TEMP/modal/bin/modal" run .claude/skills/procedural-lofi/judge/modal_judge.py::judge \
-            --batch "$RUNNER_TEMP/ab-batch" --out "$RUNNER_TEMP/verdict" || code=$?
+            --batch "$RUNNER_TEMP/ab-batch" --base "$merge_base" --cand "$HEAD_SHA" \
+            --out "$RUNNER_TEMP/verdict" || code=$?
           # 1 is a verdict in verdict.py's FAILING, a score `verdict` reports; anything
           # higher stopped before one
           [ "$code" -le 1 ]

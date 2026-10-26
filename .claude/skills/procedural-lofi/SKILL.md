@@ -202,14 +202,14 @@ constraint and re-batch), and every taste axis is a data table or named const wi
    committed), from a venv outside the repo, set up once; CI's `judge.yml` renders the same batch and
    judges it on Modal (`judge/modal_judge.py`) for every PR that changes the render:
    ```bash
-   J=~/.cache/lofi-judge; S=.claude/skills/procedural-lofi; uv venv --python 3.12 $J
-   uv pip install --python $J/bin/python --require-hashes -r $S/judge/judge-requirements.txt
+   J=~/.cache/lofi-judge; S=.claude/skills/procedural-lofi; L=$S/judge/judge-requirements.txt; uv venv --python 3.12 $J
+   uv pip install --python $J/bin/python --require-hashes -r $L --build-constraints $L --require-build-hashes
    git clone https://github.com/dgtql/MuQ-Eval $J/MuQ-Eval
    git -C $J/MuQ-Eval checkout --detach "$(sed -nE 's/^MUQ_EVAL_COMMIT = "(.*)"$/\1/p' $S/scripts/ab_judge.py)"
    $J/bin/python $S/scripts/ab_judge.py DIR --refs REFS
    ```
    The owner's blind listen is optional and, when given, overrides the judge:
-   `python3 .claude/skills/procedural-lofi/scripts/ab_listen.py DIR/base DIR/cand --out DIR/verdict.json`.
+   `python3 .claude/skills/procedural-lofi/scripts/ab_listen.py DIR --out DIR/verdict.json`.
 
 Mix LANES stay instrument-blind (`stream::master::lane_gain` sees lanes, never voices; a
 consumer sets `Controls` and receives `Frame`s) — a lane is a busy-ness ROLE, an instrument a

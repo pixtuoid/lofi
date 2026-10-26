@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""Blind A/B of a sound change. Pairs the renders a baseline batch and a
-candidate batch share by name (rendered as SKILL.md's GENERATOR loop step 5
-says), plays each pair in a random order with the candidate on a random
-side, and records every verdict with its unblinding.
+"""Blind A/B of a sound change. Pairs the takes a batch's base/ and cand/
+share by name (rendered as SKILL.md's GENERATOR loop step 5 says), plays
+each pair that differs in a random order with the candidate on a random side,
+and records every verdict with its unblinding. A byte-identical pair is left
+out: no ear tells its sides apart.
 Verdicts save after each pair, and a rerun with the same --out resumes.
 
-Usage: python3 ab_listen.py BASE_DIR CAND_DIR --out VERDICT.json
+Usage: python3 ab_listen.py DIR --out VERDICT.json
 """
 
 import argparse
 import json
 import os
 import random
-import re
 import shutil
 import subprocess
 import sys
@@ -20,8 +20,10 @@ import tempfile
 from collections import Counter
 from pathlib import Path
 
-# lofi_audition's unshuffled names: gen_<mood>_<tier or solo lane>_<seed>.wav
-NAME = re.compile(r"gen_(?P<mood>[a-z]+)_(?P<mix>[a-z]+)_\d+\.wav")
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "judge"))
+from validate_batch import NAME, Invalid, validate
+
 VERDICTS = ("cand", "base", "same")
 
 
@@ -67,26 +69,24 @@ def tally(pairs):
 
 def main():
     ap = argparse.ArgumentParser(description="Blind A/B of a sound change.")
-    ap.add_argument("base", type=Path, help="the baseline batch's directory")
-    ap.add_argument("cand", type=Path, help="the candidate batch's directory")
+    ap.add_argument("dir", type=Path, help="the batch: base/ and cand/ of same-named takes")
     ap.add_argument("--out", type=Path, required=True, help="the verdict file (JSON)")
     args = ap.parse_args()
 
-    dirs = {"base": str(args.base.resolve()), "cand": str(args.cand.resolve())}
+    dirs = {"dir": str(args.dir.resolve())}
     pairs = load(args.out, dirs)
     judged = {p["name"] for p in pairs}
-    base = {p.name for p in args.base.glob("*.wav")}
-    cand = {p.name for p in args.cand.glob("*.wav")}
-    if base ^ cand:
-        print(f"unpaired, left out: {', '.join(sorted(base ^ cand))}")
-    # a --shuffle run draws its own take_XX order, so equal names there are
-    # different takes
-    opaque = sorted(n for n in base & cand if not NAME.fullmatch(n))
-    if opaque:
-        sys.exit(f"not unshuffled lofi_audition names, so a pair may hold two takes: {', '.join(opaque)}")
-    names = sorted((base & cand) - judged)
+    try:
+        takes = validate(args.dir)
+    except Invalid as e:
+        sys.exit(f"invalid batch: {e}")
+    if takes.new or takes.gone:
+        print(f"unpaired, left out: {', '.join(takes.new + takes.gone)}")
+    if takes.identical:
+        print(f"byte-identical, left out: {len(takes.identical)} pairs")
+    names = sorted(set(takes.differ) - judged)
     if not names and not pairs:
-        sys.exit("no .wav name is in both directories")
+        sys.exit("no pair differs")
     rng = random.SystemRandom()
     rng.shuffle(names)
     afplay = shutil.which("afplay")
@@ -98,7 +98,7 @@ def main():
         for i, name in enumerate(names, 1):
             cand_side = rng.choice("ab")
             for side in "ab":
-                src = (args.cand if side == cand_side else args.base) / name
+                src = args.dir / ("cand" if side == cand_side else "base") / name
                 shutil.copyfile(src, blind / f"{side.upper()}.wav")
             print(f"\npair {i}/{len(names)}")
             while True:

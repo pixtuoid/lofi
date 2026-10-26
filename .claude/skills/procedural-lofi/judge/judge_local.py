@@ -21,16 +21,15 @@ def exit_code(outcome):
     return EXIT_CODES.get(outcome, NOT_A_SCORE)
 
 
-def select(root, force_score):
+def select(root, base_sha, cand_sha, force_score):
     """The batch's `Takes` and the pairs to send: the ones whose sides
     differ, since a byte-identical pair can only tie, or with `force_score`
-    every one. The batch is validated first, against the commits its own
-    COMMIT files name, so a batch with no pair or no COMMIT is refused
-    rather than read as unchanged."""
-    shas = [(root / side / "COMMIT").read_text().strip() if (root / side / "COMMIT").is_file() else "" for side in ("base", "cand")]
-    takes = validate(root, *shas)
-    differ = [n for n in takes.paired if force_score or (root / "base" / n).read_bytes() != (root / "cand" / n).read_bytes()]
-    return takes, differ
+    every one the batch holds. The batch is validated first, against the
+    commits the caller names, so a batch with no pair, or another commit's,
+    is refused rather than read as unchanged."""
+    takes = validate(root, base_sha, cand_sha)
+    held = [n for n in takes.paired if (root / "base" / n).exists()]
+    return takes, held if force_score else takes.differ
 
 
 def redact(text, tracks):
