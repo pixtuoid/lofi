@@ -882,6 +882,7 @@ mod tests {
     use crate::compose::{Plays, fnv1a, spans_a_form};
     use crate::stream::lanes::{COEFF_BLOCK, FILTERED_HZ};
     use crate::stream::master::TIER_INTENSITIES;
+    use crate::synth::BASS;
 
     /// Song `k` of `seed`'s run under `c` at `sr`, playing [`Form::plain`].
     fn plain_song(seed: u64, k: u64, c: Controls, sr: u32) -> Song {
@@ -1434,16 +1435,18 @@ mod tests {
 
     #[test]
     fn a_run_is_its_songs_each_played_alone() {
-        // a seed whose first song fades and filters, so its tails cross the
-        // join through every edge
-        let (seed, c, sr) = (1, Controls::default(), SAMPLE_RATE);
+        let (c, sr) = (Controls::default(), SAMPLE_RATE);
+        // a seed whose two songs mute and edge, so their tails cross the join
+        // through a form
+        let seed = (0..64)
+            .find(|&seed| spans_a_form(&[song_form(seed, 0, c), song_form(seed, 1, c)]).is_ok())
+            .expect("a seed's songs span a form");
         // levels that differ in every lane, so a tail heard at the next
         // song's levels shows
         let levels = [UNITY, [0.5; LANES]];
         let mut run = Schedule::new(seed, 0, sr);
         let mut first = Song::new(seed, 0, c, sr).at_levels(levels[0]);
         let mut second = Song::new(seed, 1, c, sr).at_levels(levels[1]);
-        spans_a_form(&[song_form(seed, 0, c), song_form(seed, 1, c)]).unwrap();
         let mut buf = Scratch::new();
         // through song 1's first loop, past every tail of song 0
         let span = first.window.len + samples_at(second.score.loop_secs(), sr);
@@ -1522,12 +1525,12 @@ mod tests {
     }
 
     /// Every bar frame and every cue of seeds 0..4's first two songs by day
-    /// and by night, played plain: recorded on 527372e, before songs had a
-    /// form, so a window that moves a note moves this. The frames are
-    /// exact-rounded f32 products, so they hold on every platform.
+    /// and by night, played plain, so a window that moves a note moves this.
+    /// The frames are exact-rounded f32 products, so they hold on every
+    /// platform.
     #[test]
-    fn a_plain_form_plays_todays_frames() {
-        const TODAYS_FRAMES_GOLDEN: u64 = 0x0069_6c09_00db_6ad9;
+    fn a_plain_form_plays_every_cue_where_it_did() {
+        const PLAIN_FRAMES_GOLDEN: u64 = 0x57bb_21a9_97c9_7df9;
         let mut words: Vec<u64> = Vec::new();
         for daylight in [1.0, 0.0] {
             for seed in 0..4 {
@@ -1550,7 +1553,7 @@ mod tests {
             }
         }
         let h = fnv1a(words);
-        assert_eq!(h, TODAYS_FRAMES_GOLDEN, "{h:#018x}");
+        assert_eq!(h, PLAIN_FRAMES_GOLDEN, "{h:#018x}");
     }
 
     /// The index of `lane` in [`Lane::ALL`].
@@ -1574,12 +1577,22 @@ mod tests {
 
     #[test]
     fn a_muted_note_strikes_nothing_and_its_tail_rings_on() {
-        let (seed, c, bar) = (3, Controls::default(), 9);
+        let (seed, c) = (3, Controls::default());
+        let mut whole = plain_song(seed, 0, c, SAMPLE_RATE).at_levels(UNITY);
+        let bass = index(Lane::Bass);
+        let ring = samples_at(BASS.at(whole.score.mood).dur_s, SAMPLE_RATE);
+        let lines = &whole.window.bars;
+        // a bar the last one's bass rings into, so muting it can't cut that
+        // tail
+        let bar = (1..lines.len() - 1)
+            .find(|&bar| {
+                (whole.cues[bass].order.iter())
+                    .any(|&(at, ..)| at < lines[bar] && at + ring > lines[bar])
+            })
+            .expect("a bass note rings over a bar line");
         let mut form = Form::plain();
         form.plays_mut(bar).set(Layer::Bass, false);
         let mut muted = Song::with_form(seed, 0, c, form, SAMPLE_RATE).at_levels(UNITY);
-        let mut whole = plain_song(seed, 0, c, SAMPLE_RATE).at_levels(UNITY);
-        let bass = index(Lane::Bass);
         let anticipation = samples_at(ANTICIPATION_S, SAMPLE_RATE);
         let (latch, next) = (
             muted.window.bars[bar] - anticipation,
@@ -1600,7 +1613,7 @@ mod tests {
         let beat = samples_at(muted.score.beat_s(), SAMPLE_RATE);
         assert!(
             energy(&got[muted.window.bars[bar]..muted.window.bars[bar] + beat]) > 0.0,
-            "the bar-8 tail was cut"
+            "the last bar's tail was cut"
         );
         assert!(
             energy(&got[first..to]) < energy(&want[first..to]),

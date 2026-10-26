@@ -18,7 +18,7 @@
 
 use std::ops::RangeInclusive;
 
-use super::dsp::NoiseStream;
+use super::dsp::{NoiseStream, splitmix_draw, splitmix64};
 
 mod form;
 
@@ -240,8 +240,8 @@ struct LeadStyle {
     /// mood's frozen take's lead.
     lo: u8,
     hi: u8,
-    /// The chance a statement bar rests.
-    rest_p: f32,
+    /// The chance a statement bar rests, where the mood rests at all.
+    rest_p: Option<f32>,
     /// The most notes a statement bar draws: the most the mood's frozen
     /// takes sing in a bar.
     max_per_bar: usize,
@@ -288,8 +288,9 @@ struct BassStyle {
     answer_beat: f32,
     /// The chance the answer is the fifth, not the root again.
     fifth_p: f32,
-    /// The chance a bar picks up into the next a semitone under its root.
-    pickup_p: f32,
+    /// The chance a bar picks up into the next a semitone under its root,
+    /// where the mood picks up at all.
+    pickup_p: Option<f32>,
     /// The root's velocity; the answer's is [`ANSWER_SOFTER`] under it.
     velocity: Spread,
 }
@@ -303,7 +304,7 @@ const DAY: Style = Style {
     lead: LeadStyle {
         lo: 65,
         hi: 81,
-        rest_p: 0.0,
+        rest_p: None,
         max_per_bar: 3,
         velocity: Spread {
             base: 0.34,
@@ -323,7 +324,7 @@ const DAY: Style = Style {
         answer_p: 0.55,
         answer_beat: 2.5,
         fifth_p: 0.4,
-        pickup_p: 0.25,
+        pickup_p: Some(0.25),
         velocity: Spread {
             base: 0.62,
             span: 0.08,
@@ -345,7 +346,7 @@ const NIGHT: Style = Style {
     lead: LeadStyle {
         lo: 60,
         hi: 79,
-        rest_p: 0.5,
+        rest_p: Some(0.5),
         max_per_bar: 1,
         velocity: Spread {
             base: 0.25,
@@ -366,8 +367,7 @@ const NIGHT: Style = Style {
         // the old baked sub's pulse
         answer_beat: 2.0,
         fifth_p: 0.2,
-        // still drawn: deleting the draw would shift every later night draw
-        pickup_p: 0.0,
+        pickup_p: None,
         velocity: Spread {
             base: 0.55,
             span: 0.08,
@@ -440,8 +440,29 @@ const MAJOR_SEVENTH: u8 = 11;
 const NINTH: u8 = 2;
 const OCTAVE: u8 = 12;
 
-/// Seeds the loop's stream, as `form`'s salt seeds the form's.
-const LOOP_SALT: u64 = 0x10F1_C0DE;
+/// The stages a song is composed in. Each draws from its own stream, keyed
+/// by its fixed id, so a change to one stage's draws moves no other stage's,
+/// and a stage can join, leave or move without re-rolling the rest.
+#[derive(Clone, Copy)]
+pub(crate) enum Stage {
+    Form = 1,
+    Harmony = 2,
+    Tempo = 3,
+    Lead = 4,
+    Keys = 5,
+    Drums = 6,
+    Bass = 7,
+    Voice = 8,
+}
+
+impl Stage {
+    /// The stage's stream for song seed `seed`: the id folded into the hashed
+    /// seed, never added to the raw one, whose neighbours' streams would
+    /// overlap.
+    pub(crate) fn stream(self, seed: u64) -> NoiseStream {
+        NoiseStream::new(splitmix_draw(splitmix64(seed), self as u64))
+    }
+}
 
 /// One chord: its voicing, and its root's pitch class, which an inversion's
 /// lowest note is not.
@@ -984,7 +1005,7 @@ fn statement(rng: &mut NoiseStream, style: &LeadStyle) -> Vec<Vec<f32>> {
     let max = style.max_per_bar;
     let mut bars: Vec<Vec<f32>> = (0..PHRASE_BARS)
         .map(|_| {
-            if chance(rng, style.rest_p) {
+            if style.rest_p.is_some_and(|p| chance(rng, p)) {
                 return Vec::new();
             }
             let n = 1
@@ -1357,9 +1378,18 @@ fn push_kick(
     });
 }
 
-/// The drums stage: the kit `g` lays, clamped non-negative so a bar-0 jitter
-/// can't leave the loop.
-fn drums(rng: &mut NoiseStream, g: &GrooveTemplate, beat_s: f32) -> Vec<Hit> {
+/// The drums stage: a groove of the mood's, laid.
+fn drums(rng: &mut NoiseStream, grooves: &Grooves, beat_s: f32) -> Vec<Hit> {
+    let g = match *grooves {
+        Grooves::Drawn(pool) => &pool[pick(rng, pool.len())],
+        Grooves::Fixed(g) => g,
+    };
+    groove(rng, g, beat_s)
+}
+
+/// The kit `g` lays, clamped non-negative so a bar-0 jitter can't leave the
+/// loop.
+fn groove(rng: &mut NoiseStream, g: &GrooveTemplate, beat_s: f32) -> Vec<Hit> {
     let bar_s = beat_s * BEATS_PER_BAR;
     let mut out = Vec::new();
     for bar in 0..GEN_LOOP_BARS {
@@ -1470,7 +1500,7 @@ fn bass(
                 vel: answer_velocity.draw(rng),
             });
         }
-        if chance(rng, style.pickup_p)
+        if style.pickup_p.is_some_and(|p| chance(rng, p))
             && let Some(next) = bars.get(bar + 1)
         {
             // literal semitone below the folded next root (pc-folding rendered an
@@ -1570,22 +1600,15 @@ pub(crate) fn compose(mood: Mood, seed: u64) -> Score {
 /// whose roots and key the score's voices don't read.
 fn composed(mood: Mood, seed: u64) -> (Score, Harmony) {
     let style = mood.style();
-    let mut rng = NoiseStream::new(crate::dsp::splitmix64(seed ^ LOOP_SALT));
-    let harmony = harmony(&mut rng, &style.harmony);
-    let bpm = style.bpm.draw(&mut rng).round();
+    let stream = |stage: Stage| stage.stream(seed);
+    let harmony = harmony(&mut stream(Stage::Harmony), &style.harmony);
+    let bpm = style.bpm.draw(&mut stream(Stage::Tempo)).round();
     let beat_s = 60.0 / bpm;
-    let sparkle = lead(&mut rng, &harmony, &style.lead, beat_s);
-    let keys = keys(&mut rng, &harmony.bars, &style.keys, beat_s);
-    let groove = match style.drums {
-        Grooves::Drawn(pool) => &pool[pick(&mut rng, pool.len())],
-        Grooves::Fixed(groove) => groove,
-    };
-    let drums = drums(&mut rng, groove, beat_s);
-    let bass = bass(&mut rng, &harmony.bars, &style.bass, beat_s);
-    // drawn AFTER every musical draw, so a voice-registry change can never
-    // silently recompose an already-blessed seed's notes; ONE banded unit draw
-    // per mood, so growing a pool re-weights without lengthening the stream
-    let lead_voice = kind(rng.unit(), style.voices);
+    let sparkle = lead(&mut stream(Stage::Lead), &harmony, &style.lead, beat_s);
+    let keys = keys(&mut stream(Stage::Keys), &harmony.bars, &style.keys, beat_s);
+    let drums = drums(&mut stream(Stage::Drums), &style.drums, beat_s);
+    let bass = bass(&mut stream(Stage::Bass), &harmony.bars, &style.bass, beat_s);
+    let lead_voice = kind(stream(Stage::Voice).unit(), style.voices);
     let score = Score {
         mood,
         bpm,

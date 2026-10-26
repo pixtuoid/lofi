@@ -7,12 +7,7 @@ use std::fmt;
 use std::num::NonZeroUsize;
 use std::ops::Range;
 
-use super::{GEN_LOOP_BARS, Lane, chance, kind, pick};
-use crate::dsp::{NoiseStream, splitmix64};
-
-/// Seeds the form's own stream, so a change to the loop's draws never moves a
-/// form's, nor the reverse.
-const FORM_SALT: u64 = 0xF0_4A_55_ED;
+use super::{GEN_LOOP_BARS, Lane, Stage, chance, kind, pick};
 
 /// What a form arranges: R11's measured layers, whose "keys" band holds the
 /// lead too. The texture is in none: the room plays every bar of every song
@@ -510,7 +505,7 @@ const _: () = assert!(PHRASES[PHRASES.len() - 1] <= CUT_SLOTS);
 /// not its branch applies, so a change to one row of the grammar moves no
 /// other row's draws.
 pub(crate) fn arrange(seed: u64) -> Form {
-    let mut rng = NoiseStream::new(splitmix64(seed ^ FORM_SALT));
+    let mut rng = Stage::Form.stream(seed);
     let opening = kind(rng.unit(), &INTRO_KINDS);
     let long_intro = chance(&mut rng, LONG_INTRO_P);
     let phrases = PHRASES[pick(&mut rng, PHRASES.len())];
@@ -864,7 +859,7 @@ mod tests {
         assert_eq!(h, FORM_GOLDEN, "{h:#018x}");
     }
 
-    const FORM_GOLDEN: u64 = 0x3dec_540e_1881_cac9;
+    const FORM_GOLDEN: u64 = 0x15f0_9d70_5d4e_4ca0;
 
     #[test]
     fn a_form_prints_its_parts() {

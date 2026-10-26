@@ -207,10 +207,8 @@ pub(crate) struct Timeline {
 /// untied pairs each mood of the judge batch is built to reach.
 pub(crate) const JUDGE_MIN_UNTIED: usize = 8;
 
-/// The judge batch's seeds at `empty`, per mood in [`MOODS`] order: the fewest
-/// from 0 that give every lead voice the mood draws [`JUDGE_MIN_UNTIED`] takes,
-/// since `empty` is the tier where the lead sings alone over no beat or keys.
-const JUDGE_EMPTY_SEEDS: [u64; MOODS.len()] = [29, 28];
+/// The songs whose lead voices are every voice a mood draws.
+const VOICE_POOL_SEEDS: u64 = 256;
 
 /// The judge batch's seeds at each louder tier: [`JUDGE_MIN_UNTIED`] or more
 /// between them, so a change to a lane `empty` mutes still reaches the floor.
@@ -383,17 +381,21 @@ impl Batch {
                     ..*self
                 };
                 let tiers = (0..MOODS.len()).flat_map(|mood| {
+                    let empty = Batch {
+                        mood,
+                        start: 0,
+                        tier: Some(Tier::Empty),
+                        ..at
+                    };
                     [
-                        (Tier::Empty, JUDGE_EMPTY_SEEDS[mood]),
+                        (Tier::Empty, empty.lead_floor_seeds()),
                         (Tier::Moderate, JUDGE_TIER_SEEDS),
                         (Tier::Busy, JUDGE_TIER_SEEDS),
                     ]
                     .map(|(tier, seeds)| Batch {
-                        mood,
                         seeds,
-                        start: 0,
                         tier: Some(tier),
-                        ..at
+                        ..empty
                     })
                 });
                 // a sweep's takes split its seeds, so its group holds each once
@@ -423,6 +425,22 @@ impl Batch {
         self.sweep.map_or(self.tier().name(), |sweep| {
             sweep.starts()[self.sweep_start].0
         })
+    }
+
+    /// The fewest seeds from 0 that give every lead voice the take's mood
+    /// draws [`JUDGE_MIN_UNTIED`] takes: the judge's `empty` group, where the
+    /// lead sings alone over no beat or keys.
+    fn lead_floor_seeds(&self) -> u64 {
+        let voices: Vec<&str> = (0..VOICE_POOL_SEEDS)
+            .map(|seed| self.score(seed).lead_voice_name())
+            .collect();
+        let floor = |n: usize| {
+            (voices.iter())
+                .all(|v| voices[..n].iter().filter(|&w| w == v).count() >= JUDGE_MIN_UNTIED)
+        };
+        (1..=voices.len())
+            .find(|&n| floor(n))
+            .expect("the pool's songs give every voice the floor") as u64
     }
 
     pub(crate) fn seeds(&self) -> Range<u64> {
@@ -658,7 +676,7 @@ mod tests {
                 counts
             };
             // every voice the mood draws over far more seeds than the batch has
-            let pool = voices(0..256);
+            let pool = voices(0..VOICE_POOL_SEEDS);
             let short = |counts: &BTreeMap<&str, usize>| {
                 (pool.keys())
                     .find(|v| counts.get(*v).is_none_or(|&n| n < JUDGE_MIN_UNTIED))
