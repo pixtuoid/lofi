@@ -692,7 +692,7 @@ impl Room {
 mod tests {
     use super::*;
     use crate::Controls;
-    use crate::compose::{DrumKind, spans_a_form};
+    use crate::compose::{DrumKind, Hit, spans_a_form};
     use crate::dsp::{SAMPLE_RATE, band_energy_share};
     use crate::stream::BLOCK;
     use crate::stream::schedule::{Schedule, UNITY, song_form};
@@ -727,7 +727,11 @@ mod tests {
         // the flutter's swing of a frame: a stage sounding even one frame
         // early sounds before the kick
         let onset = samples_at(0.25 / WOW.0, sr);
-        let hits = [(0.0, DrumKind::Kick, 1.0)];
+        let hits = [Hit {
+            at: 0.0,
+            kind: DrumKind::Kick,
+            gain: 1.0,
+        }];
         let part = Part::Hits {
             hits: &hits,
             recipes: crate::synth::DRUMS,
