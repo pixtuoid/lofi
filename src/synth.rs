@@ -209,11 +209,12 @@ fn lofi_post(buf: &[f32], drive: f32) -> Vec<f32> {
     lowpass(&bumped, ROLLOFF_HZ)
 }
 
-/// ONE site, so a stem can't silently skip the ratified post: `buf`, which
-/// its first normalization's `gain_in` set the level of, through the tape and
+/// ONE site, so a stem can't silently skip the ratified post: `buf` to
+/// `peak`, which sets the level into the drive, then through the tape and
 /// back to `peak`.
-fn master(buf: &[f32], gain_in: f32, drive: f32, peak: f32) -> Staged {
-    let mut out = lofi_post(buf, drive);
+fn master(mut buf: Vec<f32>, drive: f32, peak: f32) -> Staged {
+    let gain_in = normalize(&mut buf, peak);
+    let mut out = lofi_post(&buf, drive);
     let gain = normalize(&mut out, peak);
     Staged {
         buf: out,
@@ -706,8 +707,7 @@ fn pad_core(mood: Mood, bar_s: f32, loop_bars: usize, bar: impl Fn(usize) -> Vec
     for (i, v) in buf.iter_mut().enumerate() {
         *v *= tone.bed_swell(i);
     }
-    let gain = normalize(&mut buf, tone.peak);
-    master(&buf, gain, DRIVE, tone.peak)
+    master(buf, DRIVE, tone.peak)
 }
 
 /// A note lane's stem over a loop `loop_secs` long: each of `events` through
@@ -729,9 +729,7 @@ fn events_stem_voiced(
             1.0,
         );
     }
-    let mut buf = lowpass(&buf, cutoff_hz);
-    let gain = normalize(&mut buf, peak);
-    master(&buf, gain, DRIVE, peak)
+    master(lowpass(&buf, cutoff_hz), DRIVE, peak)
 }
 
 /// The frozen night take's `part` through the shipped whole-lane core.
@@ -796,9 +794,7 @@ fn drums_core(
         let hit = drum_hit(rng, h.kind, SAMPLE_RATE);
         place(&mut buf, &hit, h.at, h.gain);
     }
-    let mut buf = lowpass(&buf, cutoff_hz);
-    let gain = normalize(&mut buf, peak);
-    master(&buf, gain, drive, peak)
+    master(lowpass(&buf, cutoff_hz), drive, peak)
 }
 
 /// The night texture's duck under each kick: down this far, then back up
@@ -1652,6 +1648,54 @@ mod tests {
                     "{name} hats/snare must be audible in 3.5-6.5k: {hats:.5}"
                 );
             }
+        }
+    }
+
+    /// The tape's two normalizations, as the staging stands in for them: the
+    /// first sets the input's peak, and the second the taped buffer's.
+    #[test]
+    fn the_master_reports_its_two_normalizations() {
+        const PEAK: f32 = 0.7;
+        let mut rng = NoiseStream::new(5);
+        let dry: Vec<f32> = (0..n_samples(1.0)).map(|_| rng.norm() * 0.3).collect();
+        let peak = |b: &[f32]| b.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        let staged = master(dry.clone(), DRIVE, PEAK);
+        let into_drive: Vec<f32> = dry.iter().map(|v| v * staged.gains[0]).collect();
+        assert_eq!(peak(&into_drive), PEAK);
+        assert_eq!(staged.gains[1], PEAK / peak(&lofi_post(&into_drive, DRIVE)));
+        assert_eq!(peak(&staged.buf), PEAK);
+    }
+
+    /// A bed sets its level by its peak alone, and the tape doesn't touch it.
+    #[test]
+    fn a_texture_bed_reports_its_peak_normalization() {
+        let staged = texture_bed(&mut NoiseStream::new(4));
+        let raw = room_bed(BED_LOOP_SAMPLES, BED_LOOP_SAMPLES, &mut NoiseStream::new(4));
+        let peak = raw.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        assert_eq!(staged.gains, [TEXTURE_PEAK / peak, 1.0]);
+    }
+
+    /// A lane's staged render is its core's, brightened, with the brighten's
+    /// gain folded into the second: a bed, a chord lane and a hit lane each.
+    #[test]
+    fn a_staged_lane_is_its_core_brightened() {
+        let score = crate::compose::compose(Mood::Day, 0);
+        for lane in [Lane::Texture, Lane::Pad, Lane::Drums] {
+            let core = render_part(
+                &part(&score, lane),
+                score.loop_secs(),
+                &mut NoiseStream::new(2),
+            );
+            let mut bright = core.buf.clone();
+            let gain = brighten(&mut bright);
+            let staged = staged_lane(&score, lane, &mut NoiseStream::new(2));
+            assert!(staged.buf == bright, "{lane:?}'s render");
+            assert_eq!(
+                staged.gains,
+                [core.gains[0], core.gains[1] * gain],
+                "{lane:?}"
+            );
+            assert!(render_lane(&score, lane, &mut NoiseStream::new(2)) == staged.buf);
         }
     }
 

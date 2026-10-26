@@ -619,6 +619,20 @@ mod tests {
     }
 
     #[test]
+    fn the_staging_is_measured_alone() {
+        let args = |args: &[&str]| mode(args.iter().map(|&a| a.to_owned()));
+        let refusal = |with: &[&str]| args(with).err().expect("refused").to_string();
+        assert!(matches!(args(&["--staging"]), Ok(Mode::Staging)));
+        assert!(
+            refusal(&["--staging", "--tier", "busy"])
+                .contains("--staging measures the staging alone")
+        );
+        assert!(
+            refusal(&["--staging", "--corpus", "refs"]).contains("--corpus reads the corpus alone")
+        );
+    }
+
+    #[test]
     fn the_bass_window_and_its_limit_are_lofi_bibles_r7() {
         let bible = include_str!("../../.claude/skills/procedural-lofi/reference/LOFI-BIBLE.md");
         let low = audition::BASS_LOW;
