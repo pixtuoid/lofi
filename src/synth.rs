@@ -110,7 +110,21 @@ pub(crate) fn crackle_pop(rng: &mut NoiseStream, sr: u32) -> (Vec<f32>, f32) {
 /// variation is a feature; everything melodic comes from the [`Score`].
 pub(crate) fn texture_bed(rng: &mut NoiseStream) -> Vec<f32> {
     let n = BED_LOOP_SAMPLES;
-    let raw: Vec<f32> = (0..n).map(|_| rng.norm()).collect();
+    let mut buf = room_bed(n, n, rng);
+    normalize(&mut buf, TEXTURE_PEAK);
+    buf
+}
+
+/// The texture stem's peak, day or night.
+const TEXTURE_PEAK: f32 = 0.45;
+
+/// The latest a crackle pop starts, before the bed's end.
+const LAST_POP_BEFORE_END_S: f32 = 0.01;
+
+/// The room's bed: `total` samples of hiss over the room tone, then the
+/// crackle's pops over its first `n`, drawn from `rng` in that order.
+fn room_bed(n: usize, total: usize, rng: &mut NoiseStream) -> Vec<f32> {
+    let raw: Vec<f32> = (0..total).map(|_| rng.norm()).collect();
     let hiss = lowpass(&raw, HISS_HZ);
     let mut buf: Vec<f32> = hiss
         .iter()
@@ -119,11 +133,10 @@ pub(crate) fn texture_bed(rng: &mut NoiseStream) -> Vec<f32> {
         .collect();
     let n_pops = (n as f32 / SR * CRACKLE_POPS_PER_SEC) as usize;
     for _ in 0..n_pops {
-        let at = rng.unit() * (n as f32 / SR - 0.01);
+        let at = rng.unit() * (n as f32 / SR - LAST_POP_BEFORE_END_S);
         let (pop, gain) = crackle_pop(rng, SAMPLE_RATE);
-        place(&mut buf, &pop, at, gain);
+        place(&mut buf[..n], &pop, at, gain);
     }
-    normalize(&mut buf, 0.45);
     buf
 }
 
@@ -368,17 +381,43 @@ fn pluck_note(midi: u8, dur_s: f32, vel: f32, sr: u32) -> Vec<f32> {
             sig * attack * vel
         })
         .collect();
-    let pn = samples_at(0.006, sr);
-    let mut prng = NoiseStream::new((u64::from(midi) << 32) ^ u64::from(vel.to_bits()));
+    // the pick
+    let pick = Strike {
+        salt: 0,
+        len_s: 0.006,
+        band: (2000.0, 5000.0),
+        decay: 700.0,
+        level: 0.10,
+    };
+    strike(&mut buf, pick, midi, vel, sr);
+    buf
+}
+
+/// A struck note's noise: `len_s` of white noise in `band`, falling at
+/// `decay` per second from `level`, seeded by the note XOR `salt`, so
+/// identical notes strike identical noise and two voices' strikes differ.
+#[derive(Clone, Copy)]
+struct Strike {
+    salt: u64,
+    len_s: f32,
+    band: (f32, f32),
+    decay: f32,
+    level: f32,
+}
+
+/// Adds `strike`'s noise for the note `(midi, vel)` to the head of `buf`.
+fn strike(buf: &mut [f32], strike: Strike, midi: u8, vel: f32, sr: u32) {
+    let pn = samples_at(strike.len_s, sr);
+    let mut prng =
+        NoiseStream::new(strike.salt ^ (u64::from(midi) << 32) ^ u64::from(vel.to_bits()));
     let white = white_noise_gain(sr);
     let raw: Vec<f32> = (0..pn).map(|_| prng.norm() * white).collect();
-    let pick_noise = bandpass_at(&raw, 2000.0, 5000.0, sr);
-    for (i, &v) in pick_noise.iter().enumerate() {
+    let noise = bandpass_at(&raw, strike.band.0, strike.band.1, sr);
+    for (i, &v) in noise.iter().enumerate() {
         if let Some(slot) = buf.get_mut(i) {
-            *slot += v * (-(i as f32 / sr as f32) * 700.0).exp() * 0.10 * vel;
+            *slot += v * (-(i as f32 / sr as f32) * strike.decay).exp() * strike.level * vel;
         }
     }
-    buf
 }
 
 /// The bass voice: sine + vel-keyed tanh harmonics, soft attack so the kick
@@ -423,17 +462,15 @@ fn kalimba_note(midi: u8, dur_s: f32, vel: f32, sr: u32) -> Vec<f32> {
             sig * attack * vel
         })
         .collect();
-    let pn = samples_at(0.010, sr);
-    let mut prng =
-        NoiseStream::new(0x4B41_4C49 ^ (u64::from(midi) << 32) ^ u64::from(vel.to_bits()));
-    let white = white_noise_gain(sr);
-    let raw: Vec<f32> = (0..pn).map(|_| prng.norm() * white).collect();
-    let thump = bandpass_at(&raw, 120.0, 700.0, sr);
-    for (i, &v) in thump.iter().enumerate() {
-        if let Some(slot) = buf.get_mut(i) {
-            *slot += v * (-(i as f32 / sr as f32) * 350.0).exp() * 0.12 * vel;
-        }
-    }
+    // the resonator body's thump
+    let thump = Strike {
+        salt: 0x4B41_4C49,
+        len_s: 0.010,
+        band: (120.0, 700.0),
+        decay: 350.0,
+        level: 0.12,
+    };
+    strike(&mut buf, thump, midi, vel, sr);
     buf
 }
 
@@ -458,17 +495,15 @@ fn vibe_note(midi: u8, dur_s: f32, vel: f32, sr: u32) -> Vec<f32> {
             sig * attack * trem * vel
         })
         .collect();
-    let pn = samples_at(0.008, sr);
-    let mut prng =
-        NoiseStream::new(0x5649_4245 ^ (u64::from(midi) << 32) ^ u64::from(vel.to_bits()));
-    let white = white_noise_gain(sr);
-    let raw: Vec<f32> = (0..pn).map(|_| prng.norm() * white).collect();
-    let mallet = bandpass_at(&raw, 600.0, 1800.0, sr);
-    for (i, &v) in mallet.iter().enumerate() {
-        if let Some(slot) = buf.get_mut(i) {
-            *slot += v * (-(i as f32 / sr as f32) * 500.0).exp() * 0.06 * vel;
-        }
-    }
+    // the mallet
+    let mallet = Strike {
+        salt: 0x5649_4245,
+        len_s: 0.008,
+        band: (600.0, 1800.0),
+        decay: 500.0,
+        level: 0.06,
+    };
+    strike(&mut buf, mallet, midi, vel, sr);
     buf
 }
 
@@ -714,20 +749,7 @@ fn night_texture_core(loop_secs: f32, kick_times: &[f32], rng: &mut NoiseStream)
     // synthesize f EXTRA samples past the loop end so the splice blends a genuine
     // CONTINUATION of the tail into the head; a head-only crossfade of unrelated
     // content leaves the discontinuity in place
-    let total = n + f;
-    let raw: Vec<f32> = (0..total).map(|_| rng.norm()).collect();
-    let hiss = lowpass(&raw, HISS_HZ);
-    let mut buf: Vec<f32> = hiss
-        .iter()
-        .enumerate()
-        .map(|(i, hiss)| hiss * HISS_LEVEL + bed_room_tone(i as f32 / SR))
-        .collect();
-    let n_pops = (n as f32 / SR * CRACKLE_POPS_PER_SEC) as usize;
-    for _ in 0..n_pops {
-        let at = rng.unit() * (n as f32 / SR - 0.01);
-        let (pop, gain) = crackle_pop(rng, SAMPLE_RATE);
-        place(&mut buf[..n], &pop, at, gain);
-    }
+    let mut buf = room_bed(n, n + f, rng);
     // CORRELATED content (the pre-roll continues the same stream), so a linear
     // blend suffices — no equal-power law needed
     for j in 0..f {
@@ -737,7 +759,7 @@ fn night_texture_core(loop_secs: f32, kick_times: &[f32], rng: &mut NoiseStream)
     buf.truncate(n);
     // normalize BEFORE the duck: duck-then-normalize re-inflates the level by up
     // to the duck depth
-    normalize(&mut buf, 0.45);
+    normalize(&mut buf, TEXTURE_PEAK);
     let depth = 10f32.powf(DUCK_DB / 20.0);
     let rel = n_samples(DUCK_RELEASE_S);
     for &kt in kick_times {
