@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """The remote judge's local logic's tests: `python3 -I test_judge_local.py`, with no venv."""
 
+import contextlib
+import io
 import re
 import sys
 import tempfile
@@ -9,9 +11,9 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from judge_local import exit_code, published, redact, select
+from judge_local import NOT_A_SCORE, exit_code, published, redact, select
 from test_validate_batch import write_wav
-from validate_batch import Invalid, Takes, stage, validate
+from validate_batch import Takes, stage, validate
 
 # the takes `Selection` writes on both sides
 PAIRS = ["gen_day_empty_000.wav", "gen_night_busy_001.wav"]
@@ -32,6 +34,13 @@ class Selection(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def assertRefused(self, base_sha, cand_sha):
+        """`select` ends the run as no score at all, never as a verdict."""
+        with self.assertRaises(SystemExit) as caught, contextlib.redirect_stderr(io.StringIO()) as err:
+            select(self.dir, base_sha, cand_sha, force_score=False)
+        self.assertEqual(caught.exception.code, NOT_A_SCORE)
+        self.assertIn("invalid batch", err.getvalue())
+
     def test_only_the_pairs_that_differ_are_sent(self):
         self.assertEqual(select(self.dir, BASE, CAND, force_score=False), (TAKES, PAIRS[1:]))
 
@@ -45,15 +54,13 @@ class Selection(unittest.TestCase):
             self.assertEqual(select(up, BASE, CAND, force_score), (TAKES, PAIRS[1:]))
 
     def test_a_batch_of_other_commits_is_refused(self):
-        with self.assertRaises(Invalid):
-            select(self.dir, CAND, BASE, force_score=False)
+        self.assertRefused(CAND, BASE)
 
     def test_a_batch_with_no_pair_is_refused(self):
         for side in ("base", "cand"):
             for p in (self.dir / side).glob("*.wav"):
                 p.unlink()
-        with self.assertRaises(Invalid):
-            select(self.dir, BASE, CAND, force_score=False)
+        self.assertRefused(BASE, CAND)
 
     def test_a_take_on_one_side_only_is_left_out_and_the_pairs_still_sent(self):
         (self.dir / "cand" / "gen_day_empty_000.wav").unlink()
@@ -64,13 +71,11 @@ class Selection(unittest.TestCase):
     def test_a_batch_whose_takes_are_each_on_one_side_is_refused(self):
         (self.dir / "cand" / "gen_day_empty_000.wav").unlink()
         (self.dir / "base" / "gen_night_busy_001.wav").unlink()
-        with self.assertRaises(Invalid):
-            select(self.dir, BASE, CAND, force_score=False)
+        self.assertRefused(BASE, CAND)
 
     def test_a_missing_commit_is_refused(self):
         (self.dir / "cand" / "COMMIT").unlink()
-        with self.assertRaises(Invalid):
-            select(self.dir, BASE, CAND, force_score=False)
+        self.assertRefused(BASE, CAND)
 
 
 class Outcomes(unittest.TestCase):

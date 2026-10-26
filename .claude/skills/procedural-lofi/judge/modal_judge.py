@@ -37,8 +37,8 @@ SCRIPTS = HERE.parent / "scripts" if modal.is_local() else Path(REMOTE_SCRIPTS)
 JUDGE = HERE if modal.is_local() else Path(REMOTE_JUDGE)
 MODELS, REFS, BATCH = "/models", "/refs", "/batch"
 sys.path.insert(0, str(JUDGE))
-from judge_local import NOT_A_SCORE, exit_code, published, redact, select
-from validate_batch import IDENTICAL, Invalid
+from judge_local import exit_code, published, redact, select
+from validate_batch import IDENTICAL
 
 # the uv the image and SKILL.md's install run, the release
 # judge-requirements.txt was compiled by
@@ -248,12 +248,7 @@ def judge(batch: str, base: str, cand: str, out: str = "", force_score: bool = F
     makes no remote call; `force_score` sends and scores every pair, the
     proof that identical ones tie."""
     root = Path(batch)
-    try:
-        takes, differ = select(root, base, cand, force_score)
-    except Invalid as e:
-        # refused before any score, so not a verdict's exit code
-        print(f"invalid batch: {e}", file=sys.stderr)
-        raise SystemExit(NOT_A_SCORE) from None
+    takes, differ = select(root, base, cand, force_score)
     if differ:
         with modal.Volume.ephemeral() as vol:
             with vol.batch_upload() as upload:
