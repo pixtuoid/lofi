@@ -380,7 +380,8 @@ pub(crate) fn stem_keys() -> Vec<f32> {
 }
 
 /// The day-1 anchor's kick/snare/swung-hat groove, its hat velocities the
-/// frozen score's, through the shipped drums' core; each hit's NOISE is fresh.
+/// frozen score's, through the shipped drums' core; the kick's and snare's
+/// NOISE is fresh each hit, and a hat is the fixed metallic hash.
 #[cfg(test)]
 pub(crate) fn stem_drums(rng: &mut NoiseStream) -> Vec<f32> {
     let swing = 0.10 * beat_s();
@@ -738,7 +739,8 @@ pub(crate) fn night_sparkle() -> Vec<f32> {
     night_part(&sparkle, &mut NoiseStream::new(0))
 }
 
-/// NOISE content is fresh per call; only timing/gain are frozen.
+/// A kick's or snare's NOISE is fresh each call, drawn from `rng`; a hat
+/// draws nothing, its hash fixed.
 fn drum_hit(rng: &mut NoiseStream, kind: DrumKind, sr: u32) -> Vec<f32> {
     match kind {
         DrumKind::Kick => kick(rng, sr),
@@ -1320,8 +1322,9 @@ mod tests {
     }
 
     /// A square at 2.5 kHz folds its harmonics past Nyquist onto 1.6, 6.6 and
-    /// 11.6 kHz, midway between its own: PolyBLEP keeps them 20 dB under the
-    /// naive square's there (opinion).
+    /// 11.6 kHz, each 0.9 kHz under one of its own, further than
+    /// `HALF_WIDTH_HZ`: PolyBLEP keeps them 20 dB under the naive square's
+    /// there (opinion).
     #[test]
     fn a_squares_aliases_stay_under_a_naive_ones() {
         const HZ: f32 = 2500.0;
