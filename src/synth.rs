@@ -51,9 +51,21 @@ fn place(buf: &mut [f32], snippet: &[f32], at_s: f32, gain: f32) {
     }
 }
 
-fn normalize(buf: &mut [f32], peak: f32) {
+/// Scales `buf` to peak at `peak`, and returns the gain it applied.
+fn normalize(buf: &mut [f32], peak: f32) -> f32 {
     let m = buf.iter().fold(0.0f32, |a, &v| a.max(v.abs())).max(1e-9);
-    buf.iter_mut().for_each(|v| *v *= peak / m);
+    let gain = peak / m;
+    buf.iter_mut().for_each(|v| *v *= gain);
+    gain
+}
+
+/// A whole-lane render and the gains its peak normalizations applied: the
+/// first, which sets the level into the drive (the texture's, into the duck),
+/// and the product of the rest. The stream's staging stands in for the two.
+#[derive(Debug)]
+pub(crate) struct Staged {
+    pub(crate) buf: Vec<f32>,
+    pub(crate) gains: [f32; 2],
 }
 
 /// A voice that plays one `(midi, dur_s, vel)` note at a sample rate.
@@ -108,11 +120,14 @@ pub(crate) fn crackle_pop(rng: &mut NoiseStream, sr: u32) -> (Vec<f32>, f32) {
 /// The vinyl/room texture bed: tape hiss + a faint warm room hum + sparse soft
 /// crackle. Its crackle draws from the caller's stream ON PURPOSE — unpitched, so
 /// variation is a feature; everything melodic comes from the [`Score`].
-pub(crate) fn texture_bed(rng: &mut NoiseStream) -> Vec<f32> {
+pub(crate) fn texture_bed(rng: &mut NoiseStream) -> Staged {
     let n = BED_LOOP_SAMPLES;
     let mut buf = room_bed(n, n, rng);
-    normalize(&mut buf, TEXTURE_PEAK);
-    buf
+    let gain = normalize(&mut buf, TEXTURE_PEAK);
+    Staged {
+        buf,
+        gains: [gain, 1.0],
+    }
 }
 
 /// The texture stem's peak, day or night.
@@ -194,11 +209,17 @@ fn lofi_post(buf: &[f32], drive: f32) -> Vec<f32> {
     lowpass(&bumped, ROLLOFF_HZ)
 }
 
-/// ONE site, so a stem can't silently skip the ratified post.
-fn master(buf: &[f32], drive: f32, peak: f32) -> Vec<f32> {
-    let mut out = lofi_post(buf, drive);
-    normalize(&mut out, peak);
-    out
+/// ONE site, so a stem can't silently skip the ratified post: `buf` to
+/// `peak`, which sets the level into the drive, then through the tape and
+/// back to `peak`.
+fn master(mut buf: Vec<f32>, drive: f32, peak: f32) -> Staged {
+    let gain_in = normalize(&mut buf, peak);
+    let mut out = lofi_post(&buf, drive);
+    let gain = normalize(&mut out, peak);
+    Staged {
+        buf: out,
+        gains: [gain_in, gain],
+    }
 }
 
 /// One soft electric-piano note; `h2` is the 2nd-harmonic weight — the one axis
@@ -349,7 +370,7 @@ pub(crate) fn stem_pad() -> Vec<f32> {
         bar_s: bar_s(),
         mood: Mood::Day,
     };
-    render_part(&pad, score::loop_secs(), &mut NoiseStream::new(0))
+    render_part(&pad, score::loop_secs(), &mut NoiseStream::new(0)).buf
 }
 
 #[cfg(test)]
@@ -364,6 +385,7 @@ pub(crate) fn stem_sparkle() -> Vec<f32> {
         r.peak,
         ep_pluck,
     )
+    .buf
 }
 
 #[cfg(test)]
@@ -377,6 +399,7 @@ pub(crate) fn stem_keys() -> Vec<f32> {
         r.peak,
         ep_pluck,
     )
+    .buf
 }
 
 /// The day-1 anchor's kick/snare/swung-hat groove, its hat velocities the
@@ -404,7 +427,7 @@ pub(crate) fn stem_drums(rng: &mut NoiseStream) -> Vec<f32> {
         }
     }
     let r = DRUMS.day;
-    drums_core(score::loop_secs(), &hits, r.cutoff_hz, r.drive, r.peak, rng)
+    drums_core(score::loop_secs(), &hits, r.cutoff_hz, r.drive, r.peak, rng).buf
 }
 
 /// The velocity-keyed 2nd-harmonic EP voice (the Rhodes "bell vs bark"), shared
@@ -582,6 +605,7 @@ pub(crate) fn night_pad() -> Vec<f32> {
         bake_night_sub(&mut sig, roots[bar % roots.len()], bar_s);
         sig
     })
+    .buf
 }
 
 /// The FROZEN v4 anchor's sub floor under one bar's chord in `sig`: the bar's
@@ -673,7 +697,7 @@ fn chord(tone: ChordTone, chord: &[u8; 4], bar_s: f32, sr: u32) -> Vec<f32> {
 
 /// A `mood` pad over `loop_bars` bars `bar_s` long, `bar` giving each bar's
 /// sound.
-fn pad_core(mood: Mood, bar_s: f32, loop_bars: usize, bar: impl Fn(usize) -> Vec<f32>) -> Vec<f32> {
+fn pad_core(mood: Mood, bar_s: f32, loop_bars: usize, bar: impl Fn(usize) -> Vec<f32>) -> Staged {
     let mut buf = vec![0.0f32; n_samples(bar_s * loop_bars as f32)];
     for b in 0..loop_bars {
         place(&mut buf, &bar(b), b as f32 * bar_s, 1.0);
@@ -683,8 +707,7 @@ fn pad_core(mood: Mood, bar_s: f32, loop_bars: usize, bar: impl Fn(usize) -> Vec
     for (i, v) in buf.iter_mut().enumerate() {
         *v *= tone.bed_swell(i);
     }
-    normalize(&mut buf, tone.peak);
-    master(&buf, DRIVE, tone.peak)
+    master(buf, DRIVE, tone.peak)
 }
 
 /// A note lane's stem over a loop `loop_secs` long: each of `events` through
@@ -696,7 +719,7 @@ fn events_stem_voiced(
     cutoff_hz: f32,
     peak: f32,
     note_fn: NoteVoice,
-) -> Vec<f32> {
+) -> Staged {
     let mut buf = vec![0.0f32; n_samples(loop_secs)];
     for n in events {
         place(
@@ -706,15 +729,13 @@ fn events_stem_voiced(
             1.0,
         );
     }
-    let mut buf = lowpass(&buf, cutoff_hz);
-    normalize(&mut buf, peak);
-    master(&buf, DRIVE, peak)
+    master(lowpass(&buf, cutoff_hz), DRIVE, peak)
 }
 
 /// The frozen night take's `part` through the shipped whole-lane core.
 #[cfg(test)]
 fn night_part(part: &Part<'_>, rng: &mut NoiseStream) -> Vec<f32> {
-    render_part(part, score::night_loop_secs(), rng)
+    render_part(part, score::night_loop_secs(), rng).buf
 }
 
 #[cfg(test)]
@@ -767,15 +788,13 @@ fn drums_core(
     drive: f32,
     peak: f32,
     rng: &mut NoiseStream,
-) -> Vec<f32> {
+) -> Staged {
     let mut buf = vec![0.0f32; n_samples(loop_secs)];
     for h in table {
         let hit = drum_hit(rng, h.kind, SAMPLE_RATE);
         place(&mut buf, &hit, h.at, h.gain);
     }
-    let mut buf = lowpass(&buf, cutoff_hz);
-    normalize(&mut buf, peak);
-    master(&buf, drive, peak)
+    master(lowpass(&buf, cutoff_hz), drive, peak)
 }
 
 /// The night texture's duck under each kick: down this far, then back up
@@ -802,7 +821,9 @@ const NIGHT_BED: Part<'static> = Part::Bed {
     hits: &score::NIGHT_DRUMS,
 };
 
-fn night_texture_core(loop_secs: f32, kick_times: &[f32], rng: &mut NoiseStream) -> Vec<f32> {
+/// The night room's bed over a loop `loop_secs` long, its seam spliced, at
+/// the level [`room_bed`] makes it.
+fn night_room_bed(loop_secs: f32, rng: &mut NoiseStream) -> Vec<f32> {
     let n = n_samples(loop_secs);
     let f = n_samples(NIGHT_TEXTURE_SPLICE_S);
     // synthesize f EXTRA samples past the loop end so the splice blends a genuine
@@ -816,9 +837,14 @@ fn night_texture_core(loop_secs: f32, kick_times: &[f32], rng: &mut NoiseStream)
         buf[j] = buf[n + j] * (1.0 - a) + buf[j] * a;
     }
     buf.truncate(n);
+    buf
+}
+
+fn night_texture_core(loop_secs: f32, kick_times: &[f32], rng: &mut NoiseStream) -> Staged {
+    let mut buf = night_room_bed(loop_secs, rng);
     // normalize BEFORE the duck: duck-then-normalize re-inflates the level by up
     // to the duck depth
-    normalize(&mut buf, TEXTURE_PEAK);
+    let gain = normalize(&mut buf, TEXTURE_PEAK);
     let depth = 10f32.powf(DUCK_DB / 20.0);
     let rel = n_samples(DUCK_RELEASE_S);
     for &kt in kick_times {
@@ -831,13 +857,16 @@ fn night_texture_core(loop_secs: f32, kick_times: &[f32], rng: &mut NoiseStream)
             *slot *= g;
         }
     }
-    buf
+    Staged {
+        buf,
+        gains: [gain, 1.0],
+    }
 }
 
 /// A frozen day take's `part` through the shipped whole-lane core.
 #[cfg(test)]
 fn day_take_part(take: &score::DayTake, part: &Part<'_>, rng: &mut NoiseStream) -> Vec<f32> {
-    render_part(part, take.loop_secs(), rng)
+    render_part(part, take.loop_secs(), rng).buf
 }
 
 #[cfg(test)]
@@ -931,9 +960,10 @@ pub(crate) const TILT_HZ: f32 = 1200.0;
 pub(crate) const TILT_LIFT: f32 = 0.8;
 
 /// The "bright" master for GENERATED takes: a one-pole tilt shelf, then
-/// re-normalize to the bed's pre-tilt peak. FROZEN takes keep their darker
-/// chain — brightening them would invalidate their fingerprint pins.
-fn brighten(buf: &mut [f32]) {
+/// re-normalize to the bed's pre-tilt peak, returning that gain. FROZEN takes
+/// keep their darker chain — brightening them would invalidate their
+/// fingerprint pins.
+fn brighten(buf: &mut [f32]) -> f32 {
     let pre_peak = buf.iter().fold(0.0f32, |a, &v| a.max(v.abs()));
     let a = (-std::f32::consts::TAU * TILT_HZ / SR).exp();
     let mut lp = 0.0f32;
@@ -941,7 +971,7 @@ fn brighten(buf: &mut [f32]) {
         lp = a * lp + (1.0 - a) * *s;
         *s += TILT_LIFT * (*s - lp);
     }
-    normalize(buf, pre_peak.max(1e-6));
+    normalize(buf, pre_peak.max(1e-6))
 }
 
 impl LeadVoice {
@@ -1173,14 +1203,19 @@ impl Part<'_> {
 /// [`Lane::Texture`] is a whole number of the score's loops long, so a caller
 /// loops them in phase; the day texture runs free on its own length.
 pub fn render_lane(score: &Score, lane: Lane, rng: &mut NoiseStream) -> Vec<f32> {
-    let mut bed = render_part(&part(score, lane), score.loop_secs(), rng);
-    brighten(&mut bed);
-    bed
+    staged_lane(score, lane, rng).buf
+}
+
+/// [`render_lane`], with the gains its peak normalizations applied.
+pub(crate) fn staged_lane(score: &Score, lane: Lane, rng: &mut NoiseStream) -> Staged {
+    let mut staged = render_part(&part(score, lane), score.loop_secs(), rng);
+    staged.gains[1] *= brighten(&mut staged.buf);
+    staged
 }
 
 /// `part` over a loop `loop_s` long through its whole-lane core: what
 /// [`render_lane`] brightens, and the frozen takes' parts.
-fn render_part(part: &Part<'_>, loop_s: f32, rng: &mut NoiseStream) -> Vec<f32> {
+fn render_part(part: &Part<'_>, loop_s: f32, rng: &mut NoiseStream) -> Staged {
     match *part {
         // the generated night pad renders NO baked sub — the bass lane owns that register
         Part::Chords {
@@ -1623,6 +1658,58 @@ mod tests {
         }
     }
 
+    /// The tape's two normalizations, as the staging stands in for them: the
+    /// first sets the input's peak, and the second the taped buffer's.
+    #[test]
+    fn the_master_reports_its_two_normalizations() {
+        const PEAK: f32 = 0.7;
+        let mut rng = NoiseStream::new(5);
+        let dry: Vec<f32> = (0..n_samples(1.0)).map(|_| rng.norm() * 0.3).collect();
+        let peak = |b: &[f32]| b.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        let staged = master(dry.clone(), DRIVE, PEAK);
+        assert_eq!(staged.gains[0], PEAK / peak(&dry));
+        let into_drive: Vec<f32> = dry.iter().map(|v| v * staged.gains[0]).collect();
+        assert_eq!(staged.gains[1], PEAK / peak(&lofi_post(&into_drive, DRIVE)));
+    }
+
+    /// A bed, day or night, sets its level by its peak alone, and the tape
+    /// doesn't touch it.
+    #[test]
+    fn a_texture_bed_reports_its_peak_normalization() {
+        let peak = |b: &[f32]| b.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        let day = room_bed(BED_LOOP_SAMPLES, BED_LOOP_SAMPLES, &mut NoiseStream::new(4));
+        let staged = texture_bed(&mut NoiseStream::new(4));
+        assert_eq!(staged.gains, [TEXTURE_PEAK / peak(&day), 1.0], "day");
+        let loop_s = score::night_loop_secs();
+        let night = night_room_bed(loop_s, &mut NoiseStream::new(4));
+        let staged = night_texture_core(loop_s, &[], &mut NoiseStream::new(4));
+        assert_eq!(staged.gains, [TEXTURE_PEAK / peak(&night), 1.0], "night");
+    }
+
+    /// A lane's staged render is its core's, brightened, with the brighten's
+    /// gain folded into the second: a bed, a chord lane and a hit lane each.
+    #[test]
+    fn a_staged_lane_is_its_core_brightened() {
+        let score = crate::compose::compose(Mood::Day, 0);
+        for lane in [Lane::Texture, Lane::Pad, Lane::Drums] {
+            let core = render_part(
+                &part(&score, lane),
+                score.loop_secs(),
+                &mut NoiseStream::new(2),
+            );
+            let mut bright = core.buf.clone();
+            let gain = brighten(&mut bright);
+            let staged = staged_lane(&score, lane, &mut NoiseStream::new(2));
+            assert!(staged.buf == bright, "{lane:?}'s render");
+            assert_eq!(
+                staged.gains,
+                [core.gains[0], core.gains[1] * gain],
+                "{lane:?}"
+            );
+            assert!(render_lane(&score, lane, &mut NoiseStream::new(2)) == staged.buf);
+        }
+    }
+
     #[test]
     fn brighten_lifts_the_top_and_preserves_the_peak() {
         let mut rng = NoiseStream::new(17);
@@ -1787,7 +1874,7 @@ mod tests {
     fn every_buffer_is_finite_and_peak_bounded() {
         let mut rng = NoiseStream::new(9);
         for (name, buf) in [
-            ("texture", texture_bed(&mut rng)),
+            ("texture", texture_bed(&mut rng).buf),
             ("pad", stem_pad()),
             ("sparkle", stem_sparkle()),
             ("keys", stem_keys()),
