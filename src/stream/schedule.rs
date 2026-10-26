@@ -701,7 +701,7 @@ impl Song {
                 present.then_some(voice),
                 self.sr,
             );
-            if matches!(part, Part::Bed) {
+            if matches!(part, Part::Bed { .. }) {
                 (self.crackle).strike(
                     self.played,
                     end.min(self.window.len),
@@ -942,7 +942,7 @@ mod tests {
             let c = Controls::default().with_daylight(daylight);
             let song = Song::new(1, 0, c, SAMPLE_RATE);
             for (lane, chain) in Lane::ALL.iter().zip(&song.chains) {
-                let room = matches!(part(&song.score, *lane), Part::Bed);
+                let room = matches!(part(&song.score, *lane), Part::Bed { .. });
                 assert_eq!(fades(*lane), !room, "{lane:?} at daylight {daylight}");
                 assert_eq!(matches!(chain, Chain::Room(_)), room, "{lane:?}'s chain");
             }

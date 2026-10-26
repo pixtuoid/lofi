@@ -129,7 +129,7 @@ impl Chain {
                 )),
                 None,
             ),
-            Part::Bed => Self::Room(Room::new(len, kicks, gains, sr)),
+            Part::Bed { .. } => Self::Room(Room::new(len, kicks, gains, sr)),
         }
     }
 
