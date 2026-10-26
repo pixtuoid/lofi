@@ -7,7 +7,7 @@ use std::fmt;
 use std::num::NonZeroUsize;
 use std::ops::Range;
 
-use super::{GEN_LOOP_BARS, Lane, chance, pick};
+use super::{GEN_LOOP_BARS, Lane, chance, kind, pick};
 use crate::dsp::{NoiseStream, splitmix64};
 
 /// Seeds the form's own stream, so a change to the loop's draws never moves a
@@ -506,26 +506,6 @@ const DIP_PHRASE: usize = 1;
 const CUT_SLOTS: usize = 6;
 const _: () = assert!(PHRASES[PHRASES.len() - 1] <= CUT_SLOTS);
 
-/// The band one unit draw `u` falls in, each band as wide as its weight.
-fn band(u: f32, weights: &[u32]) -> usize {
-    let total: u32 = weights.iter().sum();
-    let at = ((u * total as f32) as u32).min(total - 1);
-    let mut below = 0;
-    weights
-        .iter()
-        .position(|&w| {
-            below += w;
-            at < below
-        })
-        .unwrap_or(weights.len() - 1)
-}
-
-/// The row of `table` one unit draw falls in.
-fn kind<T: Copy>(u: f32, table: &[(T, u32)]) -> T {
-    let weights: Vec<u32> = table.iter().map(|&(_, w)| w).collect();
-    table[band(u, &weights)].0
-}
-
 /// Song seed `seed`'s form, from its own stream. Every draw is made whether or
 /// not its branch applies, so a change to one row of the grammar moves no
 /// other row's draws.
@@ -626,7 +606,7 @@ pub(crate) fn arrange(seed: u64) -> Form {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compose::{Mood, compose};
+    use crate::compose::{Mood, band, compose, fnv1a};
 
     /// The forms every test here sweeps: [`arrange`] reads no mood, so these
     /// are the population whatever the tempo.
@@ -861,13 +841,6 @@ mod tests {
                 "{name} {value} outside [{lo}, {hi}]"
             );
         }
-    }
-
-    /// FNV-1a over 64-bit words, as `compose`'s goldens hash.
-    fn fnv1a(words: impl IntoIterator<Item = u64>) -> u64 {
-        words.into_iter().fold(0xcbf2_9ce4_8422_2325, |h, w| {
-            (h ^ w).wrapping_mul(0x0000_0100_0000_01b3)
-        })
     }
 
     /// Seeds 0..64's forms, every row and edge: a change to the grammar, its

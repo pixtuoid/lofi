@@ -216,15 +216,6 @@ pub(super) const NIGHT_DRUMS: [(f32, DrumKind, f32); 39] = [
     (26.9428, DrumKind::Kick, 0.447755),
     (25.1849, DrumKind::Hat, 0.320593),
 ];
-/// The night take's kicks in time order, which its texture ducks under.
-pub(super) fn night_kick_times() -> Vec<f32> {
-    let mut kicks: Vec<f32> = (NIGHT_DRUMS.iter())
-        .filter(|&&(_, kind, _)| kind == DrumKind::Kick)
-        .map(|&(at, ..)| at)
-        .collect();
-    kicks.sort_by(f32::total_cmp);
-    kicks
-}
 
 mod night_tests {
     use super::*;

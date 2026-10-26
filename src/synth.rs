@@ -731,15 +731,15 @@ const NIGHT_TEXTURE_SPLICE_S: f32 = 0.03;
 /// construction.
 #[cfg(test)]
 pub(crate) fn night_texture(rng: &mut NoiseStream) -> Vec<f32> {
-    let kicks = score::night_kick_times();
-    night_part(
-        &Part::Bed {
-            mood: Mood::Night,
-            kicks: &kicks,
-        },
-        rng,
-    )
+    night_part(&NIGHT_BED, rng)
 }
+
+/// The frozen night take's bed, ducking under its drums.
+#[cfg(test)]
+const NIGHT_BED: Part<'static> = Part::Bed {
+    mood: Mood::Night,
+    hits: &score::NIGHT_DRUMS,
+};
 
 fn night_texture_core(loop_secs: f32, kick_times: &[f32], rng: &mut NoiseStream) -> Vec<f32> {
     let n = n_samples(loop_secs);
@@ -1004,9 +1004,12 @@ pub(crate) enum Part<'a> {
         recipes: ByMood<HitRecipe>,
         mood: Mood,
     },
-    /// The texture: a bed, with no notes, a night one ducking under `kicks`
-    /// (seconds in the loop).
-    Bed { mood: Mood, kicks: &'a [f32] },
+    /// The texture: a bed with no notes, which [`Part::ducks`] under the
+    /// kicks of `hits`.
+    Bed {
+        mood: Mood,
+        hits: &'a [(f32, DrumKind, f32)],
+    },
 }
 
 pub(crate) fn part(score: &Score, lane: Lane) -> Part<'_> {
@@ -1042,7 +1045,7 @@ pub(crate) fn part(score: &Score, lane: Lane) -> Part<'_> {
         },
         Lane::Texture => Part::Bed {
             mood,
-            kicks: &score.kick_times,
+            hits: &score.drums,
         },
     }
 }
@@ -1058,6 +1061,26 @@ impl Part<'_> {
             Part::Notes { events, .. } => events.iter().map(|&(at, ..)| onset(at, sr)).collect(),
             Part::Hits { hits, .. } => hits.iter().map(|&(at, ..)| onset(at, sr)).collect(),
             Part::Bed { .. } => Vec::new(),
+        }
+    }
+
+    /// The times in the loop a bed ducks under, in order: a night bed's
+    /// kicks, so the night room breathes with its groove, while the day room
+    /// runs free. Nothing else ducks.
+    pub(crate) fn ducks(&self) -> Vec<f32> {
+        match *self {
+            Part::Bed {
+                mood: Mood::Night,
+                hits,
+            } => {
+                let mut kicks: Vec<f32> = (hits.iter())
+                    .filter(|&&(_, kind, _)| kind == DrumKind::Kick)
+                    .map(|&(at, ..)| at)
+                    .collect();
+                kicks.sort_by(f32::total_cmp);
+                kicks
+            }
+            _ => Vec::new(),
         }
     }
 
@@ -1132,9 +1155,8 @@ fn render_part(part: &Part<'_>, loop_s: f32, rng: &mut NoiseStream) -> Vec<f32> 
             mood: Mood::Day, ..
         } => texture_bed(rng),
         Part::Bed {
-            mood: Mood::Night,
-            kicks,
-        } => night_texture_core(loop_s, kicks, rng),
+            mood: Mood::Night, ..
+        } => night_texture_core(loop_s, &part.ducks(), rng),
     }
 }
 
@@ -1606,6 +1628,21 @@ mod tests {
         assert_ne!(n, n_samples(score::loop_secs()));
     }
 
+    /// The day bed loops on its own length, out of phase with the groove, so
+    /// only the night bed, a loop long, ducks: under every kick it lays.
+    #[test]
+    fn only_a_night_bed_ducks_and_under_every_kick() {
+        for seed in 0..8 {
+            let day = crate::compose::compose(Mood::Day, seed);
+            assert!(part(&day, Lane::Texture).ducks().is_empty());
+            let night = crate::compose::compose(Mood::Night, seed);
+            let mut kicks: Vec<f32> = night.kicks().collect();
+            kicks.sort_by(f32::total_cmp);
+            assert!(!kicks.is_empty());
+            assert_eq!(part(&night, Lane::Texture).ducks(), kicks, "seed {seed}");
+        }
+    }
+
     #[test]
     fn night_texture_seam_is_spliced_and_duck_dips_after_kicks() {
         let tex = night_texture(&mut NoiseStream::new(4));
@@ -1630,7 +1667,7 @@ mod tests {
             (head - tail).abs() <= 0.10 * head.max(tail),
             "no level step across the wrap: head {head:.5} vs tail {tail:.5}"
         );
-        let kt = score::night_kick_times()[2];
+        let kt = NIGHT_BED.ducks()[2];
         let i = n_samples(kt);
         let w = n_samples(0.05);
         let rms = |s: &[f32]| (s.iter().map(|v| v * v).sum::<f32>() / s.len() as f32).sqrt();

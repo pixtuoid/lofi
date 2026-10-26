@@ -191,11 +191,10 @@ constraint and re-batch), and every taste axis is a data table or named const wi
 
 | Want to change…            | Edit (all in `compose.rs` unless noted)                  |
 |----------------------------|----------------------------------------------------------|
-| harmony vocabulary         | `DAY_PROGRESSIONS` / `NIGHT_PROGRESSIONS` (pre-voiced templates + `roots_pc` + `scale_pcs`) |
-| tempo feel                 | `DAY_BPM` / `NIGHT_BPM` windows                          |
-| melody character           | `lead_events` rules (density draws, leap bound, peak bar, grid) + `*_LEAD_LO/HI` registers |
-| groove feel                | `DAY_GROOVES` templates / `night_drums` pattern + the swing/drag consts |
-| comping density            | `keys_events` density draws                              |
+| harmony vocabulary         | `DAY_PROGRESSIONS` / `NIGHT_PROGRESSIONS` (pre-voiced `chord`s + their roots + `scale_pcs`) |
+| a mood's tempo, lead register and density, comping, bass, voice weights | the `DAY` / `NIGHT` `Style` |
+| melody rules               | the lead stage's consts and its `Role`s (quote, close, peak, leap bound, grid) |
+| groove feel                | `DAY_GROOVES` / `NIGHT_GROOVE` templates + the swing consts |
 | room-tone crackle          | `synth::CRACKLE_POPS_PER_SEC` (one knob, both beds)      |
 | lane gains, mix level      | `stream::master`: `tier_gains`; `Performance::MASTER_GAIN` |
 | staging, bed crossfade     | `stream::lanes`: `staging`, `BED_CROSSFADE_S`            |
@@ -206,7 +205,7 @@ constraint and re-batch), and every taste axis is a data table or named const wi
 1. Write the voice as a pure note fn in `synth.rs`, a `NoteVoice` rendered at the rate it
    is given, physics-first then tuned by ear/fingerprint (Phase 1-2 of this skill still apply).
 2. Add a `compose::LeadVoice` variant + its arm in `LeadVoice::voice` (the ONE dispatch).
-3. Give it a draw weight at the END of `compose()` — the voice draw is deliberately LAST in
+3. Give it a weight in its mood's `Style::voices` — the voice draw is deliberately LAST in
    the seed stream so new voices never redraw an already-blessed seed's notes (one banded
    unit-draw per mood — re-weight the bands rather than adding draws).
 4. Extend the distribution property test; run the compose suite (fast — no synthesis).

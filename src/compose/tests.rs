@@ -2,67 +2,139 @@
 //! (checksums); these pin the RULES — any seed must be musically well-formed.
 
 use super::*;
+use crate::score;
 
 const SWEEP: u64 = 64;
 
-/// FNV-1a over 64-bit words — the hash the goldens below were recorded with.
-fn fnv1a(words: impl IntoIterator<Item = u64>) -> u64 {
-    words.into_iter().fold(0xcbf2_9ce4_8422_2325, |h, w| {
-        (h ^ w).wrapping_mul(0x0000_0100_0000_01b3)
+const MOODS: [Mood; 2] = [Mood::Day, Mood::Night];
+
+/// Every template of every mood's grammar, with its mood and index.
+fn templates() -> impl Iterator<Item = (Mood, usize, &'static Progression)> {
+    MOODS.into_iter().flat_map(|mood| {
+        let progs = mood.style().harmony.progressions;
+        progs.iter().enumerate().map(move |(i, p)| (mood, i, p))
     })
+}
+
+/// The pitch classes of `chord`'s notes.
+fn pcs(chord: &[u8; 4]) -> [u8; 4] {
+    chord.map(|n| n % 12)
 }
 
 #[test]
 fn template_chords_and_roots_are_diatonic_or_deliberately_chromatic() {
-    for (name, progs) in [
-        ("day", &DAY_PROGRESSIONS[..]),
-        ("night", &NIGHT_PROGRESSIONS[..]),
-    ] {
-        for (i, p) in progs.iter().enumerate() {
-            let color_tones = p
-                .chords
-                .iter()
-                .flatten()
-                .filter(|&&n| !p.scale_pcs.contains(&(n % 12)))
-                .count();
-            if p.chromatic {
-                // at most one chord's worth of color, so it stays in the key
-                assert!(
-                    (1..=4).contains(&color_tones),
-                    "{name}[{i}]: chromatic template carries {color_tones} color tones"
-                );
-            } else {
-                assert_eq!(
-                    color_tones, 0,
-                    "{name}[{i}]: diatonic template leaked a color tone"
-                );
-            }
-            for &r in &p.roots_pc {
-                assert!(
-                    p.scale_pcs.contains(&r),
-                    "{name}[{i}]: root pc {r} outside its scale"
-                );
-            }
+    for (mood, i, p) in templates() {
+        let color_tones = (p.chords.iter())
+            .flat_map(|c| c.notes)
+            .filter(|&n| !p.scale_pcs.contains(&(n % 12)))
+            .count();
+        if p.chromatic {
+            // at most one chord's worth of color, so it stays in the key
+            assert!(
+                (1..=4).contains(&color_tones),
+                "{mood:?}[{i}]: chromatic template carries {color_tones} color tones"
+            );
+        } else {
+            assert_eq!(
+                color_tones, 0,
+                "{mood:?}[{i}]: diatonic template leaked a color tone"
+            );
+        }
+        for c in &p.chords {
+            assert!(
+                p.scale_pcs.contains(&c.root_pc),
+                "{mood:?}[{i}]: root pc {} outside its scale",
+                c.root_pc
+            );
+            assert!(
+                pcs(&c.notes).contains(&c.root_pc),
+                "{mood:?}[{i}]: {:?} doesn't sound its root {}",
+                c.notes,
+                c.root_pc
+            );
         }
     }
 }
 
 #[test]
-fn every_day_template_chord_carries_a_third_and_seventh() {
-    // the shell voicings are only well-defined over true 7th chords
-    for progs in [&DAY_PROGRESSIONS[..]] {
-        for (i, p) in progs.iter().enumerate() {
-            for (bar, chord) in p.chords.iter().enumerate() {
-                let root = p.roots_pc[bar];
-                let has = |offs: [u8; 2]| {
-                    chord
-                        .iter()
-                        .any(|&n| offs.iter().any(|&o| n % 12 == (root + o) % 12))
-                };
-                assert!(has([3, 4]), "template {i} bar {bar}: no third");
-                assert!(has([10, 11]), "template {i} bar {bar}: no seventh");
+fn every_shift_keeps_a_template_in_its_own_key() {
+    for (mood, i, p) in templates() {
+        let colors = |p: &Progression| {
+            (p.chords.iter())
+                .flat_map(|c| c.notes)
+                .filter(|&n| !p.scale_pcs.contains(&(n % 12)))
+                .count()
+        };
+        for t in TRANSPOSE {
+            let q = p.transposed(t);
+            assert_eq!(colors(&q), colors(p), "{mood:?}[{i}] shifted {t}");
+            for (a, b) in p.chords.iter().zip(&q.chords) {
+                let moved = |from: u8, to: u8| i16::from(to) - i16::from(from) == i16::from(t);
+                assert!(a.notes.iter().zip(&b.notes).all(|(&x, &y)| moved(x, y)));
+                assert_eq!(
+                    (i16::from(a.root_pc) + i16::from(t)).rem_euclid(12),
+                    i16::from(b.root_pc)
+                );
+            }
+            assert!(q.scale_pcs.is_sorted(), "{mood:?}[{i}] shifted {t}");
+        }
+    }
+}
+
+#[test]
+fn a_timeline_plays_its_template_twice_and_a_turnaround_ends_on_the_dominant() {
+    for (mood, i, p) in templates() {
+        for turnaround in [false, true] {
+            let bars = timeline(p, turnaround);
+            for (bar, chord) in bars.iter().enumerate().take(GEN_LOOP_BARS - 1) {
+                assert_eq!(*chord, p.chords[bar % 4], "{mood:?}[{i}] bar {bar}");
+            }
+            let last = bars[GEN_LOOP_BARS - 1];
+            if turnaround {
+                // the hinge: a dominant 7th of the returning bar-1 root
+                let dom = (p.chords[0].root_pc + 7) % 12;
+                let want = [0u8, 4, 7, 10].map(|o| (dom + o) % 12);
+                assert_eq!(pcs(&last.notes), want, "{mood:?}[{i}]: not V7 of the root");
+                assert_eq!(last.root_pc, dom);
+            } else {
+                assert_eq!(last, p.chords[3], "{mood:?}[{i}]: the plain cycle");
             }
         }
+    }
+    assert!(Mood::Day.style().harmony.turnaround);
+    // the sleepy loop keeps the plain cycle
+    assert!(!Mood::Night.style().harmony.turnaround);
+}
+
+#[test]
+fn every_shell_comping_template_chord_carries_a_third_and_seventh() {
+    // the shell voicings are only well-defined over true 7th chords
+    for (mood, i, p) in templates() {
+        if !matches!(mood.style().keys.comp, Comp::Shell) {
+            continue;
+        }
+        for (bar, c) in p.chords.iter().enumerate() {
+            let has = |offs: [u8; 2]| {
+                (c.notes.iter()).any(|&n| offs.iter().any(|&o| n % 12 == (c.root_pc + o) % 12))
+            };
+            assert!(has([3, 4]), "{mood:?}[{i}] bar {bar}: no third");
+            assert!(has([10, 11]), "{mood:?}[{i}] bar {bar}: no seventh");
+        }
+    }
+}
+
+/// The lead's register is the span its mood's frozen take sings, the
+/// authority its bounds were read from.
+#[test]
+fn each_moods_lead_register_is_its_frozen_takes_span() {
+    for (mood, take) in [
+        (Mood::Day, &score::SPARKLE_SCORE[..]),
+        (Mood::Night, &score::NIGHT_SPARKLE[..]),
+    ] {
+        let notes = take.iter().map(|&(_, n, _)| n);
+        let span = (notes.clone().min(), notes.max());
+        let lead = &mood.style().lead;
+        assert_eq!(span, (Some(lead.lo), Some(lead.hi)), "{mood:?}");
     }
 }
 
@@ -124,76 +196,39 @@ fn lead_voice_distribution_tracks_the_draw_weights() {
 }
 
 #[test]
-fn compose_is_deterministic() {
-    for mood in [Mood::Day, Mood::Night] {
-        for seed in 0..8 {
-            assert_eq!(compose(mood, seed), compose(mood, seed));
-        }
-    }
-}
-
-#[test]
-fn every_seed_is_well_formed_day() {
-    for seed in 0..SWEEP {
-        let s = compose(Mood::Day, seed);
-        assert_well_formed(&s, seed);
-        assert!(
-            (DAY_BPM.0..=DAY_BPM.1).contains(&s.bpm),
-            "seed {seed}: bpm {}",
-            s.bpm
-        );
-        assert!(
-            s.drums.iter().any(|&(_, k, _)| k == DrumKind::Snare),
-            "seed {seed}: a day take carries a backbeat"
-        );
-        assert!(s.kick_times.is_empty());
-        for &(_, note, _) in &s.sparkle {
+fn every_seed_is_well_formed() {
+    for mood in MOODS {
+        let style = mood.style();
+        for seed in 0..SWEEP {
+            let (s, h) = composed(mood, seed);
+            assert_well_formed(&s, &h, seed);
             assert!(
-                (DAY_LEAD_LO..=DAY_LEAD_HI).contains(&note),
-                "seed {seed}: lead note {note} out of the day register"
+                (style.bpm.base..=style.bpm.hi()).contains(&s.bpm),
+                "{mood:?} seed {seed}: bpm {}",
+                s.bpm
             );
+            for &(_, note, _) in &s.sparkle {
+                assert!(
+                    (style.lead.lo..=style.lead.hi).contains(&note),
+                    "{mood:?} seed {seed}: lead note {note} out of its register"
+                );
+            }
+            let kinds = |k: DrumKind| s.drums.iter().any(|&(_, kind, _)| kind == k);
+            match mood {
+                Mood::Day => assert!(kinds(DrumKind::Snare), "seed {seed}: no backbeat"),
+                Mood::Night => assert!(
+                    !kinds(DrumKind::Snare) && !kinds(DrumKind::OpenHat),
+                    "seed {seed}: night grew a snare/open hat"
+                ),
+            }
         }
     }
 }
 
-#[test]
-fn every_seed_is_well_formed_night() {
-    for seed in 0..SWEEP {
-        let s = compose(Mood::Night, seed);
-        assert_well_formed(&s, seed);
-        assert!(
-            (NIGHT_BPM.0..=NIGHT_BPM.1).contains(&s.bpm),
-            "seed {seed}: bpm {}",
-            s.bpm
-        );
-        assert!(
-            s.drums
-                .iter()
-                .all(|&(_, k, _)| matches!(k, DrumKind::Kick | DrumKind::Hat)),
-            "seed {seed}: night grew a snare/open hat"
-        );
-        let mut kicks: Vec<f32> = s
-            .drums
-            .iter()
-            .filter(|&&(_, k, _)| k == DrumKind::Kick)
-            .map(|&(at, _, _)| at)
-            .collect();
-        kicks.sort_by(f32::total_cmp);
-        let mut kt = s.kick_times.clone();
-        kt.sort_by(f32::total_cmp);
-        assert_eq!(kicks, kt, "seed {seed}: kick_times desynced from drums");
-        for &(_, note, _) in &s.sparkle {
-            assert!(
-                (NIGHT_LEAD_LO..=NIGHT_LEAD_HI).contains(&note),
-                "seed {seed}: lead note {note} out of the night register"
-            );
-        }
-    }
-}
-
-fn assert_well_formed(s: &Score, seed: u64) {
+fn assert_well_formed(s: &Score, h: &Harmony, seed: u64) {
     let loop_s = s.loop_secs();
     let bar_s = s.bar_s();
+    let bar_of = |at: f32| ((at / bar_s) as usize).min(GEN_LOOP_BARS - 1);
     for &(at, _, vel) in s.sparkle.iter().chain(s.keys.iter()).chain(s.bass.iter()) {
         assert!(
             at >= 0.0 && at < loop_s,
@@ -201,26 +236,29 @@ fn assert_well_formed(s: &Score, seed: u64) {
         );
         assert!(vel > 0.0 && vel <= 1.0, "seed {seed}: velocity {vel}");
     }
-    assert!(
-        s.bass.len() >= GEN_LOOP_BARS,
-        "seed {seed}: the bass must anchor every bar's ONE"
-    );
-    for &(at, note, _) in &s.bass {
-        // 25 admits the leading-tone pickup one step under the root window
+    for (bar, chord) in h.bars.iter().enumerate() {
+        // the floor: the root, sounding in the bar's first beat
+        let one = (bar as f32 * bar_s)..(bar as f32 * bar_s + s.beat_s());
         assert!(
-            (25..=38).contains(&note),
+            (s.bass.iter()).any(|&(at, n, _)| one.contains(&at) && n % 12 == chord.root_pc),
+            "seed {seed}: the bass must sound bar {bar}'s root on its ONE"
+        );
+    }
+    for &(at, note, _) in &s.bass {
+        // the sub window D1-C#2, and the leading-tone pickup one step under it
+        assert!(
+            (25..=37).contains(&note),
             "seed {seed}: bass note {note} at {at}s out of the sub window"
         );
         // closed vocabulary: root/5th/pickup — anything else is a wrong join
-        let bar = ((at / bar_s) as usize).min(GEN_LOOP_BARS - 1);
-        let root = super::sub_note(s.bar_roots[bar]);
-        let fifth = super::sub_note(s.bar_roots[bar] + 7);
-        let mut allowed = vec![root, fifth];
-        if bar + 1 < GEN_LOOP_BARS {
-            allowed.push(super::sub_note(s.bar_roots[bar + 1]) - 1);
+        let bar = bar_of(at);
+        let root = h.bars[bar].root_pc;
+        let mut allowed = vec![root, (root + 7) % 12];
+        if let Some(next) = h.bars.get(bar + 1) {
+            allowed.push((next.root_pc + 11) % 12);
         }
         assert!(
-            allowed.contains(&note),
+            allowed.contains(&(note % 12)),
             "seed {seed}: bass note {note} in bar {bar} is not root/5th/pickup {allowed:?}"
         );
         // place() clips at the loop end — no onset may ring into the seam
@@ -237,9 +275,9 @@ fn assert_well_formed(s: &Score, seed: u64) {
         assert!(gain > 0.0 && gain <= 1.5, "seed {seed}: drum gain {gain}");
     }
     for &(at, note, _) in &s.keys {
-        let bar = ((at / bar_s) as usize).min(GEN_LOOP_BARS - 1);
+        let bar = bar_of(at);
         let chord = s.bar_chords[bar];
-        let ninth_pc = (s.bar_roots[bar] + 2) % 12;
+        let ninth_pc = (h.bars[bar].root_pc + 2) % 12;
         assert!(
             chord
                 .iter()
@@ -249,10 +287,10 @@ fn assert_well_formed(s: &Score, seed: u64) {
         );
     }
     for &(at, note, _) in &s.sparkle {
-        let bar = ((at / bar_s) as usize).min(GEN_LOOP_BARS - 1);
-        let in_turnaround = s.bar_chords[bar].iter().any(|&c| note % 12 == c % 12);
+        let bar = bar_of(at);
+        let in_turnaround = pcs(&s.bar_chords[bar]).contains(&(note % 12));
         assert!(
-            s.scale_pcs.contains(&(note % 12)) || in_turnaround,
+            h.template.scale_pcs.contains(&(note % 12)) || in_turnaround,
             "seed {seed}: lead note {note} at {at}s outside key AND bar chord"
         );
     }
@@ -260,18 +298,10 @@ fn assert_well_formed(s: &Score, seed: u64) {
         s.sparkle.len() >= 2,
         "seed {seed}: the lead lost its identity"
     );
-    let max_per_bar = match s.mood {
-        Mood::Day => 3,
-        Mood::Night => 1,
-    };
+    let max_per_bar = s.mood.style().lead.max_per_bar;
     for bar in 0..GEN_LOOP_BARS {
-        let n = s
-            .sparkle
-            .iter()
-            .filter(|&&(at, _, _)| {
-                let b = (at / bar_s) as usize;
-                b == bar
-            })
+        let n = (s.sparkle.iter())
+            .filter(|&&(at, _, _)| (at / bar_s) as usize == bar)
             .count();
         // the humanization lag can push a bar-boundary event into the
         // next bar's count, so allow one over
@@ -280,42 +310,149 @@ fn assert_well_formed(s: &Score, seed: u64) {
             "seed {seed}: bar {bar} lead density {n} > {max_per_bar}"
         );
     }
-    let color_tones = s
-        .chords
-        .iter()
-        .flatten()
-        .filter(|&&n| !s.scale_pcs.contains(&(n % 12)))
-        .count();
-    assert!(
-        color_tones <= 4,
-        "seed {seed}: {color_tones} color tones — more than one chromatic chord"
-    );
-    // bar 7 is the turnaround, so only bars 0-6 must match the template
-    for bar in 0..7 {
-        assert_eq!(
-            s.bar_chords[bar],
-            s.chords[bar % 4],
-            "seed {seed}: bar {bar} drifted from the template"
-        );
+}
+
+/// One played lead note read back off the grid: its bar, its index in the
+/// bar, its beat in the bar and its pitch. The lag is under a 16th, so the
+/// nearest 16th is the note's.
+struct Sung {
+    bar: usize,
+    i: usize,
+    beat: f32,
+    note: u8,
+}
+
+fn sung(s: &Score) -> Vec<Sung> {
+    let mut out: Vec<Sung> = Vec::new();
+    for &(at, note, _) in &s.sparkle {
+        let sixteenths = (at / s.beat_s() * 4.0).round();
+        let bar = (sixteenths / 16.0) as usize;
+        let beat = (sixteenths - bar as f32 * 16.0) / 4.0;
+        let i = out.iter().filter(|n| n.bar == bar).count();
+        out.push(Sung { bar, i, beat, note });
+    }
+    out
+}
+
+/// The rules that outrank the walk: the answer's quote of the statement's
+/// first two notes, the close on the loop's last bar, and the peak opening
+/// the bar after the quote.
+fn outranks_the_walk(line: &[Sung], j: usize) -> bool {
+    let n = &line[j];
+    let head = line.iter().filter(|m| m.bar == 0).count().min(2);
+    let close = j == line.len() - 1 && n.bar == GEN_LOOP_BARS - 1;
+    let quote = n.bar == 4 && n.i < head && !close;
+    let peak = n.bar == 5 && n.i == 0;
+    quote || close || peak
+}
+
+/// Whether note `j` follows a leap past a major third, which it resolves; the
+/// lead's first leap starts from a note it never sings, so note 1's is unknown.
+fn resolves(line: &[Sung], j: usize) -> Option<bool> {
+    (j >= 2).then(|| (i16::from(line[j - 1].note) - i16::from(line[j - 2].note)).abs() > 4)
+}
+
+#[test]
+fn strong_beats_sing_chord_tones_unless_a_rule_outranks_them() {
+    let mut checked = 0;
+    for mood in MOODS {
+        for seed in 0..SWEEP {
+            let s = compose(mood, seed);
+            let line = sung(&s);
+            for (j, n) in line.iter().enumerate() {
+                let strong = n.beat.fract() == 0.0 || n.beat.fract() == 0.75;
+                let may_resolve = j == 1 || resolves(&line, j) == Some(true);
+                if !strong || may_resolve || outranks_the_walk(&line, j) {
+                    continue;
+                }
+                checked += 1;
+                assert!(
+                    pcs(&s.bar_chords[n.bar]).contains(&(n.note % 12)),
+                    "{mood:?} seed {seed}: strong note {} in bar {} off its chord",
+                    n.note,
+                    n.bar
+                );
+            }
+        }
+    }
+    assert!(checked > 0);
+}
+
+#[test]
+fn leaps_stay_within_a_fifth_unless_a_rule_outranks_them() {
+    for mood in MOODS {
+        for seed in 0..SWEEP {
+            let line = sung(&compose(mood, seed));
+            for j in 1..line.len() {
+                let leap = (i16::from(line[j].note) - i16::from(line[j - 1].note)).abs();
+                assert!(
+                    leap <= 7 || outranks_the_walk(&line, j),
+                    "{mood:?} seed {seed}: note {j} leaps {leap}"
+                );
+            }
+        }
     }
 }
 
 #[test]
-fn day_bar8_is_the_turnaround_dominant_and_night_is_not() {
-    for seed in 0..SWEEP {
-        let d = compose(Mood::Day, seed);
-        // the hinge: a dominant 7th of the returning bar-1 root
-        let dom_pc = (d.roots_pc[0] + 7) % 12;
-        let want: Vec<u8> = [0u8, 4, 7, 10].iter().map(|o| (dom_pc + o) % 12).collect();
-        let got: Vec<u8> = d.bar_chords[7].iter().map(|&n| n % 12).collect();
-        assert_eq!(got, want, "seed {seed}: bar 8 is not V7 of the loop root");
-        assert_eq!(d.bar_roots[7], dom_pc);
-        let n = compose(Mood::Night, seed);
-        assert_eq!(
-            n.bar_chords[7], n.chords[3],
-            "seed {seed}: night must keep the plain cycle (the sleepy loop)"
-        );
+fn a_leap_resolves_by_a_step_against_it() {
+    let mut checked = 0;
+    for mood in MOODS {
+        for seed in 0..SWEEP {
+            let line = sung(&compose(mood, seed));
+            for j in 2..line.len() {
+                if resolves(&line, j) != Some(true) || outranks_the_walk(&line, j) {
+                    continue;
+                }
+                checked += 1;
+                let leap = i16::from(line[j - 1].note) - i16::from(line[j - 2].note);
+                let step = i16::from(line[j].note) - i16::from(line[j - 1].note);
+                // a step held at the register's edge stays put
+                assert!(
+                    step.signum() != leap.signum() && step.abs() <= 2,
+                    "{mood:?} seed {seed}: a leap of {leap} met by {step}"
+                );
+            }
+        }
     }
+    assert!(checked > 0);
+}
+
+#[test]
+fn the_peak_and_the_close_land_on_chord_tones_and_the_close_comes_home() {
+    let (mut peaks, mut closes) = (0, 0);
+    for mood in MOODS {
+        let lead = &mood.style().lead;
+        for seed in 0..SWEEP {
+            let s = compose(mood, seed);
+            let line = sung(&s);
+            if let Some(peak) = line.iter().find(|n| n.bar == 5 && n.i == 0) {
+                peaks += 1;
+                assert!(
+                    pcs(&s.bar_chords[5]).contains(&(peak.note % 12)),
+                    "{mood:?} seed {seed}: the peak {} is off its chord",
+                    peak.note
+                );
+            }
+            let (first, last) = (&line[0], &line[line.len() - 1]);
+            if last.bar != GEN_LOOP_BARS - 1 {
+                continue;
+            }
+            closes += 1;
+            let chord = pcs(&s.bar_chords[last.bar]);
+            let distance = |n: u8| (i16::from(n) - i16::from(first.note)).abs();
+            let nearer = (lead.lo..=lead.hi)
+                .filter(|n| chord.contains(&(n % 12)))
+                .find(|&n| distance(n) < distance(last.note));
+            assert!(
+                chord.contains(&(last.note % 12)) && nearer.is_none(),
+                "{mood:?} seed {seed}: the close {} isn't the chord tone nearest the opening {}",
+                last.note,
+                first.note
+            );
+        }
+    }
+    assert!(peaks > 0 && closes > 0);
 }
 
 #[test]
@@ -367,58 +504,28 @@ fn day_lead_uses_sixteenth_anticipations_somewhere_in_the_sweep() {
 
 #[test]
 fn the_answer_quotes_the_statements_opening() {
-    for seed in 0..SWEEP {
-        let s = compose(Mood::Day, seed);
-        let bar_s = s.bar_s();
-        let bar_of = |at: f32| ((at / bar_s) as usize).min(GEN_LOOP_BARS - 1);
-        let bar0: Vec<u8> = s
-            .sparkle
-            .iter()
-            .filter(|&&(at, _, _)| bar_of(at) == 0)
-            .map(|&(_, n, _)| n)
-            .collect();
-        let bar4: Vec<u8> = s
-            .sparkle
-            .iter()
-            .filter(|&&(at, _, _)| bar_of(at) == 4)
-            .map(|&(_, n, _)| n)
-            .collect();
-        if !bar0.is_empty() && !bar4.is_empty() {
-            assert_eq!(
-                bar4[0], bar0[0],
-                "seed {seed}: the answer must open on the statement's pitch"
-            );
+    for mood in MOODS {
+        for seed in 0..SWEEP {
+            let line = sung(&compose(mood, seed));
+            let bar = |b: usize| line.iter().filter(move |n| n.bar == b).map(|n| n.note);
+            if let (Some(statement), Some(answer)) = (bar(0).next(), bar(4).next()) {
+                assert_eq!(
+                    answer, statement,
+                    "{mood:?} seed {seed}: the answer must open on the statement's pitch"
+                );
+            }
         }
     }
 }
 
 #[test]
 fn adopted_color_templates_actually_rotate_in() {
-    let mut seen_color = false;
-    for seed in 0..SWEEP {
-        let s = compose(Mood::Day, seed);
-        if s.chords
-            .iter()
-            .flatten()
-            .any(|&n| !s.scale_pcs.contains(&(n % 12)))
-        {
-            seen_color = true;
-        }
-    }
-    assert!(seen_color, "no chromatic template drawn across the sweep");
-}
-
-#[test]
-fn night_hats_articulate_above_the_v1_floor() {
-    for seed in 0..SWEEP {
-        let s = compose(Mood::Night, seed);
-        for &(_, k, g) in s.drums.iter().filter(|&&(_, k, _)| k == DrumKind::Hat) {
-            let _ = k;
-            assert!(
-                g >= 0.40 * 0.9 * 0.95,
-                "seed {seed}: hat gain {g} below the adopted floor"
-            );
-        }
+    for mood in MOODS {
+        let seen_color = (0..SWEEP).any(|seed| composed(mood, seed).1.template.chromatic);
+        assert!(
+            seen_color,
+            "{mood:?}: no chromatic template across the sweep"
+        );
     }
 }
 
@@ -429,18 +536,15 @@ fn night_hats_articulate_above_the_v1_floor() {
 fn a_seeded_groove_lays_every_hit_where_it_did() {
     let mut words = Vec::new();
     let beat_s = 60.0 / 74.0;
-    let lanes = DAY_GROOVES
-        .iter()
-        .map(|g| day_drums(&mut NoiseStream::new(7), g, beat_s))
-        .chain(std::iter::once(night_drums(
-            &mut NoiseStream::new(7),
-            beat_s,
-        )));
-    for (hits, kicks) in lanes {
-        for (at, kind, gain) in hits {
+    for g in DAY_GROOVES.iter().chain([&NIGHT_GROOVE]) {
+        let hits = drums(&mut NoiseStream::new(7), g, beat_s);
+        for &(at, kind, gain) in &hits {
             words.extend([at.to_bits(), kind as u32, gain.to_bits()]);
         }
-        words.extend(kicks.into_iter().map(f32::to_bits));
+        // the kicks again, as the hash was recorded while the drums kept a
+        // second list of them
+        let kicks = hits.iter().filter(|&&(_, kind, _)| kind == DrumKind::Kick);
+        words.extend(kicks.map(|&(at, ..)| at.to_bits()));
     }
     let h = fnv1a(words.into_iter().map(u64::from));
     assert_eq!(h, GOLDEN, "{h:#018x}");
@@ -454,7 +558,7 @@ const GOLDEN: u64 = 0x71ca_6f22_f488_2daf;
 #[test]
 fn every_seed_composes_the_score_it_did() {
     let mut words: Vec<u64> = Vec::new();
-    for mood in [Mood::Day, Mood::Night] {
+    for mood in MOODS {
         for seed in 0..8 {
             let s = compose(mood, seed);
             words.push(u64::from(s.bpm.to_bits()));
@@ -474,7 +578,11 @@ fn every_seed_composes_the_score_it_did() {
                     u64::from(gain.to_bits()),
                 ]);
             }
-            words.extend(s.kick_times.iter().map(|t| u64::from(t.to_bits())));
+            // the night kicks again, as the hash was recorded while a night
+            // score kept a second list of them
+            if mood == Mood::Night {
+                words.extend(s.kicks().map(|t| u64::from(t.to_bits())));
+            }
             words.extend(s.bar_chords.iter().flatten().map(|&n| u64::from(n)));
             words.push(s.lead_voice as u64);
         }
