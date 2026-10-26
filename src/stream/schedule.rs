@@ -519,8 +519,8 @@ impl Song {
         let crackle = Crackle::new(noise.fork(), sr);
         // where the whole-lane night texture ducks, rounded as it rounds them:
         // under each kick the form strikes, since the duck is the groove's
-        let onsets: Vec<usize> = (score.kick_times.iter())
-            .map(|&at| samples_at(at, sr))
+        let onsets: Vec<usize> = (part(&score, Lane::Texture).ducks().into_iter())
+            .map(|at| samples_at(at, sr))
             .collect();
         let kicks: Vec<usize> = (window.tile(&onsets).into_iter())
             .filter(|&(_, bar, _)| form.plays(bar).strikes(Lane::Drums))
@@ -879,7 +879,7 @@ pub(crate) const UNITY: [f64; LANES] = [1.0; LANES];
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compose::{Plays, spans_a_form};
+    use crate::compose::{Plays, fnv1a, spans_a_form};
     use crate::stream::lanes::{COEFF_BLOCK, FILTERED_HZ};
     use crate::stream::master::TIER_INTENSITIES;
 
@@ -1037,10 +1037,7 @@ mod tests {
         for seed in 0..64 {
             for c in [Controls::default(), Controls::default().with_daylight(0.0)] {
                 let score = song_score(seed, 0, c);
-                let kicks: Vec<f32> = (score.drums.iter())
-                    .filter(|&&(_, kind, _)| kind == crate::compose::DrumKind::Kick)
-                    .map(|&(at, ..)| at)
-                    .collect();
+                let kicks: Vec<f32> = score.kicks().collect();
                 for bar in 0..GEN_LOOP_BARS {
                     let line = bar as f32 * score.bar_s();
                     // within a thirty-second of the line, or anticipating it
@@ -1513,8 +1510,8 @@ mod tests {
         }
         let window = samples_at(0.05, sr);
         let energy = |from: usize| bed[from..from + window].iter().map(|v| v * v).sum::<f64>();
-        let kicks: Vec<usize> = (song.score.kick_times.iter())
-            .map(|&at| samples_at(at, sr))
+        let kicks: Vec<usize> = (song.score.kicks())
+            .map(|at| samples_at(at, sr))
             .filter(|&k| k >= window)
             .collect();
         assert!(!kicks.is_empty());
@@ -1522,13 +1519,6 @@ mod tests {
         let after: f64 = kicks.iter().map(|&k| energy(k)).sum();
         let ratio = (after / before).sqrt();
         assert!(ratio < 0.85, "the bed must dip after the kicks: {ratio:.3}");
-    }
-
-    /// FNV-1a over 64-bit words, as `compose`'s goldens hash.
-    fn fnv1a(words: impl IntoIterator<Item = u64>) -> u64 {
-        words.into_iter().fold(0xcbf2_9ce4_8422_2325, |h, w| {
-            (h ^ w).wrapping_mul(0x0000_0100_0000_01b3)
-        })
     }
 
     /// Every bar frame and every cue of seeds 0..4's first two songs by day

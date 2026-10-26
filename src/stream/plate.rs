@@ -359,7 +359,7 @@ impl Plate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compose::{BEATS_PER_BAR, DAY_BPM, GEN_LOOP_BARS};
+    use crate::compose::{BEATS_PER_BAR, GEN_LOOP_BARS, fastest_bpm};
     use crate::dsp::{NoiseStream, SAMPLE_RATE};
     use crate::stream::biquad::{butter_highpass, butter_lowpass};
 
@@ -478,10 +478,10 @@ mod tests {
         );
     }
 
-    /// The longest a plate may ring past its last send: the fastest day
-    /// song's loop, which the next song's first loop must outlast.
+    /// The longest a plate may ring past its last send: the fastest song's
+    /// loop, which the next song's first loop must outlast.
     fn rest_bound_secs() -> f64 {
-        f64::from(GEN_LOOP_BARS as f32 * BEATS_PER_BAR * 60.0 / DAY_BPM.1)
+        f64::from(GEN_LOOP_BARS as f32 * BEATS_PER_BAR * 60.0 / fastest_bpm())
     }
 
     #[test]

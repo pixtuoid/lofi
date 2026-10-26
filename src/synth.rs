@@ -143,7 +143,7 @@ fn room_bed(n: usize, total: usize, rng: &mut NoiseStream) -> Vec<f32> {
 // The `#[cfg(test)]` stems below are fingerprint ANCHORS, not dead code: their
 // pins prove the voices and cores `render_lane` shares still render the ratified sound.
 
-use super::compose::DrumKind;
+use super::compose::{DrumKind, Hit, Note};
 #[cfg(test)]
 use super::{compose::BEATS_PER_BAR, score};
 
@@ -230,12 +230,16 @@ fn ep_pluck(midi: u8, dur_s: f32, vel: f32, sr: u32) -> Vec<f32> {
 #[cfg(test)]
 const ANCHOR_LEAD_DUR_S: f32 = 1.6;
 
-/// The day-1 anchor's `(beats, midi, vel)` events at seconds, as the cores
-/// place them.
+/// The day-1 anchor's `(beats, midi, vel)` rows as the notes its cores
+/// place.
 #[cfg(test)]
-fn anchor_events(events: &[(f32, u8, f32)]) -> Vec<(f32, u8, f32)> {
-    (events.iter())
-        .map(|&(beats, note, vel)| (beats * beat_s(), note, vel))
+fn anchor_events(rows: &[(f32, u8, f32)]) -> Vec<Note> {
+    (rows.iter())
+        .map(|&(beats, midi, vel)| Note {
+            at: beats * beat_s(),
+            midi,
+            vel,
+        })
         .collect()
 }
 
@@ -331,12 +335,13 @@ pub(crate) fn stem_keys() -> Vec<f32> {
 #[cfg(test)]
 pub(crate) fn stem_drums(rng: &mut NoiseStream) -> Vec<f32> {
     let swing = 0.10 * beat_s();
+    let hit = |at, kind, gain| Hit { at, kind, gain };
     let mut hits = Vec::new();
     for bar in 0..score::LOOP_BARS {
         let b0 = bar as f32 * bar_s();
-        hits.push((b0, DrumKind::Kick, 1.0));
-        hits.push((b0 + 2.5 * beat_s(), DrumKind::Kick, 0.8));
-        hits.push((b0 + 2.0 * beat_s(), DrumKind::Snare, 1.0));
+        hits.push(hit(b0, DrumKind::Kick, 1.0));
+        hits.push(hit(b0 + 2.5 * beat_s(), DrumKind::Kick, 0.8));
+        hits.push(hit(b0 + 2.0 * beat_s(), DrumKind::Snare, 1.0));
         for eighth in 0..8 {
             let at =
                 b0 + eighth as f32 * (beat_s() / 2.0) + if eighth % 2 == 1 { swing } else { 0.0 };
@@ -345,7 +350,7 @@ pub(crate) fn stem_drums(rng: &mut NoiseStream) -> Vec<f32> {
             } else {
                 DrumKind::Hat
             };
-            hits.push((at, kind, score::DRUM_HAT_VELS[bar * 8 + eighth]));
+            hits.push(hit(at, kind, score::DRUM_HAT_VELS[bar * 8 + eighth]));
         }
     }
     let r = DRUMS.day;
@@ -636,15 +641,20 @@ fn pad_core(mood: Mood, bar_s: f32, loop_bars: usize, bar: impl Fn(usize) -> Vec
 /// `note_fn`, then the stem's low-pass, its peak and the tape.
 fn events_stem_voiced(
     loop_secs: f32,
-    events: &[(f32, u8, f32)],
+    events: &[Note],
     dur_s: f32,
     cutoff_hz: f32,
     peak: f32,
     note_fn: NoteVoice,
 ) -> Vec<f32> {
     let mut buf = vec![0.0f32; n_samples(loop_secs)];
-    for &(at, note, vel) in events {
-        place(&mut buf, &note_fn(note, dur_s, vel, SAMPLE_RATE), at, 1.0);
+    for n in events {
+        place(
+            &mut buf,
+            &note_fn(n.midi, dur_s, n.vel, SAMPLE_RATE),
+            n.at,
+            1.0,
+        );
     }
     let mut buf = lowpass(&buf, cutoff_hz);
     normalize(&mut buf, peak);
@@ -701,16 +711,16 @@ pub(crate) fn night_drums(rng: &mut NoiseStream) -> Vec<f32> {
 
 fn drums_core(
     loop_secs: f32,
-    table: &[(f32, DrumKind, f32)],
+    table: &[Hit],
     cutoff_hz: f32,
     drive: f32,
     peak: f32,
     rng: &mut NoiseStream,
 ) -> Vec<f32> {
     let mut buf = vec![0.0f32; n_samples(loop_secs)];
-    for &(at, kind, gain) in table {
-        let hit = drum_hit(rng, kind, SAMPLE_RATE);
-        place(&mut buf, &hit, at, gain);
+    for h in table {
+        let hit = drum_hit(rng, h.kind, SAMPLE_RATE);
+        place(&mut buf, &hit, h.at, h.gain);
     }
     let mut buf = lowpass(&buf, cutoff_hz);
     normalize(&mut buf, peak);
@@ -731,15 +741,15 @@ const NIGHT_TEXTURE_SPLICE_S: f32 = 0.03;
 /// construction.
 #[cfg(test)]
 pub(crate) fn night_texture(rng: &mut NoiseStream) -> Vec<f32> {
-    let kicks = score::night_kick_times();
-    night_part(
-        &Part::Bed {
-            mood: Mood::Night,
-            kicks: &kicks,
-        },
-        rng,
-    )
+    night_part(&NIGHT_BED, rng)
 }
+
+/// The frozen night take's bed, ducking under its drums.
+#[cfg(test)]
+const NIGHT_BED: Part<'static> = Part::Bed {
+    mood: Mood::Night,
+    hits: &score::NIGHT_DRUMS,
+};
 
 fn night_texture_core(loop_secs: f32, kick_times: &[f32], rng: &mut NoiseStream) -> Vec<f32> {
     let n = n_samples(loop_secs);
@@ -990,23 +1000,22 @@ pub(crate) enum Part<'a> {
         bar_s: f32,
         mood: Mood,
     },
-    /// `(at_s, midi, vel)` notes, played as `recipes` gives a `mood` song.
+    /// Notes, played through `voice` as `recipes` gives a `mood` song.
     Notes {
-        events: &'a [(f32, u8, f32)],
+        events: &'a [Note],
         voice: NoteVoice,
         recipes: ByMood<NoteRecipe>,
         mood: Mood,
     },
-    /// `(at_s, kind, gain)` drum hits, played as `recipes` gives a `mood`
-    /// song.
+    /// Drum hits, played as `recipes` gives a `mood` song.
     Hits {
-        hits: &'a [(f32, DrumKind, f32)],
+        hits: &'a [Hit],
         recipes: ByMood<HitRecipe>,
         mood: Mood,
     },
-    /// The texture: a bed, with no notes, a night one ducking under `kicks`
-    /// (seconds in the loop).
-    Bed { mood: Mood, kicks: &'a [f32] },
+    /// The texture: a bed with no notes, which [`Part::ducks`] under the
+    /// kicks of `hits`.
+    Bed { mood: Mood, hits: &'a [Hit] },
 }
 
 pub(crate) fn part(score: &Score, lane: Lane) -> Part<'_> {
@@ -1042,7 +1051,7 @@ pub(crate) fn part(score: &Score, lane: Lane) -> Part<'_> {
         },
         Lane::Texture => Part::Bed {
             mood,
-            kicks: &score.kick_times,
+            hits: &score.drums,
         },
     }
 }
@@ -1055,9 +1064,29 @@ impl Part<'_> {
             Part::Chords { chords, bar_s, .. } => (0..chords.len())
                 .map(|bar| bar_onset(bar, bar_s, sr))
                 .collect(),
-            Part::Notes { events, .. } => events.iter().map(|&(at, ..)| onset(at, sr)).collect(),
-            Part::Hits { hits, .. } => hits.iter().map(|&(at, ..)| onset(at, sr)).collect(),
+            Part::Notes { events, .. } => events.iter().map(|n| onset(n.at, sr)).collect(),
+            Part::Hits { hits, .. } => hits.iter().map(|h| onset(h.at, sr)).collect(),
             Part::Bed { .. } => Vec::new(),
+        }
+    }
+
+    /// The times in the loop a bed ducks under, in order: a night bed's
+    /// kicks, so the night room breathes with its groove, while the day room
+    /// runs free. Nothing else ducks.
+    pub(crate) fn ducks(&self) -> Vec<f32> {
+        match *self {
+            Part::Bed {
+                mood: Mood::Night,
+                hits,
+            } => {
+                let mut kicks: Vec<f32> = (hits.iter())
+                    .filter(|h| h.kind == DrumKind::Kick)
+                    .map(|h| h.at)
+                    .collect();
+                kicks.sort_by(f32::total_cmp);
+                kicks
+            }
+            _ => Vec::new(),
         }
     }
 
@@ -1076,12 +1105,12 @@ impl Part<'_> {
                 recipes,
                 mood,
             } => {
-                let (_, midi, vel) = events[i];
-                (voice(midi, recipes.at(mood).dur_s, vel, sr), 1.0)
+                let n = events[i];
+                (voice(n.midi, recipes.at(mood).dur_s, n.vel, sr), 1.0)
             }
             Part::Hits { hits, .. } => {
-                let (_, kind, gain) = hits[i];
-                (drum_hit(rng, kind, sr), gain)
+                let h = hits[i];
+                (drum_hit(rng, h.kind, sr), h.gain)
             }
             Part::Bed { .. } => (Vec::new(), 1.0),
         }
@@ -1132,9 +1161,8 @@ fn render_part(part: &Part<'_>, loop_s: f32, rng: &mut NoiseStream) -> Vec<f32> 
             mood: Mood::Day, ..
         } => texture_bed(rng),
         Part::Bed {
-            mood: Mood::Night,
-            kicks,
-        } => night_texture_core(loop_s, kicks, rng),
+            mood: Mood::Night, ..
+        } => night_texture_core(loop_s, &part.ducks(), rng),
     }
 }
 
@@ -1606,6 +1634,21 @@ mod tests {
         assert_ne!(n, n_samples(score::loop_secs()));
     }
 
+    /// The day bed loops on its own length, out of phase with the groove, so
+    /// only the night bed, a loop long, ducks: under every kick it lays.
+    #[test]
+    fn only_a_night_bed_ducks_and_under_every_kick() {
+        for seed in 0..8 {
+            let day = crate::compose::compose(Mood::Day, seed);
+            assert!(part(&day, Lane::Texture).ducks().is_empty());
+            let night = crate::compose::compose(Mood::Night, seed);
+            let mut kicks: Vec<f32> = night.kicks().collect();
+            kicks.sort_by(f32::total_cmp);
+            assert!(!kicks.is_empty());
+            assert_eq!(part(&night, Lane::Texture).ducks(), kicks, "seed {seed}");
+        }
+    }
+
     #[test]
     fn night_texture_seam_is_spliced_and_duck_dips_after_kicks() {
         let tex = night_texture(&mut NoiseStream::new(4));
@@ -1630,7 +1673,7 @@ mod tests {
             (head - tail).abs() <= 0.10 * head.max(tail),
             "no level step across the wrap: head {head:.5} vs tail {tail:.5}"
         );
-        let kt = score::night_kick_times()[2];
+        let kt = NIGHT_BED.ducks()[2];
         let i = n_samples(kt);
         let w = n_samples(0.05);
         let rms = |s: &[f32]| (s.iter().map(|v| v * v).sum::<f32>() / s.len() as f32).sqrt();
