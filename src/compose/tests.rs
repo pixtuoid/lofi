@@ -248,6 +248,8 @@ fn assert_well_formed(s: &Score, h: &Harmony, seed: u64) {
     let loop_s = s.loop_secs();
     let bar_s = s.bar_s();
     let bar_of = |at: f32| ((at / bar_s) as usize).min(GEN_LOOP_BARS - 1);
+    // the sub window D1-C#2: each pitch class's one note in it
+    let sub = |pc: u8| (26..=37).find(|n| n % 12 == pc % 12).expect("an octave");
     for &Note { at, vel, .. } in s.sparkle.iter().chain(s.keys.iter()).chain(s.bass.iter()) {
         assert!(
             at >= 0.0 && at < loop_s,
@@ -260,7 +262,7 @@ fn assert_well_formed(s: &Score, h: &Harmony, seed: u64) {
         let one = (bar as f32 * bar_s)..(bar as f32 * bar_s + s.beat_s());
         assert!(
             (s.bass.iter())
-                .any(|&Note { at, midi: n, .. }| one.contains(&at) && n % 12 == chord.root_pc),
+                .any(|&Note { at, midi, .. }| one.contains(&at) && midi == sub(chord.root_pc)),
             "seed {seed}: the bass must sound bar {bar}'s root on its ONE"
         );
     }
@@ -273,12 +275,13 @@ fn assert_well_formed(s: &Score, h: &Harmony, seed: u64) {
         // closed vocabulary: root/5th/pickup — anything else is a wrong join
         let bar = bar_of(at);
         let root = h.bars[bar].root_pc;
-        let mut allowed = vec![root, (root + 7) % 12];
+        let mut allowed = vec![sub(root), sub(root + 7)];
         if let Some(next) = h.bars.get(bar + 1) {
-            allowed.push((next.root_pc + 11) % 12);
+            // a semitone under the next root, not that pitch class folded in
+            allowed.push(sub(next.root_pc) - 1);
         }
         assert!(
-            allowed.contains(&(note % 12)),
+            allowed.contains(&note),
             "seed {seed}: bass note {note} in bar {bar} is not root/5th/pickup {allowed:?}"
         );
         // place() clips at the loop end — no onset may ring into the seam
