@@ -3,6 +3,7 @@
 
 use std::collections::VecDeque;
 
+use super::gain_of_db;
 use crate::compose::Lane;
 
 /// The intensities at which the mix plays pixtuoid's Empty, Moderate and Busy
@@ -27,9 +28,16 @@ fn tier_gains(lane: Lane) -> [f32; 3] {
         Lane::Texture => [0.78, 0.84, 0.78],
         // never 0, and rising where the pad's falls: the lane must hold up
         // once the drums, the keys and pixtuoid's typing enter
-        Lane::Bass => [0.60, 0.70, 0.75],
+        Lane::Bass => {
+            [0.60, 0.70, 0.75].map(|gain| gain * gain_of_db(f64::from(BASS_TRIM_DB)) as f32)
+        }
     }
 }
+
+/// How far under pixtuoid's tier gains the bass plays: what holds its share of
+/// the mix's gated loudness since its window rose (`compose`'s `BASS_LOW`).
+/// Opinion, sized by the measurement in the commit that set it.
+pub(crate) const BASS_TRIM_DB: f32 = -1.5;
 
 /// `lane`'s gain at `intensity`, in `[0, 1]`: its tier's at each of
 /// [`TIER_INTENSITIES`], linear between them, which is opinion.

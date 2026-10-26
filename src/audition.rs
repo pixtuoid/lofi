@@ -6,7 +6,7 @@ use std::collections::VecDeque;
 use std::ops::Range;
 
 pub use crate::compose::Lane;
-pub use crate::compose::{Form, Score, spans_a_form};
+pub use crate::compose::{BASS_LOW, Form, LOW_INTERVAL_LIMIT, Score, spans_a_form};
 pub use crate::stream::master::{TIER_INTENSITIES, lane_gain};
 pub use crate::stream::schedule::{bar_frames, song_bars, song_form, song_score};
 pub use crate::synth::{render_lane, samples_at};
