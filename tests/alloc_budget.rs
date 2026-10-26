@@ -9,8 +9,8 @@ use pixtuoid_lofi::dsp::SAMPLE_RATE;
 use pixtuoid_lofi::{Controls, Frame, Performance, audition};
 
 /// The most heap a `Performance` may hold at once, in bytes: the highest
-/// high-water this test measured plus 25 %, both of which the commit that set
-/// it records.
+/// high-water this test measured plus 25 % (opinion), both of which the
+/// commit that set it records.
 const BUDGET: usize = 11_331_440;
 
 /// Bytes allocated and not yet freed, and the most there have been.

@@ -1192,7 +1192,7 @@ mod tests {
                 // later one does
                 lanes(&mut run, loop_len);
                 for (lufs, lane) in lufs.iter_mut().zip(lanes(&mut run, loop_len)) {
-                    lufs.push(crate::loudness::gated_lufs(&lane, sr));
+                    lufs.push(crate::audition::gated_lufs(&[&lane], sr));
                 }
             }
             for ((lane, mut got), want) in Lane::ALL.iter().zip(lufs).zip(want) {

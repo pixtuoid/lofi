@@ -5,6 +5,10 @@
 use std::collections::VecDeque;
 use std::ops::Range;
 
+mod loudness;
+
+pub use loudness::{channels, fold, gated_lufs};
+
 pub use crate::compose::Lane;
 pub use crate::compose::{BASS_CLASH_BELOW, BASS_LOW, Form, Score, spans_a_form};
 pub use crate::stream::master::{TIER_INTENSITIES, lane_gain};
@@ -57,7 +61,7 @@ pub fn song_len(seed: u64, k: u64, controls: Controls) -> usize {
     crate::stream::schedule::song_len(seed, k, controls, SAMPLE_RATE)
 }
 
-/// A performance's mix as the sum it is, on the fold every reading hears:
+/// A performance's mix as the sum it is, on the fold a spectrum reads:
 /// each lane's dry sum and the plate's return, as the ceiling played them,
 /// so a frame's stems sum to its fold but for the rounding each takes.
 #[derive(Debug)]
@@ -128,6 +132,22 @@ impl Probe for Stems {
     }
 }
 
+/// `buf` zero-padded to the next power of two through [`dsp`](crate::dsp)'s
+/// FFT in f64, `(re, im)`: a whole take's spectrum, whose millions of bins a
+/// tool sums past what f32 would keep.
+pub fn transform(buf: &[f32]) -> (Vec<f64>, Vec<f64>) {
+    let n = buf.len().next_power_of_two();
+    let mut re: Vec<f64> = buf.iter().map(|&v| f64::from(v)).collect();
+    re.resize(n, 0.0);
+    let mut im = vec![0.0; n];
+    crate::dsp::fft(&mut re, &mut im, &crate::dsp::twiddles(n), false);
+    (re, im)
+}
+
+/// The gated loudness `lofi_audition` renders a mix take at, so a blind A/B
+/// compares takes, not gain: inside LOFI-BIBLE.md §4's loudness target.
+pub const TARGET_LUFS: f64 = -15.0;
+
 /// The seeds [`WHOLE_LANE_LUFS_SD`] and [`SONG_LUFS_SD`] were measured over,
 /// each seed's first song.
 pub const LUFS_SEEDS: Range<u64> = 0..24;
@@ -139,8 +159,8 @@ pub const LUFS_SEEDS: Range<u64> = 0..24;
 /// --engine whole` prints it over those seeds at the row's `--tier` and
 /// `--mood`. A non-regression, not a target.
 pub const WHOLE_LANE_LUFS_SD: [(f32, f32, f64); 2] = [
-    (TIER_INTENSITIES[1], 1.0, 0.3387),
-    (TIER_INTENSITIES[1], 0.0, 0.2321),
+    (TIER_INTENSITIES[1], 1.0, 0.3872),
+    (TIER_INTENSITIES[1], 0.0, 0.2765),
 ];
 
 /// How much a `Performance`'s songs' gated loudness varied across
@@ -150,8 +170,8 @@ pub const WHOLE_LANE_LUFS_SD: [(f32, f32, f64); 2] = [
 /// those seeds at the row's `--tier` and `--mood`. A non-regression, not a
 /// target.
 pub const SONG_LUFS_SD: [(f32, f32, f64); 2] = [
-    (TIER_INTENSITIES[0], 1.0, 0.3292),
-    (TIER_INTENSITIES[2], 1.0, 0.4178),
+    (TIER_INTENSITIES[0], 1.0, 0.2717),
+    (TIER_INTENSITIES[2], 1.0, 0.3895),
 ];
 
 /// The most `songs` songs' loudness may vary against `reference`, a row of
@@ -221,7 +241,7 @@ mod tests {
             (got.iter().zip(&want)).position(|(a, b)| a.map(f32::to_bits) != b.map(f32::to_bits));
         assert_eq!(first_diff, None, "the stems' render played other frames");
         assert!(stems.plate().iter().any(|&x| x != 0.0), "no plate plays");
-        let fold = crate::loudness::fold(&want);
+        let fold = fold(&want);
         let off = (0..frames).position(|i| {
             let sum = stems
                 .lanes()
