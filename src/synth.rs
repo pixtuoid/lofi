@@ -821,7 +821,9 @@ const NIGHT_BED: Part<'static> = Part::Bed {
     hits: &score::NIGHT_DRUMS,
 };
 
-fn night_texture_core(loop_secs: f32, kick_times: &[f32], rng: &mut NoiseStream) -> Staged {
+/// The night room's bed over a loop `loop_secs` long, its seam spliced, at
+/// the level [`room_bed`] makes it.
+fn night_room_bed(loop_secs: f32, rng: &mut NoiseStream) -> Vec<f32> {
     let n = n_samples(loop_secs);
     let f = n_samples(NIGHT_TEXTURE_SPLICE_S);
     // synthesize f EXTRA samples past the loop end so the splice blends a genuine
@@ -835,6 +837,11 @@ fn night_texture_core(loop_secs: f32, kick_times: &[f32], rng: &mut NoiseStream)
         buf[j] = buf[n + j] * (1.0 - a) + buf[j] * a;
     }
     buf.truncate(n);
+    buf
+}
+
+fn night_texture_core(loop_secs: f32, kick_times: &[f32], rng: &mut NoiseStream) -> Staged {
+    let mut buf = night_room_bed(loop_secs, rng);
     // normalize BEFORE the duck: duck-then-normalize re-inflates the level by up
     // to the duck depth
     let gain = normalize(&mut buf, TEXTURE_PEAK);
@@ -1660,19 +1667,23 @@ mod tests {
         let dry: Vec<f32> = (0..n_samples(1.0)).map(|_| rng.norm() * 0.3).collect();
         let peak = |b: &[f32]| b.iter().fold(0.0f32, |m, v| m.max(v.abs()));
         let staged = master(dry.clone(), DRIVE, PEAK);
+        assert_eq!(staged.gains[0], PEAK / peak(&dry));
         let into_drive: Vec<f32> = dry.iter().map(|v| v * staged.gains[0]).collect();
-        assert_eq!(peak(&into_drive), PEAK);
         assert_eq!(staged.gains[1], PEAK / peak(&lofi_post(&into_drive, DRIVE)));
-        assert_eq!(peak(&staged.buf), PEAK);
     }
 
-    /// A bed sets its level by its peak alone, and the tape doesn't touch it.
+    /// A bed, day or night, sets its level by its peak alone, and the tape
+    /// doesn't touch it.
     #[test]
     fn a_texture_bed_reports_its_peak_normalization() {
+        let peak = |b: &[f32]| b.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        let day = room_bed(BED_LOOP_SAMPLES, BED_LOOP_SAMPLES, &mut NoiseStream::new(4));
         let staged = texture_bed(&mut NoiseStream::new(4));
-        let raw = room_bed(BED_LOOP_SAMPLES, BED_LOOP_SAMPLES, &mut NoiseStream::new(4));
-        let peak = raw.iter().fold(0.0f32, |m, v| m.max(v.abs()));
-        assert_eq!(staged.gains, [TEXTURE_PEAK / peak, 1.0]);
+        assert_eq!(staged.gains, [TEXTURE_PEAK / peak(&day), 1.0], "day");
+        let loop_s = score::night_loop_secs();
+        let night = night_room_bed(loop_s, &mut NoiseStream::new(4));
+        let staged = night_texture_core(loop_s, &[], &mut NoiseStream::new(4));
+        assert_eq!(staged.gains, [TEXTURE_PEAK / peak(&night), 1.0], "night");
     }
 
     /// A lane's staged render is its core's, brightened, with the brighten's
