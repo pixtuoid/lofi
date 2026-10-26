@@ -20,7 +20,7 @@ fn tier_gains(lane: Lane) -> [f32; 3] {
         // 2025, pp.117-118), now that a song's form keeps it to the dense
         // cores: under the keys, and a little more where "busy adds"
         // (docs/phase0-ratification.md); the levels are opinion
-        Lane::Sparkle => [0.70, 0.50, 0.55],
+        Lane::Sparkle => [0.70, 0.0, 0.0],
         Lane::Keys => [0.0, 0.60, 0.70],
         Lane::Drums => [0.0, 0.35, 0.60],
         // far past the Phase-0 ratification: at its ratified level the hiss
