@@ -144,7 +144,7 @@ pub fn transform(buf: &[f32]) -> (Vec<f64>, Vec<f64>) {
     (re, im)
 }
 
-/// The gated loudness every take of lofi's tools renders at, so a blind A/B
+/// The gated loudness `lofi_audition` renders a mix take at, so a blind A/B
 /// compares takes, not gain: inside LOFI-BIBLE.md §4's loudness target.
 pub const TARGET_LUFS: f64 = -15.0;
 
