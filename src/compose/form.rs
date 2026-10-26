@@ -1,9 +1,11 @@
-//! A song's FORM: which lanes strike in each bar of the window a song cuts
+//! A song's FORM: which layers strike in each bar of the window a song cuts
 //! from its tiled loop, and how its edges fade or filter. The grammar's
-//! weights are the measured corpora's (LOFI-BIBLE R11); a lane only ever
+//! weights are the measured corpora's (LOFI-BIBLE R11); a layer only ever
 //! drops out over the loop, so a form adds nothing to the music.
 
 use std::fmt;
+use std::num::NonZeroUsize;
+use std::ops::Range;
 
 use super::{GEN_LOOP_BARS, Lane, chance, pick};
 use crate::dsp::{NoiseStream, splitmix64};
@@ -12,46 +14,78 @@ use crate::dsp::{NoiseStream, splitmix64};
 /// form's, nor the reverse.
 const FORM_SALT: u64 = 0xF0_4A_55_ED;
 
-/// Which lanes strike in one bar, each at its index in [`Lane::ALL`].
+/// What a form arranges: R11's measured layers, whose "keys" band holds the
+/// lead too. The texture is in none: the room plays every bar of every song
+/// and through every edge, which links one song to the next.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Plays([bool; Lane::ALL.len()]);
+pub(crate) enum Layer {
+    Pad,
+    Keys,
+    Drums,
+    Bass,
+}
+
+impl Layer {
+    /// Every layer, each at its index.
+    const ALL: [Layer; 4] = [Layer::Pad, Layer::Keys, Layer::Drums, Layer::Bass];
+
+    /// Each layer's name in [`Layer::ALL`] order, as a form prints it.
+    const NAMES: [&'static str; Layer::ALL.len()] = ["pad", "keys", "drums", "bass"];
+
+    /// The layer `lane` plays in, or none for the room.
+    pub(crate) const fn of(lane: Lane) -> Option<Layer> {
+        match lane {
+            Lane::Pad => Some(Layer::Pad),
+            Lane::Sparkle | Lane::Keys => Some(Layer::Keys),
+            Lane::Drums => Some(Layer::Drums),
+            Lane::Bass => Some(Layer::Bass),
+            Lane::Texture => None,
+        }
+    }
+
+    const fn name(self) -> &'static str {
+        Self::NAMES[self as usize]
+    }
+}
+
+/// Which layers strike in one bar, each at its index in [`Layer::ALL`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Plays([bool; Layer::ALL.len()]);
 
 impl Plays {
-    pub(crate) const ALL: Self = Self([true; Lane::ALL.len()]);
+    pub(crate) const ALL: Self = Self([true; Layer::ALL.len()]);
 
     /// The bed alone: the pad's chords over the room.
-    const BED: Self = Self([false; Lane::ALL.len()])
-        .with(Lane::Pad, true)
-        .with(Lane::Texture, true);
+    const BED: Self = Self([false; Layer::ALL.len()]).with(Layer::Pad, true);
 
-    /// These lanes, with `lane` striking or not.
-    const fn with(mut self, lane: Lane, strikes: bool) -> Self {
-        self.0[lane as usize] = strikes;
+    /// These layers, with `layer` striking or not.
+    const fn with(mut self, layer: Layer, strikes: bool) -> Self {
+        self.0[layer as usize] = strikes;
         self
     }
 
-    /// These lanes, with the keys and the lead striking or not: R11's "keys"
-    /// band holds both, so the form moves them together.
-    const fn with_keys(self, strikes: bool) -> Self {
-        self.with(Lane::Keys, strikes).with(Lane::Sparkle, strikes)
+    /// Whether `layer` strikes.
+    const fn has(self, layer: Layer) -> bool {
+        self.0[layer as usize]
     }
 
-    /// Whether `lane` strikes.
+    /// Whether `lane` strikes: its layer's say, and the room always.
     pub(crate) const fn strikes(self, lane: Lane) -> bool {
-        self.0[lane as usize]
+        match Layer::of(lane) {
+            Some(layer) => self.has(layer),
+            None => true,
+        }
     }
 
-    /// Sets whether `lane` strikes.
-    pub(crate) fn set(&mut self, lane: Lane, strikes: bool) {
-        self.0[lane as usize] = strikes;
+    /// Sets whether `layer` strikes.
+    pub(crate) fn set(&mut self, layer: Layer, strikes: bool) {
+        self.0[layer as usize] = strikes;
     }
 }
 
 /// How a song's intro or outro moves its music lanes' level or colour.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Edge {
-    /// The lanes enter and leave at their own level and colour.
-    Plain,
+pub(crate) enum Edge {
     /// The music lanes' level rises across the intro, or falls across the outro.
     Fade,
     /// The music lanes' low-pass opens across the intro, or closes across the
@@ -59,20 +93,100 @@ pub enum Edge {
     Filter,
 }
 
+/// A song's intro, or an outro that doesn't ring out.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum End {
+    /// None: the body's first bar is the song's, or its last.
+    Cold,
+    /// Bars at the music lanes' own level and colour, whichever layers play.
+    Plain(NonZeroUsize),
+    /// Bars every layer plays through an edge.
+    Edged(NonZeroUsize, Edge),
+}
+
+impl End {
+    const fn bars(self) -> usize {
+        match self {
+            Self::Cold => 0,
+            Self::Plain(bars) | Self::Edged(bars, _) => bars.get(),
+        }
+    }
+
+    const fn edge(self) -> Option<Edge> {
+        match self {
+            Self::Edged(_, edge) => Some(edge),
+            _ => None,
+        }
+    }
+
+    /// The end with `edge` over its bars, or none.
+    fn with_edge(self, edge: Option<Edge>) -> Self {
+        match (self, edge) {
+            (Self::Plain(bars) | Self::Edged(bars, _), Some(edge)) => Self::Edged(bars, edge),
+            (Self::Plain(bars) | Self::Edged(bars, _), None) => Self::Plain(bars),
+            (Self::Cold, _) => Self::Cold,
+        }
+    }
+}
+
+/// A song's outro.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Outro {
+    Ends(End),
+    /// The loop's first chord on the pad, then a bar of the room alone, which
+    /// outlasts the chord's tail.
+    RingOut,
+}
+
+impl Outro {
+    const fn bars(self) -> usize {
+        match self {
+            Self::Ends(end) => end.bars(),
+            Self::RingOut => RING_OUT_BARS,
+        }
+    }
+
+    const fn edge(self) -> Option<Edge> {
+        match self {
+            Self::Ends(end) => end.edge(),
+            Self::RingOut => None,
+        }
+    }
+}
+
+/// `n` bars, of a part that has some.
+const fn bars(n: usize) -> NonZeroUsize {
+    match NonZeroUsize::new(n) {
+        Some(bars) => bars,
+        None => panic!("a part with bars has some"),
+    }
+}
+
 /// One song's form: an intro, a body of whole loops starting on loop bar 0,
-/// and an outro, each bar naming the lanes that strike in it.
+/// and an outro, each bar naming the layers that strike in it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Form {
-    intro: usize,
-    body: usize,
-    outro: usize,
+    intro: End,
+    phrases: usize,
+    outro: Outro,
+    /// Whether the last bar of phrase [`DIP_PHRASE`] low-passes.
+    dip: bool,
     plays: Vec<Plays>,
-    entry: Edge,
-    exit: Edge,
-    dip: Option<usize>,
 }
 
 impl Form {
+    fn new(intro: End, phrases: usize, outro: Outro, dip: bool, plays: Vec<Plays>) -> Self {
+        let form = Self {
+            intro,
+            phrases,
+            outro,
+            dip,
+            plays,
+        };
+        debug_assert_eq!(form.bars(), form.parts()[2].end);
+        form
+    }
+
     /// Bars in the song.
     pub fn bars(&self) -> usize {
         self.plays.len()
@@ -80,98 +194,146 @@ impl Form {
 
     /// Bars before the body.
     pub fn intro(&self) -> usize {
-        self.intro
+        self.intro.bars()
     }
 
     /// Bars in the body, a whole number of loops.
     pub fn body(&self) -> usize {
-        self.body
+        self.phrases * GEN_LOOP_BARS
     }
 
     /// Bars after the body.
     pub fn outro(&self) -> usize {
-        self.outro
+        self.outro.bars()
     }
 
-    /// How the intro moves the music lanes.
-    pub fn entry(&self) -> Edge {
-        self.entry
+    /// The intro's, the body's and the outro's bars.
+    pub(crate) fn parts(&self) -> [Range<usize>; 3] {
+        let body = self.intro()..self.intro() + self.body();
+        [
+            0..body.start,
+            body.clone(),
+            body.end..body.end + self.outro(),
+        ]
     }
 
-    /// How the outro moves the music lanes.
-    pub fn exit(&self) -> Edge {
-        self.exit
+    /// How the intro moves the music lanes, if it does.
+    pub(crate) fn entry(&self) -> Option<Edge> {
+        self.intro.edge()
     }
 
-    /// The song bar, phrase 1's last, whose music lanes low-pass for one bar,
-    /// if any.
-    pub fn dip(&self) -> Option<usize> {
-        self.dip
+    /// How the outro moves the music lanes, if it does.
+    pub(crate) fn exit(&self) -> Option<Edge> {
+        self.outro.edge()
+    }
+
+    /// The song bar whose music lanes low-pass for one bar, if any.
+    pub(crate) fn dip(&self) -> Option<usize> {
+        (self.dip).then(|| self.intro() + (DIP_PHRASE + 1) * GEN_LOOP_BARS - 1)
+    }
+
+    /// Whether the song closes on a ring-out, whose last bar the pad sits out.
+    #[cfg(test)]
+    pub(crate) fn rings_out(&self) -> bool {
+        self.outro == Outro::RingOut
     }
 
     /// The loop bar the song starts on: the intro ends where the loop does, so
     /// the body's first beat is the loop's.
     pub(crate) fn lead_in(&self) -> usize {
-        (GEN_LOOP_BARS - self.intro % GEN_LOOP_BARS) % GEN_LOOP_BARS
+        (GEN_LOOP_BARS - self.intro() % GEN_LOOP_BARS) % GEN_LOOP_BARS
     }
 
-    /// The lanes that strike in song bar `bar`.
+    /// The layers that strike in song bar `bar`.
     pub(crate) fn plays(&self, bar: usize) -> &Plays {
         &self.plays[bar]
     }
 
-    /// Whether some bar mutes some lane: a song whose invariance a test
-    /// proves must change somewhere.
-    #[cfg(test)]
-    pub(crate) fn mutes_any(&self) -> bool {
+    /// Whether some bar mutes some layer.
+    fn mutes_any(&self) -> bool {
         self.plays.iter().any(|&plays| plays != Plays::ALL)
     }
 
     /// Whether the form fades or filters somewhere: an edge or a dip.
-    #[cfg(test)]
     pub(crate) fn edged(&self) -> bool {
-        self.entry != Edge::Plain || self.exit != Edge::Plain || self.dip.is_some()
+        self.entry().is_some() || self.exit().is_some() || self.dip
+    }
+
+    /// The form a band with no beat plays: its intro and outro layered as
+    /// drawn, its body whole, and no edge or dip. A body's drops and an edge
+    /// move a groove; with no beat they only thin a band already as sparse as
+    /// R11's sparsest, which the judge hears as worse and the corpus as no
+    /// closer.
+    pub(crate) fn beatless(mut self) -> Self {
+        let body = self.parts()[1].clone();
+        self.plays[body].fill(Plays::ALL);
+        self.intro = self.intro.with_edge(None);
+        if let Outro::Ends(end) = self.outro {
+            self.outro = Outro::Ends(end.with_edge(None));
+        }
+        self.dip = false;
+        self
     }
 
     /// The form with its intro's edge `entry` and its outro's `exit`, the
     /// rest kept, for a test's twin.
     #[cfg(test)]
-    pub(crate) fn with_edges(mut self, entry: Edge, exit: Edge) -> Self {
-        (self.entry, self.exit) = (entry, exit);
+    pub(crate) fn with_edges(mut self, entry: Option<Edge>, exit: Option<Edge>) -> Self {
+        self.intro = self.intro.with_edge(entry);
+        if let Outro::Ends(end) = self.outro {
+            self.outro = Outro::Ends(end.with_edge(exit));
+        }
         self
     }
 
-    /// The lanes song bar `bar` strikes, to change for a test.
+    /// The layers song bar `bar` strikes, to change for a test.
     #[cfg(test)]
     pub(crate) fn plays_mut(&mut self, bar: usize) -> &mut Plays {
         &mut self.plays[bar]
     }
 
-    /// `loops` loops of every lane, with no intro or outro: a song as it was
-    /// before its form.
+    /// The song a test of a mechanism a form would mute plays: every layer
+    /// for [`PLAIN_LOOPS`] loops, as every song played before it had a form.
     #[cfg(test)]
-    pub(crate) fn plain(loops: usize) -> Self {
-        Self {
-            intro: 0,
-            body: loops * GEN_LOOP_BARS,
-            outro: 0,
-            plays: vec![Plays::ALL; loops * GEN_LOOP_BARS],
-            entry: Edge::Plain,
-            exit: Edge::Plain,
-            dip: None,
-        }
+    pub(crate) fn plain() -> Self {
+        let plays = vec![Plays::ALL; PLAIN_LOOPS * GEN_LOOP_BARS];
+        Self::new(End::Cold, PLAIN_LOOPS, Outro::Ends(End::Cold), false, plays)
     }
 }
 
-/// Each part's bar count, then each lane out in it as the bars it is out:
+/// The loops a song played before it had a form.
+#[cfg(test)]
+const PLAIN_LOOPS: usize = 4;
+
+/// Whether `forms` span a form: a proof over songs that mute no layer, or
+/// that no edge moves, proves nothing of one.
+///
+/// # Errors
+///
+/// If no form of `forms` mutes a layer somewhere, or none fades or filters.
+pub fn spans_a_form<'a>(forms: impl IntoIterator<Item = &'a Form>) -> Result<(), String> {
+    let (mut mutes, mut edged, mut seen) = (false, false, Vec::new());
+    for form in forms {
+        mutes |= form.mutes_any();
+        edged |= form.edged();
+        seen.push(form.to_string());
+    }
+    match (mutes, edged) {
+        (true, true) => Ok(()),
+        (false, _) => Err(format!("no song mutes a layer: {seen:?}")),
+        (true, false) => Err(format!("no song fades or filters: {seen:?}")),
+    }
+}
+
+/// Each part's bar count, then each layer out in it as the bars it is out:
 /// `intro 4: drums 0-3 · body 40: bass 20-27 · outro 4 fade`.
 impl fmt::Display for Form {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let body = self.intro + self.body;
+        let [intro, body, outro] = self.parts();
         let parts = [
-            ("intro", 0..self.intro, self.entry),
-            ("body", self.intro..body, Edge::Plain),
-            ("outro", body..self.bars(), self.exit),
+            ("intro", intro, self.entry()),
+            ("body", body, None),
+            ("outro", outro, self.exit()),
         ];
         for (i, (name, bars, edge)) in parts.into_iter().enumerate() {
             if i > 0 {
@@ -179,28 +341,28 @@ impl fmt::Display for Form {
             }
             write!(f, "{name} {}", bars.len())?;
             match edge {
-                Edge::Plain => {}
-                Edge::Fade => write!(f, " fade")?,
-                Edge::Filter => write!(f, " filter")?,
+                None => {}
+                Some(Edge::Fade) => write!(f, " fade")?,
+                Some(Edge::Filter) => write!(f, " filter")?,
             }
             let mut sep = ":";
-            for lane in Lane::ALL {
+            for layer in Layer::ALL {
                 let out: Vec<usize> = bars
                     .clone()
-                    .filter(|&b| !self.plays[b].strikes(lane))
+                    .filter(|&b| !self.plays[b].has(layer))
                     .collect();
                 for run in out.chunk_by(|a, b| a + 1 == *b) {
                     let (first, last) = (run[0], run[run.len() - 1]);
                     if first == last {
-                        write!(f, "{sep} {} {first}", lane.name())?;
+                        write!(f, "{sep} {} {first}", layer.name())?;
                     } else {
-                        write!(f, "{sep} {} {first}-{last}", lane.name())?;
+                        write!(f, "{sep} {} {first}-{last}", layer.name())?;
                     }
                     sep = ",";
                 }
             }
         }
-        if let Some(dip) = self.dip {
+        if let Some(dip) = self.dip() {
             write!(f, " · dip {dip}")?;
         }
         Ok(())
@@ -210,7 +372,7 @@ impl fmt::Display for Form {
 /// How a song opens.
 #[derive(Clone, Copy)]
 enum Opening {
-    /// Some lanes sit out the intro.
+    /// Some layers sit out the intro.
     Sparse(Plays),
     /// The band plays the intro through the edge.
     Edged(Edge),
@@ -221,29 +383,31 @@ enum Opening {
 /// How a song closes.
 #[derive(Clone, Copy)]
 enum Closing {
+    /// Some layers sit out the outro.
     Sparse(Plays),
-    /// The loop's first chord on the pad, then a bar of the room alone, which
-    /// outlasts the chord's tail.
+    /// [`Outro::RingOut`].
     RingOut,
+    /// The band plays the outro through the edge.
     Edged(Edge),
+    /// No outro: the body's last bar is the song's.
     Cold,
 }
 
 /// The intros and their weights: LOFI-BIBLE R11's start counts, the sparse
 /// ones split by the lanes out and its unsplit ones left out.
 const INTRO_KINDS: [(Opening, u32); 8] = [
-    (Opening::Sparse(Plays::BED.with_keys(true)), 27),
+    (Opening::Sparse(Plays::BED.with(Layer::Keys, true)), 27),
     (
-        Opening::Sparse(Plays::BED.with_keys(true).with(Lane::Bass, true)),
+        Opening::Sparse(Plays::BED.with(Layer::Keys, true).with(Layer::Bass, true)),
         13,
     ),
     (
-        Opening::Sparse(Plays::BED.with_keys(true).with(Lane::Drums, true)),
+        Opening::Sparse(Plays::BED.with(Layer::Keys, true).with(Layer::Drums, true)),
         10,
     ),
     (Opening::Sparse(Plays::BED), 7),
     (
-        Opening::Sparse(Plays::BED.with(Lane::Drums, true).with(Lane::Bass, true)),
+        Opening::Sparse(Plays::BED.with(Layer::Drums, true).with(Layer::Bass, true)),
         5,
     ),
     (Opening::Edged(Edge::Fade), 13),
@@ -255,13 +419,13 @@ const INTRO_KINDS: [(Opening, u32); 8] = [
 /// the lanes out, its noise-only ones joining the ring-out and its unsplit
 /// ones left out.
 const OUTRO_KINDS: [(Closing, u32); 7] = [
-    (Closing::Sparse(Plays::BED.with_keys(true)), 14),
+    (Closing::Sparse(Plays::BED.with(Layer::Keys, true)), 14),
     (
-        Closing::Sparse(Plays::BED.with_keys(true).with(Lane::Drums, true)),
+        Closing::Sparse(Plays::BED.with(Layer::Keys, true).with(Layer::Drums, true)),
         11,
     ),
     (
-        Closing::Sparse(Plays::BED.with_keys(true).with(Lane::Bass, true)),
+        Closing::Sparse(Plays::BED.with(Layer::Keys, true).with(Layer::Bass, true)),
         10,
     ),
     (Closing::RingOut, 18),
@@ -290,7 +454,7 @@ const THINNINGS: [(Thinning, u32); 3] = [
 
 /// Short and long intros' bars, and the long one's share: R11's count of
 /// eight-bar intros against four-bar ones.
-const INTRO_BARS: [usize; 2] = [4, 8];
+const INTRO_BARS: [NonZeroUsize; 2] = [bars(4), bars(8)];
 const LONG_INTRO_P: f32 = 0.65;
 
 /// The body's phrases, each a loop: drawn at even odds (opinion), which puts
@@ -299,10 +463,13 @@ const PHRASES: [usize; 3] = [4, 5, 6];
 
 /// A sparse or edged outro's bars, short or long, the long one's share for
 /// each, and the ring-out's bars: fitted to R11's outro lengths (opinion).
-const OUTRO_BARS: [usize; 2] = [4, 8];
+const OUTRO_BARS: [NonZeroUsize; 2] = [bars(4), bars(8)];
 const LONG_SPARSE_OUTRO_P: f32 = 0.4;
 const LONG_EDGED_OUTRO_P: f32 = 0.5;
-const RING_OUT_BARS: usize = 2;
+const RING_OUT_BARS: usize = RING_OUT.len();
+
+/// A ring-out's bars: the pad's chord, then the room alone.
+const RING_OUT: [Plays; 2] = [Plays::BED, Plays::BED.with(Layer::Pad, false)];
 
 /// The thinning's span: the phrase's last half, or with this chance all of it.
 const WHOLE_THINNING_P: f32 = 0.4;
@@ -328,9 +495,15 @@ const LOW_WITH_CUT_P: f32 = 0.3;
 const BASS_DROP_P: f32 = 0.2;
 const BASS_DROP_MIN_PHRASES: usize = 5;
 
-/// A song low-passes phrase 1's last bar with this chance: R11's mid-track
-/// filter moments.
+/// A song low-passes the last bar of phrase `DIP_PHRASE` with this chance:
+/// R11's mid-track filter moments.
 const DIP_P: f32 = 0.2;
+const DIP_PHRASE: usize = 1;
+
+/// The cut draws every form makes, one per phrase a body may have: as many
+/// whatever the body, so a longer body in `PHRASES` moves no later draw.
+const CUT_SLOTS: usize = 6;
+const _: () = assert!(PHRASES[PHRASES.len() - 1] <= CUT_SLOTS);
 
 /// The band one unit draw `u` falls in, each band as wide as its weight.
 fn band(u: f32, weights: &[u32]) -> usize {
@@ -364,7 +537,7 @@ pub(crate) fn arrange(seed: u64) -> Form {
     let whole = chance(&mut rng, WHOLE_THINNING_P);
     let low_with_break = chance(&mut rng, LOW_WITH_BREAK_P);
     let cutting = chance(&mut rng, CUTTING_P);
-    let cuts: [Option<(usize, bool)>; PHRASES[PHRASES.len() - 1]] = std::array::from_fn(|_| {
+    let cuts: [Option<(usize, bool)>; CUT_SLOTS] = std::array::from_fn(|_| {
         let cut = chance(&mut rng, CUT_P);
         let bars = kind(rng.unit(), &CUT_BARS);
         let low = chance(&mut rng, LOW_WITH_CUT_P);
@@ -375,12 +548,13 @@ pub(crate) fn arrange(seed: u64) -> Form {
     let closing = kind(rng.unit(), &OUTRO_KINDS);
     let long_outro = rng.unit();
 
-    let (intro_plays, intro, entry) = match opening {
-        Opening::Sparse(plays) => (plays, INTRO_BARS[usize::from(long_intro)], Edge::Plain),
-        Opening::Edged(edge) => (Plays::ALL, INTRO_BARS[usize::from(long_intro)], edge),
-        Opening::Cold => (Plays::ALL, 0, Edge::Plain),
+    let intro_bars = INTRO_BARS[usize::from(long_intro)];
+    let (intro_plays, intro) = match opening {
+        Opening::Sparse(plays) => (plays, End::Plain(intro_bars)),
+        Opening::Edged(edge) => (Plays::ALL, End::Edged(intro_bars, edge)),
+        Opening::Cold => (Plays::ALL, End::Cold),
     };
-    let mut plays = vec![intro_plays; intro];
+    let mut plays = vec![intro_plays; intro.bars()];
 
     let mut body = vec![Plays::ALL; phrases * GEN_LOOP_BARS];
     let thin = phrases / 2;
@@ -390,14 +564,14 @@ pub(crate) fn arrange(seed: u64) -> Form {
     let keeps_low = match thinning {
         Thinning::Break => {
             for bar in &mut body[span] {
-                bar.set(Lane::Drums, false);
-                bar.set(Lane::Bass, bar.strikes(Lane::Bass) && !low_with_break);
+                bar.set(Layer::Drums, false);
+                bar.set(Layer::Bass, bar.has(Layer::Bass) && !low_with_break);
             }
             !low_with_break
         }
         Thinning::BassDrop => {
             for bar in &mut body[span] {
-                bar.set(Lane::Bass, false);
+                bar.set(Layer::Bass, false);
             }
             false
         }
@@ -406,7 +580,7 @@ pub(crate) fn arrange(seed: u64) -> Form {
     // a dense phrase cuts only into a phrase that opens on the beat, and never
     // into the outro, where a cut would just start a beatless outro early
     let opens_on_beat = |p: usize| p != thin || !(thinning == Thinning::Break && whole);
-    let mut phrase_1_cut = false;
+    let mut dip_phrase_cut = false;
     for (p, cut) in cuts.iter().enumerate().take(phrases - 1) {
         if let Some((len, low)) = cut
             && p >= FIRST_CUT_PHRASE
@@ -415,46 +589,37 @@ pub(crate) fn arrange(seed: u64) -> Form {
         {
             let end = (p + 1) * GEN_LOOP_BARS;
             for bar in &mut body[end - len..end] {
-                bar.set(Lane::Drums, false);
-                bar.set(Lane::Bass, bar.strikes(Lane::Bass) && !low);
+                bar.set(Layer::Drums, false);
+                bar.set(Layer::Bass, bar.has(Layer::Bass) && !low);
             }
-            phrase_1_cut |= p == 1;
+            dip_phrase_cut |= p == DIP_PHRASE;
         }
     }
     if bass_drop && phrases >= BASS_DROP_MIN_PHRASES && keeps_low {
         for bar in &mut body[half(thin + 1)] {
-            bar.set(Lane::Bass, false);
+            bar.set(Layer::Bass, false);
         }
     }
-    let dip = (dip && !phrase_1_cut).then_some(intro + 2 * GEN_LOOP_BARS - 1);
     plays.extend(body);
 
-    let (outro, exit) = match closing {
+    let outro = match closing {
         Closing::Sparse(p) => {
             let bars = OUTRO_BARS[usize::from(long_outro < LONG_SPARSE_OUTRO_P)];
-            plays.extend(std::iter::repeat_n(p, bars));
-            (bars, Edge::Plain)
+            plays.extend(std::iter::repeat_n(p, bars.get()));
+            Outro::Ends(End::Plain(bars))
         }
         Closing::RingOut => {
-            plays.extend([Plays::BED, Plays::BED.with(Lane::Pad, false)]);
-            (RING_OUT_BARS, Edge::Plain)
+            plays.extend(RING_OUT);
+            Outro::RingOut
         }
         Closing::Edged(edge) => {
             let bars = OUTRO_BARS[usize::from(long_outro < LONG_EDGED_OUTRO_P)];
-            plays.extend(std::iter::repeat_n(Plays::ALL, bars));
-            (bars, edge)
+            plays.extend(std::iter::repeat_n(Plays::ALL, bars.get()));
+            Outro::Ends(End::Edged(bars, edge))
         }
-        Closing::Cold => (0, Edge::Plain),
+        Closing::Cold => Outro::Ends(End::Cold),
     };
-    Form {
-        intro,
-        body: phrases * GEN_LOOP_BARS,
-        outro,
-        plays,
-        entry,
-        exit,
-        dip,
-    }
+    Form::new(intro, phrases, outro, dip && !dip_phrase_cut, plays)
 }
 
 #[cfg(test)]
@@ -468,11 +633,6 @@ mod tests {
 
     fn forms() -> impl Iterator<Item = (u64, Form)> {
         (0..FORMS).map(|seed| (seed, arrange(seed)))
-    }
-
-    /// The body's bars, by index into the song.
-    fn body(form: &Form) -> std::ops::Range<usize> {
-        form.intro()..form.intro() + form.body()
     }
 
     /// Runs `(first, len)` of `bars` where `out` holds, within `range`.
@@ -494,11 +654,15 @@ mod tests {
     }
 
     #[test]
-    fn every_lane_sits_at_its_index_in_render_order() {
-        // `Plays` reads a lane at its discriminant, which must be its place
+    fn every_lane_and_layer_sits_at_its_index() {
+        // `name` reads a lane's or a layer's name, and `Plays` a layer, at its
+        // discriminant, which must be its place
         for (i, lane) in Lane::ALL.into_iter().enumerate() {
             assert_eq!(lane as usize, i, "{lane:?}");
             assert_eq!(lane.name(), Lane::NAMES[i]);
+        }
+        for (i, layer) in Layer::ALL.into_iter().enumerate() {
+            assert_eq!(layer as usize, i, "{layer:?}");
         }
     }
 
@@ -507,19 +671,6 @@ mod tests {
         for (seed, form) in forms() {
             let at = |what: &str| format!("seed {seed}: {what}: {form}");
             assert_eq!(
-                form.plays.len(),
-                form.intro() + form.body() + form.outro(),
-                "{}",
-                at("rows")
-            );
-            assert_eq!(form.bars(), form.plays.len(), "{}", at("bars"));
-            assert_eq!(
-                form.body() % GEN_LOOP_BARS,
-                0,
-                "{}",
-                at("body in whole loops")
-            );
-            assert_eq!(
                 (form.lead_in() + form.intro()) % GEN_LOOP_BARS,
                 0,
                 "{}",
@@ -527,32 +678,17 @@ mod tests {
             );
             assert!([0, 4, 8].contains(&form.intro()), "{}", at("intro bars"));
             assert!([0, 2, 4, 8].contains(&form.outro()), "{}", at("outro bars"));
-            let ring_out = form.outro() == 2;
-            let last = form.bars() - 1;
+            let [intro, body, outro] = form.parts();
+            let (ring_out, last) = (form.rings_out(), form.bars() - 1);
             for bar in 0..form.bars() {
-                let plays = form.plays(bar);
                 assert!(
-                    plays.strikes(Lane::Texture),
-                    "{}",
-                    at(&format!("texture out at {bar}"))
-                );
-                assert!(
-                    plays.strikes(Lane::Pad) || (ring_out && bar == last),
+                    form.plays(bar).has(Layer::Pad) || (ring_out && bar == last),
                     "{}",
                     at(&format!("pad out at {bar}"))
                 );
             }
-            for bar in 0..form.bars() {
-                let plays = form.plays(bar);
-                assert_eq!(
-                    plays.strikes(Lane::Sparkle),
-                    plays.strikes(Lane::Keys),
-                    "{}",
-                    at(&format!("the lead apart from the keys at {bar}"))
-                );
-            }
             // a row changes on a 4-bar line, but for a cut or a ring-out
-            let cuts: Vec<(usize, usize)> = runs(&form, body(&form), |p| !p.strikes(Lane::Drums))
+            let cuts: Vec<(usize, usize)> = runs(&form, body.clone(), |p| !p.has(Layer::Drums))
                 .into_iter()
                 .filter(|&(_, len)| len <= CUT_BARS[CUT_BARS.len() - 1].0)
                 .collect();
@@ -563,8 +699,8 @@ mod tests {
                 let (mut a, b) = (*form.plays(bar - 1), *form.plays(bar));
                 // a cut may take the bass with the beat
                 if cuts.iter().any(|&(first, _)| first == bar) {
-                    a.set(Lane::Drums, b.strikes(Lane::Drums));
-                    a.set(Lane::Bass, b.strikes(Lane::Bass));
+                    a.set(Layer::Drums, b.has(Layer::Drums));
+                    a.set(Layer::Bass, b.has(Layer::Bass));
                 }
                 if a != b {
                     assert_eq!(
@@ -575,15 +711,15 @@ mod tests {
                     );
                 }
             }
-            let last_phrase = body(&form).end - GEN_LOOP_BARS..body(&form).end;
+            let last_phrase = body.end - GEN_LOOP_BARS..body.end;
             for &(first, len) in &cuts {
                 assert!(
                     !last_phrase.contains(&first),
                     "{}",
                     at("a cut before the outro")
                 );
-                let before = form.plays(first - 1).strikes(Lane::Drums);
-                let after = form.plays(first + len).strikes(Lane::Drums);
+                let before = form.plays(first - 1).has(Layer::Drums);
+                let after = form.plays(first + len).has(Layer::Drums);
                 assert!(
                     before && after,
                     "{}",
@@ -596,12 +732,8 @@ mod tests {
                     at("a cut ends a phrase")
                 );
             }
-            for (edge, part) in [
-                (form.entry(), 0..form.intro()),
-                (form.exit(), body(&form).end..form.bars()),
-            ] {
-                if edge != Edge::Plain {
-                    assert!(!part.is_empty(), "{}", at("an edge with no bars"));
+            for (edge, part) in [(form.entry(), intro), (form.exit(), outro)] {
+                if edge.is_some() {
                     for bar in part {
                         assert_eq!(
                             *form.plays(bar),
@@ -613,14 +745,8 @@ mod tests {
                 }
             }
             if let Some(dip) = form.dip() {
-                assert_eq!(
-                    dip,
-                    form.intro() + 2 * GEN_LOOP_BARS - 1,
-                    "{}",
-                    at("the dip's bar")
-                );
                 assert!(
-                    form.plays(dip).strikes(Lane::Drums),
+                    form.plays(dip).has(Layer::Drums),
                     "{}",
                     at("a dip on a cut")
                 );
@@ -680,15 +806,15 @@ mod tests {
             }
             intros += usize::from(form.intro() > 0);
             eight += usize::from(form.intro() == 8);
-            let drops = runs(&form, body(&form), |p| !p.strikes(Lane::Drums));
+            let drops = runs(&form, form.parts()[1].clone(), |p| !p.has(Layer::Drums));
             drum += usize::from(!drops.is_empty());
             counts.push(drops.len() as f32);
             lengths.extend(drops.iter().map(|&(_, len)| len));
             long += usize::from(drops.iter().any(|&(_, len)| len >= 4));
-            let bass_drops = runs(&form, body(&form), |p| !p.strikes(Lane::Bass));
+            let bass_drops = runs(&form, form.parts()[1].clone(), |p| !p.has(Layer::Bass));
             bass += usize::from(!bass_drops.is_empty());
             for (at, len) in bass_drops {
-                let beat_kept = (at..at + len).all(|bar| form.plays(bar).strikes(Lane::Drums));
+                let beat_kept = (at..at + len).all(|bar| form.plays(bar).has(Layer::Drums));
                 (alone, with) = (
                     alone + usize::from(beat_kept),
                     with + usize::from(!beat_kept),
@@ -755,7 +881,9 @@ mod tests {
                 let bits = Lane::ALL.map(|lane| p.strikes(lane));
                 words.push(bits.iter().fold(0, |w, &b| w << 1 | u64::from(b)));
             }
-            words.extend([form.entry() as u64, form.exit() as u64]);
+            // an edge's word as it was while a plain end had one
+            let edge = |edge: Option<Edge>| edge.map_or(0, |edge| edge as u64 + 1);
+            words.extend([edge(form.entry()), edge(form.exit())]);
             words.push(form.dip().map_or(u64::MAX, |d| d as u64));
         }
         let h = fnv1a(words);
@@ -766,9 +894,9 @@ mod tests {
 
     #[test]
     fn a_form_prints_its_parts() {
-        assert_eq!(Form::plain(4).to_string(), "intro 0 · body 32 · outro 0");
-        let mut cut = Form::plain(2);
-        cut.plays[7].set(Lane::Drums, false);
-        assert_eq!(cut.to_string(), "intro 0 · body 16: drums 7 · outro 0");
+        assert_eq!(Form::plain().to_string(), "intro 0 · body 32 · outro 0");
+        let mut cut = Form::plain();
+        cut.plays[7].set(Layer::Drums, false);
+        assert_eq!(cut.to_string(), "intro 0 · body 32: drums 7 · outro 0");
     }
 }

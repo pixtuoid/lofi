@@ -1,11 +1,9 @@
 //! The generator's STATISTICAL gate: render N random-seed takes to wav so
 //! `ab_judge.py` judges the COMPOSER, not one take. A take is the first
 //! `--songs` songs of a seed's run at one of pixtuoid's tiers, or under a named
-//! `--sweep` of control calls. `--engine stream`, the default, renders it as a
-//! `Performance` plays it, so what you hear is what lofi ships; `--engine whole`
-//! renders each song's lanes whole and loops their mix, under the controls its
-//! first bar latches, as pixtuoid's office played lofi before the stream, dry
-//! and centred; a stream take carries the plate on its two sides.
+//! `--sweep` of control calls, through either engine (`batch::Engine`): a
+//! stream take carries the plate on its two sides, a whole-lane one is dry and
+//! centred.
 //!
 //! Usage:
 //!   cargo run --release --example lofi_audition -- \
@@ -28,12 +26,10 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use pixtuoid_lofi::Frame;
-use pixtuoid_lofi::audition::{self, Lane};
+use pixtuoid_lofi::audition::Lane;
 use pixtuoid_lofi::dsp::{NoiseStream, SAMPLE_RATE};
 
-use batch::{
-    Batch, Engine, LANE_NAMES, lane_gains, parse_choice, render_take, soak_mix, usage_error,
-};
+use batch::{Batch, Engine, lane_gains, parse_choice, usage_error};
 use loudness::{fold, gated_lufs};
 
 /// Every take renders at ONE gated loudness, so a blind A/B compares takes, not
@@ -118,7 +114,7 @@ struct Take {
 struct Args {
     batch: Batch,
     out: PathBuf,
-    /// The lane `--solo` plays alone, as its index in [`LANE_NAMES`].
+    /// The lane `--solo` plays alone, as its index in [`Lane::NAMES`].
     solo: Option<usize>,
     key: Option<PathBuf>,
 }
@@ -140,7 +136,7 @@ impl Args {
                     Some(v) => parsed.out = PathBuf::from(v),
                     None => return Err(usage_error("--out needs a directory".into())),
                 },
-                "--solo" => parsed.solo = Some(parse_choice(args.next(), "--solo", &LANE_NAMES)?),
+                "--solo" => parsed.solo = Some(parse_choice(args.next(), "--solo", &Lane::NAMES)?),
                 "--shuffle" => match args.next() {
                     Some(v) => parsed.key = Some(PathBuf::from(v)),
                     None => return Err(usage_error("--shuffle needs a key file".into())),
@@ -177,7 +173,7 @@ impl Args {
         let runs = self.batch.runs();
         let takes = runs.iter().flat_map(|run| {
             let mix = match self.solo {
-                Some(s) => LANE_NAMES[s],
+                Some(s) => Lane::NAMES[s],
                 None => run.mix_name(),
             };
             let mood = run.mood_name();
@@ -204,20 +200,18 @@ impl Args {
     fn render(&self, run: &Batch, seed: u64) -> io::Result<Vec<Frame>> {
         let mut take = match run.engine {
             Engine::WholeLane => {
-                let mut take = Vec::new();
-                for (k, &(controls, len)) in (0..).zip(&run.timeline(seed).songs) {
-                    let gains = match self.solo {
-                        Some(s) => {
-                            let mut gains = [0.0; Lane::ALL.len()];
-                            gains[s] = 1.0;
-                            gains
-                        }
-                        None => lane_gains(controls),
-                    };
-                    let (beds, _) = render_take(&audition::song_score(seed, k, controls));
-                    take.extend(soak_mix(&beds, &gains, len).into_iter().map(|x| [x; 2]));
-                }
-                take
+                let gains = |controls| match self.solo {
+                    Some(s) => {
+                        let mut gains = [0.0; Lane::ALL.len()];
+                        gains[s] = 1.0;
+                        gains
+                    }
+                    None => lane_gains(controls),
+                };
+                (run.whole(seed, gains).into_iter())
+                    .flat_map(|(.., mix)| mix)
+                    .map(|x| [x; 2])
+                    .collect()
             }
             Engine::Stream => run.perform(seed),
         };
@@ -309,6 +303,7 @@ fn write_wav(path: &Path, take: &[Frame]) -> io::Result<()> {
 mod tests {
     use super::*;
     use batch::Sweep;
+    use pixtuoid_lofi::audition;
 
     fn parsed(args: &[&str]) -> Args {
         Args::parse(args.iter().map(|&a| a.to_owned())).expect("the arguments parse")
@@ -480,7 +475,7 @@ mod tests {
     #[test]
     fn every_lane_writes_a_solo_take() {
         for mood in ["day", "night"] {
-            for lane in LANE_NAMES {
+            for lane in Lane::NAMES {
                 let take = rendered(&["--engine", "whole", "--mood", mood, "--solo", lane], 0);
                 assert!(take.is_ok(), "{mood} {lane}: {:?}", take.err());
             }

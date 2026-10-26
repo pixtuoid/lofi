@@ -3,12 +3,8 @@
 
 use std::fmt;
 
-#[cfg(test)]
-use crate::compose::Form;
 use crate::dsp::SAMPLE_RATE;
 use crate::stream::master::{Ceiling, TIER_INTENSITIES};
-#[cfg(test)]
-use crate::stream::schedule::PLAIN_LOOPS;
 use crate::stream::schedule::{BLOCK, LANES, Schedule};
 
 /// One stereo frame, `[left, right]`, at [`SAMPLE_RATE`].
@@ -148,8 +144,7 @@ impl Performance {
     #[cfg(test)]
     pub(crate) fn plain(seed: u64, controls: Controls) -> Self {
         let mut performance = Self::new(seed, controls);
-        performance.schedule =
-            Schedule::new(seed, 0, SAMPLE_RATE).with_form(Form::plain(PLAIN_LOOPS));
+        performance.schedule = Schedule::plain(seed, 0, SAMPLE_RATE);
         performance
     }
 
@@ -238,55 +233,39 @@ impl Performance {
         self.render(&mut out);
         out
     }
-
-    /// How many frames song `k` of `seed`'s run lasts under `controls`.
-    pub(crate) fn song_len(seed: u64, k: u64, controls: Controls) -> usize {
-        let mut p = Self::from_song(seed, k, controls);
-        p.start_due_song();
-        p.schedule.song_left()
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::audition;
-    use crate::compose::Score;
+    use crate::compose::{Edge, Form};
     use crate::dsp::NoiseStream;
     use crate::stream::schedule::{ANTICIPATION_S, UNITY, bars_and_len};
     use crate::synth::Lane;
 
-    /// Song `k` of `seed`'s run under `c`, playing every lane of its loop in
-    /// every bar: what a test of a mechanism a form would mute plays.
-    fn plain_score(seed: u64, k: u64, c: Controls) -> Score {
-        let mut score = audition::song_score(seed, k, c);
-        score.form = Form::plain(PLAIN_LOOPS);
-        score
-    }
-
-    /// [`plain_score`]'s bars' first frames, and its length.
+    /// The bars' first frames of song `k` of `seed`'s run under `c` playing
+    /// [`Form::plain`], and its length.
     fn plain_bars(seed: u64, k: u64, c: Controls) -> (Vec<usize>, usize) {
-        bars_and_len(&plain_score(seed, k, c), SAMPLE_RATE)
+        bars_and_len(
+            &audition::song_score(seed, k, c),
+            &Form::plain(),
+            SAMPLE_RATE,
+        )
     }
 
     /// Song `k`'s loop length under `c`.
     fn loop_frames(seed: u64, k: u64, c: Controls) -> usize {
-        crate::synth::samples_at(audition::song_score(seed, k, c).loop_secs(), SAMPLE_RATE)
+        audition::samples_at(audition::song_score(seed, k, c).loop_secs(), SAMPLE_RATE)
     }
 
-    /// Asserts one of `songs`, `(seed, k)`, mutes some lane somewhere and one
-    /// fades or filters, so an invariance proven over them is proven over a
-    /// form. A form reads no control.
+    /// Asserts `songs`, `(seed, k)`, span a form, so an invariance proven
+    /// over them is proven over one.
     fn assert_spans_a_form(songs: &[(u64, u64)]) {
-        let form = |&(seed, k): &(u64, u64)| audition::song_score(seed, k, Controls::default());
-        assert!(
-            songs.iter().any(|song| form(song).form().mutes_any()),
-            "every song of {songs:?} plays every lane in every bar"
-        );
-        assert!(
-            songs.iter().any(|song| form(song).form().edged()),
-            "no song of {songs:?} fades or filters"
-        );
+        let forms: Vec<Form> = (songs.iter())
+            .map(|&(seed, k)| audition::song_form(seed, k, Controls::default()))
+            .collect();
+        audition::spans_a_form(&forms).unwrap();
     }
 
     fn night() -> Controls {
@@ -336,7 +315,7 @@ mod tests {
             (1.0, [0.65, 0.55, 0.70, 0.60, 0.78, 0.75]),
         ];
         let seed = 2;
-        let mut whole = Schedule::new(seed, 0, SAMPLE_RATE).with_form(Form::plain(PLAIN_LOOPS));
+        let mut whole = Schedule::plain(seed, 0, SAMPLE_RATE);
         whole.start_song_at(Controls::default(), UNITY);
         // the first loop, before any song but the first plays
         let frames = loop_frames(seed, 0, Controls::default());
@@ -661,20 +640,19 @@ mod tests {
 
     #[test]
     fn every_edge_plays_the_same_however_it_is_chunked() {
-        use crate::compose::{Edge, Form};
         let c = Controls::default();
         type Kind = (&'static str, fn(&Form) -> bool);
         let kinds: [Kind; 5] = [
-            ("fade-in", |f| f.entry() == Edge::Fade),
-            ("filtered intro", |f| f.entry() == Edge::Filter),
+            ("fade-in", |f| f.entry() == Some(Edge::Fade)),
+            ("filtered intro", |f| f.entry() == Some(Edge::Filter)),
             ("dip", |f| f.dip().is_some()),
-            ("fade-out", |f| f.exit() == Edge::Fade),
-            ("filtered outro", |f| f.exit() == Edge::Filter),
+            ("fade-out", |f| f.exit() == Some(Edge::Fade)),
+            ("filtered outro", |f| f.exit() == Some(Edge::Filter)),
         ];
         let mut rng = NoiseStream::new(2);
         for (name, kind) in kinds {
             let seed = (0..512)
-                .find(|&seed| kind(audition::song_score(seed, 0, c).form()))
+                .find(|&seed| kind(&audition::song_form(seed, 0, c)))
                 .expect("a seed draws the edge");
             let whole = audition::song(seed, 0, c, &[]);
             let mut p = Performance::from_song(seed, 0, c);
@@ -689,20 +667,18 @@ mod tests {
 
     #[test]
     fn a_cold_start_after_a_ringing_or_fading_close_plays_as_it_does_alone() {
-        use crate::compose::{Edge, Form};
         type Close = (&'static str, fn(&Form) -> bool);
         let c = Controls::default();
-        // a ring-out is the one two-bar outro
         let closes: [Close; 2] = [
-            ("ring-out", |f| f.outro() == 2),
-            ("fade-out", |f| f.exit() == Edge::Fade),
+            ("ring-out", Form::rings_out),
+            ("fade-out", |f| f.exit() == Some(Edge::Fade)),
         ];
         for (name, closes) in closes {
             let (seed, k) = (0..64)
                 .flat_map(|seed| (0..6).map(move |k| (seed, k)))
                 .find(|&(seed, k)| {
-                    closes(audition::song_score(seed, k, c).form())
-                        && audition::song_score(seed, k + 1, c).form().intro() == 0
+                    closes(&audition::song_form(seed, k, c))
+                        && audition::song_form(seed, k + 1, c).intro() == 0
                 })
                 .expect("a seed plays the pair");
             let mut playing = Performance::from_song(seed, k, c);
@@ -771,13 +747,12 @@ mod tests {
     #[test]
     fn songs_vary_in_loudness_no_more_than_the_whole_lane_mix() {
         let off: Vec<String> = (audition::WHOLE_LANE_LUFS_SD.iter())
-            .filter(|&&(intensity, ..)| intensity == Controls::default().intensity)
             .filter_map(|&(intensity, daylight, whole_lane)| {
                 let c = Controls::default()
                     .with_intensity(intensity)
                     .with_daylight(daylight);
                 let songs: Vec<f64> = std::thread::scope(|scope| {
-                    let runs: Vec<_> = audition::WHOLE_LANE_SEEDS
+                    let runs: Vec<_> = audition::LUFS_SEEDS
                         .map(|seed| {
                             scope.spawn(move || {
                                 // song 0's second loop, the first its own
@@ -795,7 +770,7 @@ mod tests {
                 });
                 let (sd, bound) = (
                     audition::lufs_sd(&songs),
-                    audition::lufs_sd_bound(whole_lane),
+                    audition::lufs_sd_bound(whole_lane, songs.len()),
                 );
                 (sd > bound).then(|| format!("daylight {daylight}: {sd:.4} LU over {bound:.4}"))
             })
@@ -970,7 +945,7 @@ mod tests {
         heard.extend(next(&mut p, boundary - latch));
         assert_eq!(
             p.schedule.playing(),
-            Some(&plain_score(seed, 0, Controls::default()))
+            Some(&audition::song_score(seed, 0, Controls::default()))
         );
         let unasked = next(&mut Performance::plain(seed, Controls::default()), boundary);
         let graded = first_diff(&heard, &unasked);
@@ -981,7 +956,7 @@ mod tests {
         next(&mut p, 1);
         assert_eq!(
             p.schedule.playing(),
-            Some(&plain_score(seed, 1, night())),
+            Some(&audition::song_score(seed, 1, night())),
             "the next song isn't the night's"
         );
     }

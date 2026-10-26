@@ -18,7 +18,10 @@ use super::dsp::NoiseStream;
 
 mod form;
 
-pub use form::{Edge, Form};
+#[cfg(test)]
+pub(crate) use form::Plays;
+pub(crate) use form::{Edge, Layer, arrange};
+pub use form::{Form, spans_a_form};
 
 /// The listening context a song is composed for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -31,7 +34,7 @@ pub(crate) enum Mood {
 
 /// One lane of a generated take. A take's lanes render in [`Lane::ALL`] order
 /// from one rng stream, so that order is part of the sound; a song's form
-/// names which lanes strike in each bar.
+/// names which of their layers strike in each bar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Lane {
     /// Sustained chord bed.
@@ -128,8 +131,6 @@ pub struct Score {
     pub(super) bar_roots: [u8; GEN_LOOP_BARS],
     /// The TEMPLATE's roots — the timeline + day turnaround derive from these.
     pub(super) roots_pc: [u8; 4],
-    /// Which of the loop's lanes strike in each bar of the song.
-    pub(super) form: Form,
 }
 
 pub(super) const GEN_LOOP_BARS: usize = 8;
@@ -156,21 +157,6 @@ impl Score {
     /// from.
     pub fn loop_secs(&self) -> f32 {
         self.bar_s() * GEN_LOOP_BARS as f32
-    }
-
-    /// The song's form over its loop.
-    pub fn form(&self) -> &Form {
-        &self.form
-    }
-
-    /// Bars in the song.
-    pub fn bars(&self) -> usize {
-        self.form.bars()
-    }
-
-    /// The song's length in seconds, its last tails aside.
-    pub fn song_secs(&self) -> f32 {
-        self.bars() as f32 * self.bar_s()
     }
 
     /// Display name of the lead instrument this score drew.
@@ -1103,8 +1089,6 @@ pub(crate) fn compose(mood: Mood, seed: u64) -> Score {
         bar_chords,
         bar_roots,
         roots_pc,
-        // from a stream of its own, so it moves none of the draws above
-        form: form::arrange(seed),
     }
 }
 

@@ -31,6 +31,17 @@ const ORDER: usize = 4;
 /// fraction of an octave. Opinion.
 pub(crate) const COEFF_BLOCK: usize = 32;
 
+/// The first frame of frame `n`'s coefficient block.
+const fn block_of(n: usize) -> usize {
+    n - n % COEFF_BLOCK
+}
+
+/// The first frame of the coefficient block after frame `n`'s, or `end` if
+/// that comes first.
+fn next_block(n: usize, end: usize) -> usize {
+    (block_of(n) + COEFF_BLOCK).min(end)
+}
+
 /// The corner a filtered edge or a dip low-passes a music lane at. Opinion: a
 /// muffle like Neal's verse piano, "run through a lowpass filter with a
 /// roll-off around 800 Hz" (Organised Sound 27(1), 2022, §3.1).
@@ -123,11 +134,12 @@ impl Chain {
         chain
     }
 
-    /// The chain with its tone swept by `sweep`; the texture's room has no
-    /// tone to sweep, since the room is what links one song to the next.
+    /// The chain with its tone swept by `sweep`: a music lane's, which the
+    /// schedule picks; the room has no tone to sweep.
     pub(crate) fn swept(mut self, sweep: &Sweep) -> Self {
-        if let Self::Tape(tape) = &mut self {
-            tape.sweep = Some(sweep.clone());
+        match &mut self {
+            Self::Tape(tape) => tape.sweep = Some(sweep.clone()),
+            Self::Room(_) => debug_assert!(false, "the room plays through every edge"),
         }
         self
     }
@@ -250,7 +262,7 @@ impl GradeClock {
         if n >= self.t.end() {
             self.t.to()
         } else {
-            self.t.at(n - n % COEFF_BLOCK)
+            self.t.at(block_of(n))
         }
     }
 
@@ -258,7 +270,7 @@ impl GradeClock {
     /// once it holds.
     fn next_change(&self, n: usize) -> Option<usize> {
         let end = self.t.end();
-        (n < end).then(|| (n - n % COEFF_BLOCK + COEFF_BLOCK).min(end))
+        (n < end).then(|| next_block(n, end))
     }
 }
 
@@ -294,7 +306,7 @@ impl Sweep {
             (None, _) => 1.0,
             (Some((_, x)), None) => x,
             (Some((a, xa)), Some((b, xb))) => {
-                let m = (n - n % COEFF_BLOCK).max(a);
+                let m = block_of(n).max(a);
                 xa + (xb - xa) * (m - a) as f64 / (b - a) as f64
             }
         }
@@ -307,7 +319,7 @@ impl Sweep {
             (_, None) => None,
             (None, Some((b, _))) => Some(b),
             (Some((_, xa)), Some((b, xb))) if xa == xb => Some(b),
-            (Some(_), Some((b, _))) => Some((n - n % COEFF_BLOCK + COEFF_BLOCK).min(b)),
+            (Some(_), Some((b, _))) => Some(next_block(n, b)),
         }
     }
 }
@@ -440,7 +452,6 @@ pub(crate) struct Tape {
     /// The sum of the excursions: `warp_resample` reads that far either side
     /// of now, so a causal line reads that late, and the tape lags by it.
     reach: f64,
-    drive: f64,
     bump: Cascade,
     /// The bump's band over a step.
     band: Vec<f64>,
@@ -454,7 +465,7 @@ pub(crate) struct Tape {
 impl Tape {
     /// A tape whose tone starts at `own`'s first frame.
     fn new(own: Tone, pad: Option<PadTone>, gains: [f64; 2], sr: u32) -> Self {
-        let (cutoff_hz, drive) = own.at(0);
+        let (cutoff_hz, _) = own.at(0);
         let rate = f64::from(sr);
         // the excursion `warp_resample` gives a `(hz, dev)` pair
         let warps = WARPS.map(|(hz, dev)| {
@@ -473,7 +484,6 @@ impl Tape {
             warp: DelayLine::new(2.0 * reach),
             warps,
             reach,
-            drive,
             bump: cookbook_bandpass(HEAD_BUMP_HZ.0, HEAD_BUMP_HZ.1, sr),
             band: Vec::with_capacity(BLOCK),
             rolloff: butter_lowpass(ROLLOFF_HZ, ORDER, sr),
@@ -522,8 +532,8 @@ impl Tape {
                 .fold(reach, |d, &(w, a)| d - a * (w * n as f64).sin())
         });
         for (range, n) in pieces(&self.own, self.sweep.as_ref(), from, len) {
-            (_, self.drive) = self.own.at(n);
-            saturate(&mut buf[range], self.drive);
+            let (_, drive) = self.own.at(n);
+            saturate(&mut buf[range], drive);
         }
         self.band.clear();
         self.band.extend_from_slice(buf);
@@ -685,10 +695,9 @@ impl Room {
 mod tests {
     use super::*;
     use crate::Controls;
-    use crate::compose::DrumKind;
-    use crate::compose::Form;
+    use crate::compose::{DrumKind, spans_a_form};
     use crate::dsp::{SAMPLE_RATE, band_energy_share};
-    use crate::stream::schedule::{PLAIN_LOOPS, Schedule, UNITY};
+    use crate::stream::schedule::{Schedule, UNITY, song_form};
     use crate::synth::{WOW, part};
 
     fn controls(mood: Mood) -> Controls {
@@ -697,13 +706,6 @@ mod tests {
             Mood::Night => 0.0,
         };
         Controls::default().with_daylight(daylight)
-    }
-
-    /// `seed`'s run from song `first` at `sr`, every song playing each lane
-    /// of its loop in every bar: what a test of a chain a form would mute
-    /// plays.
-    fn plain_run(seed: u64, first: u64, sr: u32) -> Schedule {
-        Schedule::new(seed, first, sr).with_form(Form::plain(PLAIN_LOOPS))
     }
 
     /// `run`'s next `frames` frames, each lane's apart.
@@ -866,7 +868,7 @@ mod tests {
             for (mood, daylight) in [(Mood::Night, 0.0), (Mood::Day, 1.0)] {
                 let tape = graded_tape(mood, lane, daylight);
                 let grade = tape.grade().expect("the lane grades");
-                let got = (tape.tuned, tape.drive);
+                let got = (tape.tuned, tape.own.at(0).1);
                 assert_eq!(tape.tuned, grade.corner_hz(f64::from(daylight)));
                 assert_eq!(got, recipe(mood, lane), "{lane:?} at {daylight}");
             }
@@ -939,7 +941,7 @@ mod tests {
             grade.corner_hz(1.0),
             "no recompute at the ramp's end"
         );
-        assert_eq!(tape.drive, recipe(Mood::Day, Lane::Drums).1);
+        assert_eq!(tape.own.at(tape.frame).1, recipe(Mood::Day, Lane::Drums).1);
     }
 
     #[test]
@@ -1096,19 +1098,16 @@ mod tests {
     #[test]
     fn every_lane_stays_finite_for_ten_minutes() {
         let sr = SAMPLE_RATE;
-        let mut run = Schedule::new(11, 0, sr);
+        const SEED: u64 = 11;
+        let mut run = Schedule::new(SEED, 0, sr);
         let mut moods = [Mood::Day, Mood::Night].into_iter().cycle();
         let mut peaks = [0.0f64; Lane::ALL.len()];
-        let (mut played, mut edged) = (0, false);
+        let (mut played, mut forms) = (0, Vec::new());
         while played < samples_at(600.0, sr) {
             if run.song_left() == 0 {
-                run.start_song_at(controls(moods.next().unwrap()), UNITY);
-                let form = run.playing().expect("a song plays").form();
-                assert!(
-                    form.mutes_any(),
-                    "a song of every lane proves no form finite"
-                );
-                edged |= form.edged();
+                let c = controls(moods.next().unwrap());
+                run.start_song_at(c, UNITY);
+                forms.push(song_form(SEED, forms.len() as u64, c));
             }
             let n = run.song_left().min(BLOCK);
             for ((lane, sum), peak) in Lane::ALL.iter().zip(run.play(n)).zip(&mut peaks) {
@@ -1119,10 +1118,8 @@ mod tests {
             }
             played += n;
         }
-        assert!(
-            edged,
-            "no song faded or filtered: finite proves nothing of edges"
-        );
+        // finite over songs with no form proves nothing of one
+        spans_a_form(&forms).unwrap();
         for (lane, peak) in Lane::ALL.iter().zip(peaks) {
             assert!(peak > 0.0, "{lane:?} was silent: finite proves nothing");
         }
@@ -1146,7 +1143,7 @@ mod tests {
         for (mood, want) in whole_lane {
             let mut lufs = vec![Vec::new(); Lane::ALL.len()];
             for seed in 0..6 {
-                let mut run = plain_run(seed, 0, sr);
+                let mut run = Schedule::plain(seed, 0, sr);
                 run.start_song_at(controls(mood), UNITY);
                 let loop_len = samples_at(run.playing().expect("a song plays").loop_secs(), sr);
                 // the second loop, which the first's tails ring into as every

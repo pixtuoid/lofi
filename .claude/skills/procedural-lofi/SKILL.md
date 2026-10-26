@@ -44,7 +44,7 @@ solves all three:
   consumer scatters genuinely-stochastic layers fresh at runtime (pixtuoid's rain drops and
   keystrokes); (3) each song has a form (LOFI-BIBLE R11) that mutes and restores lanes over
   its loop, and a `Performance` layers each lane's gain by `Controls::intensity` on top, which
-  a consumer sets, e.g. by how busy an office is: gains multiply and a mute wins.
+  a consumer sets, e.g. by how busy an office is.
 
 The one law of the whole method:
 
@@ -199,7 +199,7 @@ constraint and re-batch), and every taste axis is a data table or named const wi
 | room-tone crackle          | `synth::CRACKLE_POPS_PER_SEC` (one knob, both beds)      |
 | lane gains, mix level      | `stream::master`: `tier_gains`; `Performance::MASTER_GAIN` |
 | staging, bed crossfade     | `stream::lanes`: `staging`, `BED_CROSSFADE_S`            |
-| song form (intro, sections, outro, edges) | `compose::form`: `INTRO_KINDS`, `OUTRO_KINDS`, `THINNINGS`, its `_P` consts; edges' depth and corner: `stream::schedule::FADE_FLOOR_DB`, `stream::lanes::FILTERED_HZ` |
+| song form (intro, sections, outro, edges) | `compose::form`'s consts; edges' depth and corner: `stream::schedule::FADE_FLOOR_DB`, `stream::lanes::FILTERED_HZ` |
 | **a new instrument**       | see the checklist below                                  |
 
 **Add-an-instrument checklist** (executed once for the `Pluck` lead — repeat verbatim):
@@ -228,8 +228,6 @@ constraint and re-batch), and every taste axis is a data table or named const wi
    ```
    The owner's blind listen is optional and, when given, overrides the judge:
    `python3 .claude/skills/procedural-lofi/scripts/ab_listen.py DIR/base DIR/cand --out DIR/verdict.json`.
-   A change of engine renders `--engine whole --out DIR/base` and `--engine stream --out DIR/cand`
-   on one commit: a take keeps its name and score, under a `--sweep NAME` too.
 
 Mix LANES stay instrument-blind (`stream::master::lane_gain` sees lanes, never voices; a
 consumer sets `Controls` and receives `Frame`s) — a lane is a busy-ness ROLE, an instrument a

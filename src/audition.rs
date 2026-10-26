@@ -5,10 +5,10 @@
 use std::collections::VecDeque;
 use std::ops::Range;
 
-pub use crate::compose::{Edge, Form, Score};
+pub use crate::compose::{Form, Score, spans_a_form};
 pub use crate::stream::master::{TIER_INTENSITIES, lane_gain};
-pub use crate::stream::schedule::{bar_frames, song_bars, song_score};
-pub use crate::synth::{Lane, render_lane};
+pub use crate::stream::schedule::{bar_frames, song_bars, song_form, song_score};
+pub use crate::synth::{Lane, render_lane, samples_at};
 
 use crate::dsp::SAMPLE_RATE;
 use crate::perform::Probe;
@@ -33,7 +33,7 @@ pub fn song(seed: u64, k: u64, controls: Controls, calls: &[(usize, Controls)]) 
         calls[..first].last().map_or(controls, |&(_, c)| c),
         &calls[first..],
     );
-    let len = Performance::song_len(seed, k, controls);
+    let len = song_len(seed, k, controls);
     assert!(
         calls.iter().all(|&(at, _)| at < len),
         "a call at or past the song's {len} frames"
@@ -53,7 +53,7 @@ pub fn song(seed: u64, k: u64, controls: Controls, calls: &[(usize, Controls)]) 
 /// How many frames song `k` of `seed`'s run lasts under `controls`: where
 /// the next song's first bar falls, without rendering a frame.
 pub fn song_len(seed: u64, k: u64, controls: Controls) -> usize {
-    Performance::song_len(seed, k, controls)
+    crate::stream::schedule::song_len(seed, k, controls, SAMPLE_RATE)
 }
 
 /// A performance's mix as the sum it is, on the fold every reading hears:
@@ -127,31 +127,43 @@ impl Probe for Stems {
     }
 }
 
-/// The seeds [`WHOLE_LANE_LUFS_SD`] was measured over.
-pub const WHOLE_LANE_SEEDS: Range<u64> = 0..24;
+/// The seeds [`WHOLE_LANE_LUFS_SD`] and [`SONG_LUFS_SD`] were measured over,
+/// each seed's first song.
+pub const LUFS_SEEDS: Range<u64> = 0..24;
 
 /// How much the whole-lane mix's gated loudness varied across
-/// [`WHOLE_LANE_SEEDS`], as [`lufs_sd`] reads it, at an intensity and a
-/// daylight: `(intensity, daylight, LU)`. What lofi played before it
-/// streamed, on the songs a `Performance` plays: `lofi_measure --engine whole`
-/// prints it over those seeds at the row's `--tier` and `--mood`. A run's
-/// songs may vary up to [`lufs_sd_bound`], a non-regression, not a target.
-pub const WHOLE_LANE_LUFS_SD: [(f32, f32, f64); 4] = [
+/// [`LUFS_SEEDS`], as [`lufs_sd`] reads it, at an intensity and a daylight:
+/// `(intensity, daylight, LU)`. What lofi played before it streamed, which a
+/// `Performance`'s loop, unarranged, varies no more than: `lofi_measure
+/// --engine whole` prints it over those seeds at the row's `--tier` and
+/// `--mood`. A non-regression, not a target.
+pub const WHOLE_LANE_LUFS_SD: [(f32, f32, f64); 2] = [
     (TIER_INTENSITIES[1], 1.0, 0.3387),
     (TIER_INTENSITIES[1], 0.0, 0.2321),
-    (TIER_INTENSITIES[0], 1.0, 0.3847),
-    (TIER_INTENSITIES[2], 1.0, 0.3517),
 ];
 
-/// The most a run's songs may vary against `whole_lane`, a
-/// [`WHOLE_LANE_LUFS_SD`] row: two standard errors over it, a sample
-/// standard deviation's standard error over [`WHOLE_LANE_SEEDS`] being about
-/// σ/√(2(n−1)) when the sample is normal (eq. 3 of
+/// How much a `Performance`'s songs' gated loudness varied across
+/// [`LUFS_SEEDS`], each song played alone, as [`lufs_sd`] reads it, in a
+/// room `lofi_bench` plays: `(intensity, daylight, LU)`. A run's songs vary
+/// no more than these, songs that played alone: `lofi_measure` prints it over
+/// those seeds at the row's `--tier` and `--mood`. A non-regression, not a
+/// target.
+pub const SONG_LUFS_SD: [(f32, f32, f64); 2] = [
+    (TIER_INTENSITIES[0], 1.0, 0.3292),
+    (TIER_INTENSITIES[2], 1.0, 0.4178),
+];
+
+/// The most `songs` songs' loudness may vary against `reference`, a row of
+/// [`WHOLE_LANE_LUFS_SD`] or [`SONG_LUFS_SD`]: two standard errors of the
+/// difference over it, of two sample standard deviations each with a
+/// standard error of about σ/√(2(n−1)) when the sample is normal (eq. 3 of
 /// <https://web.eecs.umich.edu/~fessler/papers/files/tr/stderr.pdf>).
 /// That the songs' loudness is normal is assumed, not measured.
-pub fn lufs_sd_bound(whole_lane: f64) -> f64 {
-    let n = (WHOLE_LANE_SEEDS.end - WHOLE_LANE_SEEDS.start) as f64;
-    whole_lane * (1.0 + 2.0 / (2.0 * (n - 1.0)).sqrt())
+pub fn lufs_sd_bound(reference: f64, songs: usize) -> f64 {
+    let variance = |n: f64| 1.0 / (2.0 * (n - 1.0));
+    let measured = (LUFS_SEEDS.end - LUFS_SEEDS.start) as f64;
+    let se = (variance(measured) + variance(songs as f64)).sqrt();
+    reference * (1.0 + 2.0 * se)
 }
 
 /// How much `lufs` vary: their sample standard deviation, in LU.

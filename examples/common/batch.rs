@@ -14,9 +14,6 @@ use pixtuoid_lofi::{Controls, Frame, Performance};
 /// and the error message can't list different spellings.
 const MOODS: [(&str, f32); 2] = [("day", 1.0), ("night", 0.0)];
 
-/// The lanes in [`Lane::ALL`] order, as lofi names them.
-pub(crate) const LANE_NAMES: [&str; Lane::ALL.len()] = Lane::NAMES;
-
 /// How busy pixtuoid's office is, which picks the intensity a take plays at.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) enum Tier {
@@ -517,7 +514,34 @@ impl Batch {
         render(&mut performance, &mut frames[done..]);
         frames
     }
+
+    /// `seed`'s take through the whole-lane engine: each song of its
+    /// [`timeline`](Self::timeline) rendered whole under the controls its
+    /// first bar latches, and mixed at `gains` of them, so it lasts as long
+    /// as the take a `Performance` plays.
+    pub(crate) fn whole(
+        &self,
+        seed: u64,
+        gains: impl Fn(Controls) -> [f32; Lane::ALL.len()],
+    ) -> Vec<WholeSong> {
+        (0..)
+            .zip(self.timeline(seed).songs)
+            .map(|(k, (controls, len))| {
+                let (beds, took) = render_take(&audition::song_score(seed, k, controls));
+                let mix = soak_mix(&beds, &gains(controls), len);
+                (beds, took, mix)
+            })
+            .collect()
+    }
 }
+
+/// One song of a whole-lane take: each lane rendered whole in [`Lane::ALL`]
+/// order, how long each took, and their mix, as long as the song.
+pub(crate) type WholeSong = (
+    [Vec<f32>; Lane::ALL.len()],
+    [Duration; Lane::ALL.len()],
+    Vec<f32>,
+);
 
 /// Each lane's gain under `controls`, in [`Lane::ALL`] order: lofi's, at the
 /// intensity a `Performance` mixes it at.
@@ -527,9 +551,7 @@ pub(crate) fn lane_gains(controls: Controls) -> [f32; Lane::ALL.len()] {
 
 /// Every lane of `score` in [`Lane::ALL`] order, drawn from one rng stream as a
 /// take renders, and how long each took.
-pub(crate) fn render_take(
-    score: &Score,
-) -> ([Vec<f32>; Lane::ALL.len()], [Duration; Lane::ALL.len()]) {
+fn render_take(score: &Score) -> ([Vec<f32>; Lane::ALL.len()], [Duration; Lane::ALL.len()]) {
     let mut rng = NoiseStream::new(LANE_SEED);
     let mut took = [Duration::ZERO; Lane::ALL.len()];
     let beds = std::array::from_fn(|i| {
@@ -542,10 +564,9 @@ pub(crate) fn render_take(
 }
 
 /// `beds` at `gains`, each looping on its own length, summed over `frames`
-/// frames, and mastered at
-/// its [`Performance::MASTER_GAIN`]: the whole-lane mix, as long and at the stage where
-/// the engine's own mix meets its ceiling.
-pub(crate) fn soak_mix(beds: &[Vec<f32>], gains: &[f32], frames: usize) -> Vec<f32> {
+/// frames at [`Performance::MASTER_GAIN`]: the stage where the engine's own
+/// mix meets its ceiling.
+fn soak_mix(beds: &[Vec<f32>], gains: &[f32], frames: usize) -> Vec<f32> {
     let mut mix = vec![0.0f32; frames];
     for (bed, &gain) in beds.iter().zip(gains) {
         let gain = gain * Performance::MASTER_GAIN as f32;

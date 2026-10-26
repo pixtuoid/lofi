@@ -14,7 +14,7 @@ use super::dsp::{
 const SR: f32 = SAMPLE_RATE as f32;
 
 /// `dur_s` in samples at `sr`.
-pub(crate) fn samples_at(dur_s: f32, sr: u32) -> usize {
+pub fn samples_at(dur_s: f32, sr: u32) -> usize {
     (dur_s * sr as f32).round() as usize
 }
 
@@ -967,7 +967,7 @@ impl Part<'_> {
 }
 
 /// Render one lane of `score`'s loop to mono f32 at [`SAMPLE_RATE`], peaking
-/// at most 1.0, never its form: lofi's tools audition the material, and the
+/// at most 1.0: lofi's tools audition the material, and the
 /// frozen fingerprint pins guard the voices through it. Every lane but the day
 /// [`Lane::Texture`] is a whole number of the score's loops long, so a caller
 /// loops them in phase; the day texture runs free on its own length.

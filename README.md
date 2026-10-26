@@ -27,7 +27,7 @@ The same seed gives the same score, event for event and bit for bit, on every pl
 cargo run --release --example lofi_audition -- --seeds 4
 ```
 
-Writes one wav per seed at one of pixtuoid's tiers (`--tier empty|moderate|busy`), matched on gated loudness: the seed's first song, or `--songs N` of them (a sweep has its own default), as a `Performance` plays it at the tier's intensity or under the control calls a named `--sweep intensity|dusk|twilight|rain` asks for, each in the middle of a bar. `--engine whole` renders each song's lanes whole under the daylight and intensity its first bar latches, with no rain, and loops their mix, unarranged, as long as the song instead, and takes `--solo <lane>` to isolate one. `--shuffle KEYFILE` hides which seed is which. In the repo, `--example lofi_measure` prints what a change moves in the tier's mix and in each of its lanes.
+Writes one wav per seed at one of pixtuoid's tiers (`--tier empty|moderate|busy`), matched on gated loudness: the seed's first song, or `--songs N` of them (a sweep has its own default), as a `Performance` plays it at the tier's intensity or under the control calls a named `--sweep intensity|dusk|twilight|rain` asks for, each in the middle of a bar. `--engine whole` renders the whole-lane engine pixtuoid played before the stream instead (`Engine` in `examples/common/batch.rs`), and takes `--solo <lane>` to isolate one. `--shuffle KEYFILE` hides which seed is which. In the repo, `--example lofi_measure` prints what a change moves in the tier's mix and in each of its lanes.
 
 ## License
 
