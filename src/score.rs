@@ -3,7 +3,63 @@
 //! regenerate via `.claude/skills/procedural-lofi/scripts/export_score.py`; a
 //! regen is a NEW take and needs a fresh A/B verdict before it ships.
 
-use super::compose::{BEATS_PER_BAR, DrumKind};
+use super::compose::{BEATS_PER_BAR, DrumKind, Hit, Note};
+
+/// A take's `(at_s, midi, vel)` rows as the notes its lanes play.
+const fn notes<const N: usize>(rows: [(f32, u8, f32); N]) -> [Note; N] {
+    let mut out = [Note {
+        at: 0.0,
+        midi: 0,
+        vel: 0.0,
+    }; N];
+    let mut i = 0;
+    while i < N {
+        let (at, midi, vel) = rows[i];
+        out[i] = Note { at, midi, vel };
+        i += 1;
+    }
+    out
+}
+
+/// A take's notes' times, pitches and velocities summed: a checksum over
+/// every row.
+fn sum3(t: &[Note]) -> (f64, u32, f64) {
+    t.iter().fold((0.0f64, 0u32, 0.0f64), |(a, m, v), n| {
+        (
+            a + f64::from(n.at),
+            m + u32::from(n.midi),
+            v + f64::from(n.vel),
+        )
+    })
+}
+
+/// A take's hits' times and gains summed.
+fn drum_sums(t: &[Hit]) -> (f64, f64) {
+    t.iter().fold((0.0f64, 0.0f64), |(a, g), h| {
+        (a + f64::from(h.at), g + f64::from(h.gain))
+    })
+}
+
+/// A note, as a row of a take's table spells it.
+fn note(at: f32, midi: u8, vel: f32) -> Note {
+    Note { at, midi, vel }
+}
+
+/// A take's `(at_s, kind, gain)` rows as the hits its drums play.
+const fn hits<const N: usize>(rows: [(f32, DrumKind, f32); N]) -> [Hit; N] {
+    let mut out = [Hit {
+        at: 0.0,
+        kind: DrumKind::Kick,
+        gain: 0.0,
+    }; N];
+    let mut i = 0;
+    while i < N {
+        let (at, kind, gain) = rows[i];
+        out[i] = Hit { at, kind, gain };
+        i += 1;
+    }
+    out
+}
 
 pub(super) const BPM: f32 = 72.0;
 /// 8 bars of 4/4 — the progression cycles every 4 bars, the melodic
@@ -160,22 +216,22 @@ pub(super) fn night_chord_at_bar(bar: usize) -> ([u8; 4], u8) {
     )
 }
 
-pub(super) const NIGHT_KEYS: [(f32, u8, f32); 6] = [
+pub(super) const NIGHT_KEYS: [Note; 6] = notes([
     (3.9989, 53, 0.501036),
     (5.3155, 53, 0.502335),
     (5.7621, 60, 0.391231),
     (15.0282, 60, 0.354303),
     (20.3087, 57, 0.370914),
     (20.7644, 53, 0.443472),
-];
-pub(super) const NIGHT_SPARKLE: [(f32, u8, f32); 5] = [
+]);
+pub(super) const NIGHT_SPARKLE: [Note; 5] = notes([
     (2.6471, 79, 0.301661),
     (9.7059, 60, 0.357816),
     (18.5294, 77, 0.376569),
     (23.3824, 71, 0.252749),
     (25.5882, 67, 0.284761),
-];
-pub(super) const NIGHT_DRUMS: [(f32, DrumKind, f32); 39] = [
+]);
+pub(super) const NIGHT_DRUMS: [Hit; 39] = hits([
     (0.0236, DrumKind::Kick, 0.663799),
     (2.2367, DrumKind::Kick, 0.411038),
     (0.4778, DrumKind::Hat, 0.214931),
@@ -215,44 +271,34 @@ pub(super) const NIGHT_DRUMS: [(f32, DrumKind, f32); 39] = [
     (24.7274, DrumKind::Kick, 0.659486),
     (26.9428, DrumKind::Kick, 0.447755),
     (25.1849, DrumKind::Hat, 0.320593),
-];
+]);
 
 mod night_tests {
     use super::*;
 
     #[test]
     fn night_tables_match_the_frozen_v4_realization() {
-        let sum3 = |t: &[(f32, u8, f32)]| {
-            t.iter()
-                .fold((0.0f64, 0u32, 0.0f64), |(a, n, v), &(aa, nn, vv)| {
-                    (a + f64::from(aa), n + u32::from(nn), v + f64::from(vv))
-                })
-        };
         let (ka, kn, kv) = sum3(&NIGHT_KEYS);
         assert!((ka - 71.1778).abs() < 1e-3 && kn == 336 && (kv - 2.563_291).abs() < 1e-4);
         let (sa, sn, sv) = sum3(&NIGHT_SPARKLE);
         assert!((sa - 79.853).abs() < 1e-3 && sn == 354 && (sv - 1.573_556).abs() < 1e-4);
-        let (da, dg) = NIGHT_DRUMS
-            .iter()
-            .fold((0.0f64, 0.0f64), |(a, g), &(aa, _, gg)| {
-                (a + f64::from(aa), g + f64::from(gg))
-            });
+        let (da, dg) = drum_sums(&NIGHT_DRUMS);
         assert!((da - 495.7997).abs() < 1e-3 && (dg - 14.081_426).abs() < 1e-4);
-        assert_eq!(NIGHT_KEYS[0], (3.9989, 53, 0.501_036));
+        assert_eq!(NIGHT_KEYS[0], note(3.9989, 53, 0.501_036));
         // DrumKind carries the day takes' full kit, so the sleepy register is
         // TABLE content, not enum shape — it needs its own pin.
         assert!(
             NIGHT_DRUMS
                 .iter()
-                .all(|&(_, k, _)| matches!(k, DrumKind::Kick | DrumKind::Hat)),
+                .all(|h| matches!(h.kind, DrumKind::Kick | DrumKind::Hat)),
             "the night groove is kick + closed hat only"
         );
-        for &(at, note, _) in NIGHT_KEYS.iter() {
+        for &Note { at, midi, .. } in NIGHT_KEYS.iter() {
             let bar = (at / (night_beat_s() * BEATS_PER_BAR)) as usize;
             let (chord, _) = night_chord_at_bar(bar);
             assert!(
-                chord.iter().any(|&c| note == c || note == c + 12),
-                "night note {note} at {at}s is not a tone of its bar's chord"
+                chord.iter().any(|&c| midi == c || midi == c + 12),
+                "night note {midi} at {at}s is not a tone of its bar's chord"
             );
         }
     }
@@ -279,9 +325,9 @@ pub(super) struct DayTake {
     /// HAND-WRITTEN lead (`sparkle`), which uses diatonic color beyond the
     /// bar's chord tones.
     pub(super) scale_pcs: [u8; 7],
-    pub(super) sparkle: &'static [(f32, u8, f32)],
-    pub(super) keys: &'static [(f32, u8, f32)],
-    pub(super) drums: &'static [(f32, DrumKind, f32)],
+    pub(super) sparkle: &'static [Note],
+    pub(super) keys: &'static [Note],
+    pub(super) drums: &'static [Hit],
 }
 
 impl DayTake {
@@ -332,7 +378,7 @@ pub(super) const DAY2_CHORDS: [[u8; 4]; 4] = [
     [52, 55, 59, 62],
     [57, 60, 64, 67],
 ];
-pub(super) const DAY2_SPARKLE: [(f32, u8, f32); 21] = [
+pub(super) const DAY2_SPARKLE: [Note; 21] = notes([
     (1.2049, 69, 0.353715),
     (1.5964, 72, 0.418155),
     (2.3859, 76, 0.426119),
@@ -354,8 +400,8 @@ pub(super) const DAY2_SPARKLE: [(f32, u8, f32); 21] = [
     (22.5183, 72, 0.431502),
     (23.3058, 71, 0.386366),
     (24.0902, 69, 0.334159),
-];
-pub(super) const DAY2_KEYS: [(f32, u8, f32); 19] = [
+]);
+pub(super) const DAY2_KEYS: [Note; 19] = notes([
     (1.2178, 57, 0.646912),
     (2.0058, 60, 0.492617),
     (2.3807, 72, 0.424631),
@@ -375,8 +421,8 @@ pub(super) const DAY2_KEYS: [(f32, u8, f32); 19] = [
     (22.1341, 69, 0.533842),
     (22.5223, 69, 0.699207),
     (23.3145, 64, 0.461946),
-];
-pub(super) const DAY2_DRUMS: [(f32, DrumKind, f32); 85] = [
+]);
+pub(super) const DAY2_DRUMS: [Hit; 85] = hits([
     (0.0166, DrumKind::Kick, 1.009681),
     (1.8096, DrumKind::Kick, 0.696431),
     (0.7951, DrumKind::Snare, 0.818610),
@@ -462,7 +508,7 @@ pub(super) const DAY2_DRUMS: [(f32, DrumKind, f32); 85] = [
     (24.0970, DrumKind::Hat, 0.415701),
     (24.4752, DrumKind::Hat, 0.462891),
     (24.8879, DrumKind::OpenHat, 0.473727),
-];
+]);
 
 // frozen take B; do not hand-edit — a regen is a NEW take
 // and needs a fresh A/B verdict
@@ -473,7 +519,7 @@ pub(super) const DAY3_CHORDS: [[u8; 4]; 4] = [
     [50, 53, 57, 60],
     [53, 55, 59, 62],
 ];
-pub(super) const DAY3_SPARKLE: [(f32, u8, f32); 18] = [
+pub(super) const DAY3_SPARKLE: [Note; 18] = notes([
     (0.4268, 76, 0.438005),
     (2.0368, 74, 0.378835),
     (4.0739, 72, 0.370867),
@@ -492,8 +538,8 @@ pub(super) const DAY3_SPARKLE: [(f32, u8, f32); 18] = [
     (23.1284, 71, 0.358504),
     (23.9380, 74, 0.388471),
     (24.7389, 67, 0.323412),
-];
-pub(super) const DAY3_KEYS: [(f32, u8, f32); 15] = [
+]);
+pub(super) const DAY3_KEYS: [Note; 15] = notes([
     (0.4280, 52, 0.596143),
     (0.8358, 67, 0.499108),
     (2.8656, 67, 0.421223),
@@ -509,8 +555,8 @@ pub(super) const DAY3_KEYS: [(f32, u8, f32); 15] = [
     (16.2362, 60, 0.684257),
     (22.7312, 71, 0.487402),
     (23.9609, 55, 0.505008),
-];
-pub(super) const DAY3_DRUMS: [(f32, DrumKind, f32); 71] = [
+]);
+pub(super) const DAY3_DRUMS: [Hit; 71] = hits([
     (0.0173, DrumKind::Kick, 1.041377),
     (2.2620, DrumKind::Kick, 0.710965),
     (1.6335, DrumKind::Snare, 0.887970),
@@ -582,23 +628,10 @@ pub(super) const DAY3_DRUMS: [(f32, DrumKind, f32); 71] = [
     (24.7495, DrumKind::Hat, 0.575466),
     (25.1312, DrumKind::Hat, 0.480718),
     (25.5664, DrumKind::OpenHat, 0.586797),
-];
+]);
 
 mod day_take_tests {
     use super::*;
-
-    fn sum3(t: &[(f32, u8, f32)]) -> (f64, u32, f64) {
-        t.iter()
-            .fold((0.0f64, 0u32, 0.0f64), |(a, n, v), &(aa, nn, vv)| {
-                (a + f64::from(aa), n + u32::from(nn), v + f64::from(vv))
-            })
-    }
-
-    fn drum_sums(t: &[(f32, DrumKind, f32)]) -> (f64, f64) {
-        t.iter().fold((0.0f64, 0.0f64), |(a, g), &(aa, _, gg)| {
-            (a + f64::from(aa), g + f64::from(gg))
-        })
-    }
 
     /// Sums bind EVERY entry, spot pins bind the identity, and the harmonic
     /// invariant survives any regen.
@@ -610,8 +643,8 @@ mod day_take_tests {
         assert!((ka - 240.5046).abs() < 1e-3 && kn == 1208 && (kv - 10.627_011).abs() < 1e-4);
         let (da, dg) = drum_sums(&DAY2_DRUMS);
         assert!((da - 1069.4331).abs() < 1e-3 && (dg - 50.312_461).abs() < 1e-4);
-        assert_eq!(DAY2_SPARKLE[0], (1.2049, 69, 0.353_715));
-        assert_eq!(DAY2_KEYS[0], (1.2178, 57, 0.646_912));
+        assert_eq!(DAY2_SPARKLE[0], note(1.2049, 69, 0.353_715));
+        assert_eq!(DAY2_KEYS[0], note(1.2178, 57, 0.646_912));
 
         let (sa, sn, sv) = sum3(&DAY3_SPARKLE);
         assert!((sa - 243.5403).abs() < 1e-3 && sn == 1319 && (sv - 6.949_387).abs() < 1e-4);
@@ -619,33 +652,33 @@ mod day_take_tests {
         assert!((ka - 146.3348).abs() < 1e-3 && kn == 926 && (kv - 7.745_362).abs() < 1e-4);
         let (da, dg) = drum_sums(&DAY3_DRUMS);
         assert!((da - 922.5331).abs() < 1e-3 && (dg - 44.375_432).abs() < 1e-4);
-        assert_eq!(DAY3_SPARKLE[0], (0.4268, 76, 0.438_005));
-        assert_eq!(DAY3_KEYS[0], (0.4280, 52, 0.596_143));
+        assert_eq!(DAY3_SPARKLE[0], note(0.4268, 76, 0.438_005));
+        assert_eq!(DAY3_KEYS[0], note(0.4280, 52, 0.596_143));
 
         for take in [&DAY2, &DAY3] {
             // Keys are RNG-drawn from the chord pool by construction, so they
             // get the STRICT chord-tone check.
-            for &(at, note, _) in take.keys {
+            for &Note { at, midi, .. } in take.keys {
                 let chord = take.chord_at_bar((at / take.bar_s()) as usize);
                 assert!(
                     chord
                         .iter()
-                        .any(|&c| note == c || note == c + 12 || note == c + 24),
-                    "keys note {note} at {at}s is not a tone of its bar's chord {chord:?}"
+                        .any(|&c| midi == c || midi == c + 12 || midi == c + 24),
+                    "keys note {midi} at {at}s is not a tone of its bar's chord {chord:?}"
                 );
             }
             // The hand-written lead uses diatonic color beyond the bar's chord,
             // so its invariant is the take's KEY, not the bar's chord.
-            for &(at, note, _) in take.sparkle {
+            for &Note { at, midi, .. } in take.sparkle {
                 assert!(
-                    take.scale_pcs.contains(&(note % 12)),
-                    "lead note {note} at {at}s is outside the take's key"
+                    take.scale_pcs.contains(&(midi % 12)),
+                    "lead note {midi} at {at}s is outside the take's key"
                 );
             }
-            assert!(take.drums.iter().any(|&(_, k, _)| k == DrumKind::Snare));
-            assert!(take.drums.iter().any(|&(_, k, _)| k == DrumKind::OpenHat));
-            for &(at, _, _) in take.drums {
-                assert!(at >= 0.0 && at < take.loop_secs());
+            assert!(take.drums.iter().any(|h| h.kind == DrumKind::Snare));
+            assert!(take.drums.iter().any(|h| h.kind == DrumKind::OpenHat));
+            for h in take.drums {
+                assert!(h.at >= 0.0 && h.at < take.loop_secs());
             }
         }
     }

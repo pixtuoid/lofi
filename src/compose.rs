@@ -132,6 +132,24 @@ pub(super) enum DrumKind {
     OpenHat,
 }
 
+/// One note a lane plays: when it sounds, in seconds into the loop, its
+/// pitch (MIDI) and its velocity.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct Note {
+    pub(super) at: f32,
+    pub(super) midi: u8,
+    pub(super) vel: f32,
+}
+
+/// One drum hit: when it lands, in seconds into the loop, its drum and its
+/// gain.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct Hit {
+    pub(super) at: f32,
+    pub(super) kind: DrumKind,
+    pub(super) gain: f32,
+}
+
 /// One composed song — tempo, lead voice, chords and every lane's events —
 /// that `synth`'s voices play.
 #[derive(Debug, Clone, PartialEq)]
@@ -141,12 +159,12 @@ pub struct Score {
     /// Each bar's chord, which the pad holds.
     pub(super) bar_chords: [[u8; 4]; GEN_LOOP_BARS],
     /// The lead melody (the sparkle lane).
-    pub(super) sparkle: Vec<(f32, u8, f32)>,
-    pub(super) keys: Vec<(f32, u8, f32)>,
-    pub(super) drums: Vec<(f32, DrumKind, f32)>,
+    pub(super) sparkle: Vec<Note>,
+    pub(super) keys: Vec<Note>,
+    pub(super) drums: Vec<Hit>,
     /// The bass lane: each bar's root, an answering root or fifth, and the
     /// day's pickup a semitone under the next root.
-    pub(super) bass: Vec<(f32, u8, f32)>,
+    pub(super) bass: Vec<Note>,
     /// Which instrument sings the lead.
     pub(super) lead_voice: LeadVoice,
 }
@@ -190,8 +208,8 @@ impl Score {
     #[cfg(test)]
     pub(super) fn kicks(&self) -> impl Iterator<Item = f32> + '_ {
         (self.drums.iter())
-            .filter(|&&(_, kind, _)| kind == DrumKind::Kick)
-            .map(|&(at, ..)| at)
+            .filter(|hit| hit.kind == DrumKind::Kick)
+            .map(|hit| hit.at)
     }
 }
 
@@ -224,7 +242,8 @@ struct LeadStyle {
     hi: u8,
     /// The chance a statement bar rests.
     rest_p: f32,
-    /// The most notes a statement bar draws.
+    /// The most notes a statement bar draws: the most the mood's frozen
+    /// takes sing in a bar.
     max_per_bar: usize,
     velocity: Spread,
 }
@@ -943,12 +962,7 @@ struct LeadNote {
 }
 
 /// The lead stage: a melody over `harmony`, as played behind the grid.
-fn lead(
-    rng: &mut NoiseStream,
-    harmony: &Harmony,
-    style: &LeadStyle,
-    beat_s: f32,
-) -> Vec<(f32, u8, f32)> {
+fn lead(rng: &mut NoiseStream, harmony: &Harmony, style: &LeadStyle, beat_s: f32) -> Vec<Note> {
     let statement = statement(rng, style);
     let answer = answer(rng, &statement, style);
     let line = melody(rng, &[statement, answer].concat(), harmony, style);
@@ -956,7 +970,11 @@ fn lead(
     (line.into_iter())
         .map(|n| {
             let at = LEAD_LAG.after(n.bar as f32 * bar_s + n.beat * beat_s, rng);
-            (at, n.note, n.vel * LEAD_ACCENT.draw(rng))
+            Note {
+                at,
+                midi: n.note,
+                vel: n.vel * LEAD_ACCENT.draw(rng),
+            }
         })
         .collect()
 }
@@ -1320,7 +1338,7 @@ impl Bar {
 /// ORDER is LOAD-BEARING (frozen-seed fidelity): the jitter draw FIRST, then
 /// the gain-wobble draw.
 fn push_kick(
-    out: &mut Vec<(f32, DrumKind, f32)>,
+    out: &mut Vec<Hit>,
     bar: Bar,
     drag: f32,
     at_beat: f32,
@@ -1332,12 +1350,16 @@ fn push_kick(
         at += swing_delay(SWING_KICK, bar.eighth());
     }
     let at = (at + KICK_JITTER.draw(rng)).max(0.0);
-    out.push((at, DrumKind::Kick, gain * bar.wobble * HIT_ACCENT.draw(rng)));
+    out.push(Hit {
+        at,
+        kind: DrumKind::Kick,
+        gain: gain * bar.wobble * HIT_ACCENT.draw(rng),
+    });
 }
 
 /// The drums stage: the kit `g` lays, clamped non-negative so a bar-0 jitter
 /// can't leave the loop.
-fn drums(rng: &mut NoiseStream, g: &GrooveTemplate, beat_s: f32) -> Vec<(f32, DrumKind, f32)> {
+fn drums(rng: &mut NoiseStream, g: &GrooveTemplate, beat_s: f32) -> Vec<Hit> {
     let bar_s = beat_s * BEATS_PER_BAR;
     let mut out = Vec::new();
     for bar in 0..GEN_LOOP_BARS {
@@ -1353,11 +1375,11 @@ fn drums(rng: &mut NoiseStream, g: &GrooveTemplate, beat_s: f32) -> Vec<(f32, Dr
         }
         for &sb in g.snares {
             let t = at.at(sb) + SNARE_DRAG_S + SNARE_JITTER.draw(rng);
-            out.push((
-                t.max(0.0),
-                DrumKind::Snare,
-                SNARE_GAIN * at.wobble * HIT_ACCENT.draw(rng),
-            ));
+            out.push(Hit {
+                at: t.max(0.0),
+                kind: DrumKind::Snare,
+                gain: SNARE_GAIN * at.wobble * HIT_ACCENT.draw(rng),
+            });
         }
         let hats = &g.hats;
         for e in 0..EIGHTHS_PER_BAR {
@@ -1374,7 +1396,11 @@ fn drums(rng: &mut NoiseStream, g: &GrooveTemplate, beat_s: f32) -> Vec<(f32, Dr
             } else {
                 DrumKind::Hat
             };
-            out.push((t.max(0.0), kind, hats.velocity.draw(rng) * at.wobble));
+            out.push(Hit {
+                at: t.max(0.0),
+                kind,
+                gain: hats.velocity.draw(rng) * at.wobble,
+            });
         }
     }
     out
@@ -1415,7 +1441,7 @@ fn bass(
     bars: &[Chord; GEN_LOOP_BARS],
     style: &BassStyle,
     beat_s: f32,
-) -> Vec<(f32, u8, f32)> {
+) -> Vec<Note> {
     let bar_s = beat_s * BEATS_PER_BAR;
     let answer_velocity = Spread {
         base: style.velocity.base - ANSWER_SOFTER,
@@ -1426,7 +1452,11 @@ fn bass(
         let b0 = bar as f32 * bar_s;
         let root = sub_note(chord.root_pc);
         let at = BASS_LAG.after(b0, rng);
-        out.push((at, root, style.velocity.draw(rng)));
+        out.push(Note {
+            at,
+            midi: root,
+            vel: style.velocity.draw(rng),
+        });
         if chance(rng, style.answer_p) {
             let note = if chance(rng, style.fifth_p) {
                 sub_note(chord.root_pc + FIFTH)
@@ -1434,7 +1464,11 @@ fn bass(
                 root
             };
             let at = BASS_LAG.after(b0 + style.answer_beat * beat_s, rng);
-            out.push((at, note, answer_velocity.draw(rng)));
+            out.push(Note {
+                at,
+                midi: note,
+                vel: answer_velocity.draw(rng),
+            });
         }
         if chance(rng, style.pickup_p)
             && let Some(next) = bars.get(bar + 1)
@@ -1442,7 +1476,11 @@ fn bass(
             // literal semitone below the folded next root (pc-folding rendered an
             // 11-semitone drop); no last-bar pickup — place() clips at the seam
             let at = PICKUP_LAG.after(b0 + PICKUP_BEAT * beat_s, rng);
-            out.push((at, sub_note(next.root_pc) - 1, PICKUP_VELOCITY.draw(rng)));
+            out.push(Note {
+                at,
+                midi: sub_note(next.root_pc) - 1,
+                vel: PICKUP_VELOCITY.draw(rng),
+            });
         }
     }
     out
@@ -1468,7 +1506,7 @@ fn keys(
     bars: &[Chord; GEN_LOOP_BARS],
     style: &KeysStyle,
     beat_s: f32,
-) -> Vec<(f32, u8, f32)> {
+) -> Vec<Note> {
     let bar_s = beat_s * BEATS_PER_BAR;
     let eighth = beat_s / 2.0;
     let density = match style.density {
@@ -1495,13 +1533,25 @@ fn keys(
                         seventh
                     };
                     let vel = style.velocity.draw(rng);
-                    out.push((at, third, vel));
+                    out.push(Note {
+                        at,
+                        midi: third,
+                        vel,
+                    });
                     // a hand rolls the dyad; a sequencer stamps it
-                    out.push((ROLL.after(at, rng), upper, vel * ROLLED_SOFTER));
+                    out.push(Note {
+                        at: ROLL.after(at, rng),
+                        midi: upper,
+                        vel: vel * ROLLED_SOFTER,
+                    });
                 }
                 Comp::Single => {
                     let note = chord.notes[pick(rng, chord.notes.len())];
-                    out.push((at, note, style.velocity.draw(rng)));
+                    out.push(Note {
+                        at,
+                        midi: note,
+                        vel: style.velocity.draw(rng),
+                    });
                 }
             }
         }

@@ -123,19 +123,38 @@ fn every_shell_comping_template_chord_carries_a_third_and_seventh() {
     }
 }
 
-/// The lead's register is the span its mood's frozen take sings, the
-/// authority its bounds were read from.
+/// The lead's register is the span its mood's frozen take sings, and its
+/// density the most notes any of its mood's frozen takes sings in a bar: the
+/// authorities its bounds were read from.
 #[test]
-fn each_moods_lead_register_is_its_frozen_takes_span() {
-    for (mood, take) in [
-        (Mood::Day, &score::SPARKLE_SCORE[..]),
-        (Mood::Night, &score::NIGHT_SPARKLE[..]),
-    ] {
-        let notes = take.iter().map(|&(_, n, _)| n);
-        let span = (notes.clone().min(), notes.max());
+fn each_moods_lead_register_and_density_are_its_frozen_takes() {
+    let day = score::SPARKLE_SCORE.map(|(_, midi, _)| midi);
+    let night = score::NIGHT_SPARKLE.map(|n| n.midi);
+    for (mood, take) in [(Mood::Day, &day[..]), (Mood::Night, &night[..])] {
+        let span = (take.iter().min().copied(), take.iter().max().copied());
         let lead = &mood.style().lead;
         assert_eq!(span, (Some(lead.lo), Some(lead.hi)), "{mood:?}");
     }
+    let most = |bars: Vec<usize>| {
+        (bars.iter())
+            .map(|b| bars.iter().filter(|&c| c == b).count())
+            .max()
+    };
+    let in_bars =
+        |notes: &[Note], bar_s: f32| notes.iter().map(|n| (n.at / bar_s) as usize).collect();
+    let day1 = score::SPARKLE_SCORE.map(|(beats, ..)| (beats / BEATS_PER_BAR) as usize);
+    let day = [
+        most(day1.to_vec()),
+        most(in_bars(score::DAY2.sparkle, score::DAY2.bar_s())),
+        most(in_bars(score::DAY3.sparkle, score::DAY3.bar_s())),
+    ];
+    let night_bar_s = score::night_loop_secs() / score::NIGHT_LOOP_BARS as f32;
+    let night = most(in_bars(&score::NIGHT_SPARKLE, night_bar_s));
+    assert_eq!(
+        day.into_iter().max().flatten(),
+        Some(Mood::Day.style().lead.max_per_bar)
+    );
+    assert_eq!(night, Some(Mood::Night.style().lead.max_per_bar));
 }
 
 #[test]
@@ -207,13 +226,13 @@ fn every_seed_is_well_formed() {
                 "{mood:?} seed {seed}: bpm {}",
                 s.bpm
             );
-            for &(_, note, _) in &s.sparkle {
+            for &Note { midi: note, .. } in &s.sparkle {
                 assert!(
                     (style.lead.lo..=style.lead.hi).contains(&note),
                     "{mood:?} seed {seed}: lead note {note} out of its register"
                 );
             }
-            let kinds = |k: DrumKind| s.drums.iter().any(|&(_, kind, _)| kind == k);
+            let kinds = |k: DrumKind| s.drums.iter().any(|&Hit { kind, .. }| kind == k);
             match mood {
                 Mood::Day => assert!(kinds(DrumKind::Snare), "seed {seed}: no backbeat"),
                 Mood::Night => assert!(
@@ -229,7 +248,7 @@ fn assert_well_formed(s: &Score, h: &Harmony, seed: u64) {
     let loop_s = s.loop_secs();
     let bar_s = s.bar_s();
     let bar_of = |at: f32| ((at / bar_s) as usize).min(GEN_LOOP_BARS - 1);
-    for &(at, _, vel) in s.sparkle.iter().chain(s.keys.iter()).chain(s.bass.iter()) {
+    for &Note { at, vel, .. } in s.sparkle.iter().chain(s.keys.iter()).chain(s.bass.iter()) {
         assert!(
             at >= 0.0 && at < loop_s,
             "seed {seed}: event at {at} outside loop {loop_s}"
@@ -240,11 +259,12 @@ fn assert_well_formed(s: &Score, h: &Harmony, seed: u64) {
         // the floor: the root, sounding in the bar's first beat
         let one = (bar as f32 * bar_s)..(bar as f32 * bar_s + s.beat_s());
         assert!(
-            (s.bass.iter()).any(|&(at, n, _)| one.contains(&at) && n % 12 == chord.root_pc),
+            (s.bass.iter())
+                .any(|&Note { at, midi: n, .. }| one.contains(&at) && n % 12 == chord.root_pc),
             "seed {seed}: the bass must sound bar {bar}'s root on its ONE"
         );
     }
-    for &(at, note, _) in &s.bass {
+    for &Note { at, midi: note, .. } in &s.bass {
         // the sub window D1-C#2, and the leading-tone pickup one step under it
         assert!(
             (25..=37).contains(&note),
@@ -267,14 +287,14 @@ fn assert_well_formed(s: &Score, h: &Harmony, seed: u64) {
             "seed {seed}: bass onset {at}s rings into the loop seam"
         );
     }
-    for &(at, _, gain) in &s.drums {
+    for &Hit { at, gain, .. } in &s.drums {
         assert!(
             at >= 0.0 && at < loop_s,
             "seed {seed}: drum at {at} outside loop"
         );
         assert!(gain > 0.0 && gain <= 1.5, "seed {seed}: drum gain {gain}");
     }
-    for &(at, note, _) in &s.keys {
+    for &Note { at, midi: note, .. } in &s.keys {
         let bar = bar_of(at);
         let chord = s.bar_chords[bar];
         let ninth_pc = (h.bars[bar].root_pc + 2) % 12;
@@ -286,7 +306,7 @@ fn assert_well_formed(s: &Score, h: &Harmony, seed: u64) {
             "seed {seed}: keys note {note} at {at}s not a tone/ninth of {chord:?}"
         );
     }
-    for &(at, note, _) in &s.sparkle {
+    for &Note { at, midi: note, .. } in &s.sparkle {
         let bar = bar_of(at);
         let in_turnaround = pcs(&s.bar_chords[bar]).contains(&(note % 12));
         assert!(
@@ -301,7 +321,7 @@ fn assert_well_formed(s: &Score, h: &Harmony, seed: u64) {
     let max_per_bar = s.mood.style().lead.max_per_bar;
     for bar in 0..GEN_LOOP_BARS {
         let n = (s.sparkle.iter())
-            .filter(|&&(at, _, _)| (at / bar_s) as usize == bar)
+            .filter(|&&Note { at, .. }| (at / bar_s) as usize == bar)
             .count();
         // the humanization lag can push a bar-boundary event into the
         // next bar's count, so allow one over
@@ -324,7 +344,7 @@ struct Sung {
 
 fn sung(s: &Score) -> Vec<Sung> {
     let mut out: Vec<Sung> = Vec::new();
-    for &(at, note, _) in &s.sparkle {
+    for &Note { at, midi: note, .. } in &s.sparkle {
         let sixteenths = (at / s.beat_s() * 4.0).round();
         let bar = (sixteenths / 16.0) as usize;
         let beat = (sixteenths - bar as f32 * 16.0) / 4.0;
@@ -462,16 +482,20 @@ fn day_keys_comp_in_rolled_shell_pairs() {
         assert_eq!(s.keys.len() % 2, 0, "seed {seed}: unpaired shell note");
         for pair in s.keys.chunks(2) {
             let (a, b) = (pair[0], pair[1]);
-            let roll = b.0 - a.0;
+            let roll = b.at - a.at;
             assert!(
                 (0.010..=0.022).contains(&roll),
                 "seed {seed}: shell roll {roll}s outside the hand's range"
             );
             assert!(
-                b.2 < a.2,
+                b.vel < a.vel,
                 "seed {seed}: the rolled upper voice rides softer"
             );
-            assert_ne!(a.1 % 12, b.1 % 12, "seed {seed}: shell voices collapsed");
+            assert_ne!(
+                a.midi % 12,
+                b.midi % 12,
+                "seed {seed}: shell voices collapsed"
+            );
         }
     }
 }
@@ -482,7 +506,7 @@ fn day_lead_uses_sixteenth_anticipations_somewhere_in_the_sweep() {
     for seed in 0..SWEEP {
         let s = compose(Mood::Day, seed);
         let beat_s = s.beat_s();
-        for &(at, _, _) in &s.sparkle {
+        for &Note { at, .. } in &s.sparkle {
             // strip the played-not-sequenced lag before reading the grid
             let beats = (at - 0.015) / beat_s;
             let frac = beats - beats.floor();
@@ -538,13 +562,13 @@ fn a_seeded_groove_lays_every_hit_where_it_did() {
     let beat_s = 60.0 / 74.0;
     for g in DAY_GROOVES.iter().chain([&NIGHT_GROOVE]) {
         let hits = drums(&mut NoiseStream::new(7), g, beat_s);
-        for &(at, kind, gain) in &hits {
+        for &Hit { at, kind, gain } in &hits {
             words.extend([at.to_bits(), kind as u32, gain.to_bits()]);
         }
         // the kicks again, as the hash was recorded while the drums kept a
         // second list of them
-        let kicks = hits.iter().filter(|&&(_, kind, _)| kind == DrumKind::Kick);
-        words.extend(kicks.map(|&(at, ..)| at.to_bits()));
+        let kicks = hits.iter().filter(|hit| hit.kind == DrumKind::Kick);
+        words.extend(kicks.map(|hit| hit.at.to_bits()));
     }
     let h = fnv1a(words.into_iter().map(u64::from));
     assert_eq!(h, GOLDEN, "{h:#018x}");
@@ -563,7 +587,12 @@ fn every_seed_composes_the_score_it_did() {
             let s = compose(mood, seed);
             words.push(u64::from(s.bpm.to_bits()));
             for lane in [&s.sparkle, &s.keys, &s.bass] {
-                for &(at, note, vel) in lane {
+                for &Note {
+                    at,
+                    midi: note,
+                    vel,
+                } in lane
+                {
                     words.extend([
                         u64::from(at.to_bits()),
                         u64::from(note),
@@ -571,7 +600,7 @@ fn every_seed_composes_the_score_it_did() {
                     ]);
                 }
             }
-            for &(at, kind, gain) in &s.drums {
+            for &Hit { at, kind, gain } in &s.drums {
                 words.extend([
                     u64::from(at.to_bits()),
                     kind as u64,
