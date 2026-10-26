@@ -261,9 +261,9 @@ impl Form {
 
     /// The form a band with no beat plays: its intro and outro layered as
     /// drawn, its body whole, and no edge or dip. A body's drops and an edge
-    /// move a groove; with no beat they only thin a band already as sparse as
-    /// R11's sparsest, which the judge hears as worse and the corpus as no
-    /// closer.
+    /// move a groove; with no beat they thin R11's drums-out band further,
+    /// which the judge's Empty takes heard as worse and the corpus as no
+    /// closer (the figures are in the commit that made this rule).
     pub(crate) fn beatless(mut self) -> Self {
         let body = self.parts()[1].clone();
         self.plays[body].fill(Plays::ALL);
@@ -476,10 +476,11 @@ const WHOLE_THINNING_P: f32 = 0.4;
 /// The bass leaves with the beat in a break, as R11's drum drop-outs take it.
 const LOW_WITH_BREAK_P: f32 = 0.5;
 
-/// Whether a song cuts its beat at all, then each dense phrase from
-/// `FIRST_CUT_PHRASE` on cuts its last bars with `CUT_P`, so the cuts cluster
-/// as R11's drops per track do; the first dense core plays through, as R11's
-/// first drop sits near the track's middle. Fitted to R11 (opinion).
+/// Whether a song cuts its beat at all, then each phrase from
+/// `FIRST_CUT_PHRASE` on but the thinning's cuts its last bars with `CUT_P`,
+/// so the cuts cluster as R11's drops per track do; the first core plays
+/// through, as R11's first drop sits near the track's middle. Fitted to R11
+/// (opinion).
 const CUTTING_P: f32 = 0.5;
 const CUT_P: f32 = 0.75;
 const FIRST_CUT_PHRASE: usize = 1;
@@ -577,7 +578,7 @@ pub(crate) fn arrange(seed: u64) -> Form {
         }
         Thinning::Steady => true,
     };
-    // a dense phrase cuts only into a phrase that opens on the beat, and never
+    // a phrase cuts only into a phrase that opens on the beat, and never
     // into the outro, where a cut would just start a beatless outro early
     let opens_on_beat = |p: usize| p != thin || !(thinning == Thinning::Break && whole);
     let mut dip_phrase_cut = false;

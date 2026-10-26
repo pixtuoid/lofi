@@ -848,39 +848,37 @@ mod tests {
     fn a_song_that_starts_with_no_beat_plays_its_body_whole_and_moves_no_edge() {
         let empty = Controls::default().with_intensity(TIER_INTENSITIES[0]);
         assert_eq!(lane_gain(Lane::Drums, empty.intensity), 0.0);
-        let seed = (0..512)
-            .find(|&seed| {
-                let drawn = song_form(seed, 0, Controls::default());
-                let [intro, body, _] = drawn.parts();
-                drawn.edged()
-                    && body.into_iter().any(|bar| *drawn.plays(bar) != Plays::ALL)
-                    && intro.into_iter().any(|bar| *drawn.plays(bar) != Plays::ALL)
-            })
-            .expect("a seed thins its intro and body and moves an edge");
-        let (drawn, beatless) = (
-            song_form(seed, 0, Controls::default()),
-            song_form(seed, 0, empty),
-        );
-        let [intro, body, outro] = drawn.parts();
-        assert_eq!(
-            beatless.parts(),
-            [intro.clone(), body.clone(), outro.clone()]
-        );
-        assert!(!beatless.edged(), "{beatless}");
-        for bar in body {
-            assert_eq!(
-                *beatless.plays(bar),
-                Plays::ALL,
-                "body bar {bar}: {beatless}"
+        let (mut entries, mut exits, mut dips, mut thinned) = (0, 0, 0, 0);
+        for seed in 0..512 {
+            let (drawn, beatless) = (
+                song_form(seed, 0, Controls::default()),
+                song_form(seed, 0, empty),
             );
-        }
-        for bar in intro.chain(outro) {
+            let at = |what: &str| format!("seed {seed}: {what}: {drawn} / {beatless}");
+            entries += usize::from(drawn.entry().is_some());
+            exits += usize::from(drawn.exit().is_some());
+            dips += usize::from(drawn.dip().is_some());
+            let [intro, body, outro] = drawn.parts();
+            assert_eq!(beatless.parts(), drawn.parts(), "{}", at("parts"));
             assert_eq!(
-                beatless.plays(bar),
-                drawn.plays(bar),
-                "bar {bar}: {beatless}"
+                (beatless.entry(), beatless.exit(), beatless.dip()),
+                (None, None, None),
+                "{}",
+                at("an edge")
             );
+            thinned += usize::from(body.clone().any(|bar| *drawn.plays(bar) != Plays::ALL));
+            for bar in body {
+                assert_eq!(*beatless.plays(bar), Plays::ALL, "{}", at("the body"));
+            }
+            for bar in intro.chain(outro) {
+                assert_eq!(beatless.plays(bar), drawn.plays(bar), "{}", at("an end"));
+            }
         }
+        // the seeds draw every edge and a thinned body, so each clear is proven
+        assert!(
+            [entries, exits, dips, thinned].iter().all(|&n| n > 0),
+            "{entries} entries, {exits} exits, {dips} dips, {thinned} thinned bodies"
+        );
     }
 
     #[test]

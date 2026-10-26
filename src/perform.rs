@@ -259,11 +259,11 @@ mod tests {
         audition::samples_at(audition::song_score(seed, k, c).loop_secs(), SAMPLE_RATE)
     }
 
-    /// Asserts `songs`, `(seed, k)`, span a form, so an invariance proven
-    /// over them is proven over one.
-    fn assert_spans_a_form(songs: &[(u64, u64)]) {
+    /// Asserts `songs`, `(seed, k, the controls k's first bar latches)`, span
+    /// a form, so an invariance proven over them is proven over one.
+    fn assert_spans_a_form(songs: &[(u64, u64, Controls)]) {
         let forms: Vec<Form> = (songs.iter())
-            .map(|&(seed, k)| audition::song_form(seed, k, Controls::default()))
+            .map(|&(seed, k, c)| audition::song_form(seed, k, c))
             .collect();
         audition::spans_a_form(&forms).unwrap();
     }
@@ -376,9 +376,9 @@ mod tests {
                 (corners.iter().zip(corners.iter().rev())).map(move |(&a, &b)| (seed, a, b))
             })
             .collect();
-        let songs: Vec<(u64, u64)> = runs
+        let songs: Vec<(u64, u64, Controls)> = runs
             .iter()
-            .flat_map(|&(seed, ..)| [(seed, 0), (seed, 1)])
+            .flat_map(|&(seed, a, b)| [(seed, 0, a), (seed, 1, b)])
             .collect();
         assert_spans_a_form(&songs);
         let heard: Vec<Heard> = std::thread::scope(|scope| {
@@ -568,7 +568,7 @@ mod tests {
         let asks = [(lens[0] / 2, order[1]), (bounds[0] + lens[1] / 2, order[2])];
         // through song 2's first loop, past every tail of song 1
         let span = bounds[1] + loop_frames(seed, 2, order[2]);
-        assert_spans_a_form(&[(seed, 0), (seed, 1), (seed, 2)]);
+        assert_spans_a_form(&[0, 1, 2].map(|k| (seed, k, order[k as usize])));
         let whole = play(seed, order[0], &asks, &[], span);
         assert!(
             [0, bounds[0], bounds[1]]
@@ -722,7 +722,11 @@ mod tests {
         let reached = playing.finish_song();
         let alone = audition::song(seed, 2, c, &[]);
         assert!(audible(&alone));
-        assert_spans_a_form(&[(seed, 0), (seed, 1), (seed, 2)]);
+        assert_spans_a_form(&[
+            (seed, 0, night().with_intensity(0.0)),
+            (seed, 1, c.with_intensity(1.0)),
+            (seed, 2, c),
+        ]);
         assert_eq!(reached.len(), alone.len());
         let first_loop = loop_frames(seed, 2, c);
         assert!(
@@ -796,7 +800,10 @@ mod tests {
             start += audition::song_len(seed, want, asks[want as usize % asks.len()]) as u64;
             want += 1;
         }
-        assert_spans_a_form(&(0..want).map(|k| (seed, k)).collect::<Vec<_>>());
+        let songs: Vec<_> = (0..want)
+            .map(|k| (seed, k, asks[k as usize % asks.len()]))
+            .collect();
+        assert_spans_a_form(&songs);
         let mut p = Performance::new(seed, asks[0]);
         let mut songs = 0;
         while p.position() < ten {
@@ -988,7 +995,7 @@ mod tests {
         }
         reached.extend(playing.finish_song());
         let alone = audition::song(seed, 1, into, &calls);
-        assert_spans_a_form(&[(seed, 0), (seed, 1)]);
+        assert_spans_a_form(&[(seed, 0, c), (seed, 1, into)]);
         assert_eq!(reached.len(), alone.len());
         let first_loop = loop_frames(seed, 1, into);
         assert!(
@@ -1007,9 +1014,11 @@ mod tests {
         // opinion, as the corners' row: few frames turned down, and not far
         const MOST_LIMITED_SHARE: f64 = 0.001;
         const DEEPEST_REDUCTION_DB: f64 = 1.0;
+        // the timelines' random intensities are above 0, where every song
+        // plays the form it draws
         assert_spans_a_form(
             &(0..4)
-                .flat_map(|seed| (0..3).map(move |k| (seed, k)))
+                .flat_map(|seed| (0..3).map(move |k| (seed, k, Controls::default())))
                 .collect::<Vec<_>>(),
         );
         let runs: Vec<Heard> = std::thread::scope(|scope| {
