@@ -40,8 +40,8 @@ sys.path.insert(0, str(JUDGE))
 from judge_local import NOT_A_SCORE, exit_code, published, redact, select
 from validate_batch import IDENTICAL, Invalid
 
-# the uv the image installs with, the release judge-requirements.txt was
-# compiled by
+# the uv the image and SKILL.md's install run, the release
+# judge-requirements.txt was compiled by
 UV_VERSION = "0.13.0"
 # the lock, baked in where uv reads it a second time as the build constraints:
 # encodec, wget and progressbar publish only an sdist

@@ -203,7 +203,7 @@ constraint and re-batch), and every taste axis is a data table or named const wi
    judges it on Modal (`judge/modal_judge.py`) for every PR that changes the render:
    ```bash
    J=~/.cache/lofi-judge; S=.claude/skills/procedural-lofi; L=$S/judge/judge-requirements.txt; uv venv --python 3.12 $J
-   uv pip install --python $J/bin/python --require-hashes -r $L --build-constraints $L --require-build-hashes
+   uvx --from "uv==$(sed -nE 's/^UV_VERSION = "(.*)"$/\1/p' $S/judge/modal_judge.py)" uv pip install --python $J/bin/python --require-hashes -r $L --build-constraints $L --require-build-hashes
    git clone https://github.com/dgtql/MuQ-Eval $J/MuQ-Eval
    git -C $J/MuQ-Eval checkout --detach "$(sed -nE 's/^MUQ_EVAL_COMMIT = "(.*)"$/\1/p' $S/scripts/ab_judge.py)"
    $J/bin/python $S/scripts/ab_judge.py DIR --refs REFS
