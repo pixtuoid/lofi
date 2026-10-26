@@ -2,6 +2,3 @@
 # Only a merged release PR releases: the default (`true`) releases on every run.
 # release-plz.yml's `release-merge` job runs the same test first to spare a runner.
 release_always = false
-# release-plz's default, declared because release-plz.yml's release-merge job
-# keys on it.
-pr_branch_prefix = "release-plz-"

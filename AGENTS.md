@@ -40,6 +40,6 @@ Measurement steers a change toward a target; CI's [`judge.yml`](.github/workflow
 - TDD; every mechanism names the failure it prevents; reuse before you build, except a dependency.
 - Comments, doc prose and PR bodies included, are WHY only and sit on the narrowest thing they constrain. Name the authority instead of restating its value (`` [`SAMPLE_RATE`] ``, not `44100`). Measurements go in commit messages.
 - No magic numbers: one named `const`, apart from self-evident `0`/`1`/`2`, indices and test fixtures. No `unwrap()` outside tests.
-- An external claim, "best practice" included, cites a doc fetched this session or is labeled opinion.
+- An external claim, "best practice" included, cites a doc fetched this session or is labeled opinion, and a design change first looks up the field's standard design for its seam.
 - Check a review finding's premise before accepting it. A refuted finding produces a mechanism (a test, a CI gate) or nothing.
 - Docs change in the same commit as what they describe. No new doc lands unless the owner asks.

@@ -1,48 +1,40 @@
 ---
 name: procedural-lofi
 version: 1.0.0
-description: "Generate a royalty-free lofi (or rain / typing / chime / any ambient) soundtrack ENTIRELY in code — no sampled audio ships. Fingerprint a beloved reference recording, shape synthesis to the measured spectral + temporal curve, freeze one human-blessed take into constant tables, and re-synthesize at launch (loop the bed, scatter the foreground → never repeats, ~0 KB, no licensing risk). Use when adding ambient/generative audio to an app, game, terminal UI, or site, or on 'add another lofi/rain/ambient sound'. Bundles the parameter tables (LOFI-BIBLE.md) + the numpy fingerprint/synth/freeze pipeline."
+description: "Generate a lofi soundtrack ENTIRELY in code — no sampled audio ships. Fingerprint a beloved reference recording, shape synthesis to the measured spectral + temporal curve, freeze one human-blessed take into constant tables, then grow a seeded generator judged by A/B batches (~0 KB, no sample to license). Use when adding generative lofi to an app, game, terminal UI, or site, or on 'add another lofi voice'. Bundles the parameter tables (LOFI-BIBLE.md) + the numpy synth/freeze pipeline."
 ---
 
 # Procedural Lofi — build a soundtrack in code, not in a sample pack
 
-This skill is the end-to-end recipe for a lofi bed (and its sibling ambient sounds:
-rain, keystrokes, door chimes, printer, water cooler…) that is **synthesized at
-runtime from constants** — zero audio files, zero royalties, and no two minutes ever
-sound the same.
+This skill is the end-to-end recipe for a lofi soundtrack that is **synthesized at
+runtime from constants** — no audio file ships, and no two minutes sound the same.
 
-Two documents ship alongside this one:
-
-- **`reference/LOFI-BIBLE.md`** — the parameter tables. Harmony (chord grammar,
-  voice-leading, register clamps), groove (swing %, drag ms, velocity curves), per-voice
-  sound design (pad / bass / EP keys / sparkle / drums / texture / tape chain), mix
-  targets (band shares, HPF strategy, loudness), and generative lessons from prior art.
-  Every number is cited and, where it conflicts with a measurement, the measurement wins.
-- **`scripts/`** — the Python (numpy) pipeline: `analyze_*.py` (fingerprint a reference),
-  `synth_audition.py` (a runnable numpy synth that produces `.wav` auditions), and
-  `export_score.py` (freeze a good take into a constants table for the port).
-
-Read those two when you reach the step that needs them. This file is the map.
+**`reference/LOFI-BIBLE.md`** holds the parameter tables: harmony (chord grammar,
+voice-leading, register clamps), groove (swing %, drag ms, velocity curves), per-voice
+sound design (pad / bass / EP keys / sparkle / drums / texture / tape chain), mix targets
+(band shares, HPF strategy, loudness), and generative lessons from prior art. Every number
+is cited and, where it conflicts with a measurement, the measurement wins. Read it when you
+reach the step that needs it. This file is the map.
 
 ---
 
 ## The core idea (why code, not samples)
 
 A sampled lofi loop is: (a) a licensing liability, (b) heavy to bundle, and (c) audibly
-repetitive — the human brain catches a loop seam on the 3rd or 4th pass. Synthesizing it
-solves all three:
+repetitive — the brain catches a loop seam on its 3rd or 4th pass (LOFI-BIBLE's
+anti-repetition row cites the measurements). Synthesizing it solves all three:
 
-- **Legal**: *acoustic parameters are not copyrightable.* You measure a reference to get
-  target numbers (this band has 55% of the power, the centroid sits at 150 Hz, drops land
-  13 dB above the bed). You never keep or ship the reference bytes. What ships is your own
-  oscillator code hitting those numbers.
+- **Legal**: you measure a reference to get target numbers (this band has 55% of the power,
+  the centroid sits at 150 Hz) and never keep or ship its bytes; what ships is your own
+  oscillator code hitting those numbers. US copyright doesn't extend to "any idea,
+  procedure, process, system, method of operation, concept, principle, or discovery" (17
+  U.S.C. § 102(b)); that this covers measured numbers is opinion, not legal advice.
 - **Size**: a few kilobytes of constant tables + a synth function vs. megabytes of PCM.
 - **Never repeats (in practice)**, from stacked tricks: (1) every seed composes a new song
   (`compose`), and within a song the musical lanes loop in lockstep on a loop made **long
   enough** not to fatigue (the day loop doubled from 4 to 8 bars because a short looped
-  melody *was* audibly repetitive — "loop the bed" does not mean "make it short"); (2) a
-  consumer scatters genuinely-stochastic layers fresh at runtime (pixtuoid's rain drops and
-  keystrokes); (3) each song has a form (LOFI-BIBLE R11) that mutes and restores lanes over
+  melody *was* audibly repetitive — "loop the bed" does not mean "make it short"); (2)
+  each song has a form (LOFI-BIBLE R11) that mutes and restores lanes over
   its loop, and a `Performance` layers each lane's gain by `Controls::intensity` on top, which
   a consumer sets, e.g. by how busy an office is.
 
@@ -67,31 +59,28 @@ recipes in a compiled language first is the classic time sink.
 
 ### Phase 1 — Reference-fingerprint each sound
 
-For every distinct sound (the lofi bed, rain, typing, each one-shot):
+For the bed and each voice in it:
 
 1. **Get a beloved reference.** An owner-supplied reference beats a "community ideal"
    every time — build to what *they* love, not to what a forum says lofi should be.
    (`yt-dlp` / `curl` for analysis only; for an endless live stream, `yt-dlp -g` gets the
    HLS URL, then `ffmpeg -t 180` grabs a finite slice.)
-2. **Confirm the CHARACTER before deep-matching.** One sentence — "gentle rain or heavy
-   downpour?" — saves three wasted versions. On pixtuoid, three rain versions were
-   built to the wrong reference (a heavy wash) before the owner clarified they wanted
-   *gentle* rain.
-3. **Fingerprint it.** Measure **9 octave-band energies + spectral centroid + rolloff**
-   (`analyze_rain.py` / `analyze_typing.py`). For anything *rhythmic or event-bearing*
-   ALSO measure the **temporal** fingerprint — onset rate, inter-onset-interval spread,
-   per-stroke decay, and the dB level of foreground events vs. the bed
-   (`analyze_drops.py`). Spectral averages are blind to events: rain's audible *drops*
-   don't show up in an averaged spectrum at all, only in the temporal pass.
+2. **Confirm the CHARACTER before deep-matching.** One sentence — "a sleepy night or a
+   bright study session?" — saves wasted versions built to the wrong reference.
+3. **Fingerprint it.** Measure **9 octave-band energies + spectral centroid + rolloff**.
+   For anything *rhythmic or event-bearing* ALSO measure the **temporal** fingerprint —
+   onset rate, inter-onset-interval spread, per-stroke decay, and the dB level of
+   foreground events vs. the bed. Spectral averages are blind to events: a snare ghost
+   doesn't show up in an averaged spectrum at all, only in the temporal pass.
 
 ### Phase 2 — Shape synthesis to the measured curve
 
 Build your oscillators/noise-shapers and drive their parameters until a re-measurement of
 *your* output lands within a few percentage points of the reference fingerprint. The
 `LOFI-BIBLE.md` gives you the starting parameter values per voice; the fingerprint tells
-you which way to push them. Search the literature for the *physics* (Minnaert resonance
-for a water glug, inharmonic bar modes 1 : 2.76 : 5.40 for a chime, tape wow/flutter +
-head-bump for the lofi chain) but *tune to the reference*, not to the physics ideal.
+you which way to push them. Search the literature for the *physics* (inharmonic cantilever
+modes for a kalimba, tape wow/flutter + head-bump for the lofi chain) but *tune to the
+reference*, not to the physics ideal.
 
 ### Phase 3 — Human LISTEN gate → freeze the realization
 
@@ -112,17 +101,16 @@ inside a `choice()` — or the frozen table desyncs from what was auditioned.)
 
 Port the numpy synth to your runtime language reading the frozen tables. Key engineering:
 
-- **The port must be byte-identical to the audition.** Keep the ratified fingerprint/
-  checksum tests; passing them verbatim after the port is your oracle that nothing shifted.
+- **The port must keep the audition's fingerprints.** Keep the ratified fingerprint and
+  checksum tests; passing them after the port is your oracle that nothing shifted.
 - **No wall-clock reads inside the audio math.** Pass `dt` / `now` in as parameters. On
   wasm especially, `SystemTime::now()` isn't available — and a backgrounded tab that jumps
   the clock will otherwise ramp-snap your crossfades and burst-replay every queued event
   (the "stall-clock" bug). Clamp big `dt` gaps.
 - **Loop the frozen composition, scatter only the stochastic layers.** All the musical
   stems (pad/drums/keys/sparkle) tile in lockstep on one loop length — make that loop long
-  enough to not fatigue; then scatter the truly-random layers (rain drops, keystrokes) fresh
-  each frame, and let the song's form and the busy-ness mute and fade whole stems (see "Never
-  repeats" above). Tiny RAM: one copy of each stem loop.
+  enough to not fatigue, and let the song's form and the busy-ness mute and fade whole
+  stems (see "Never repeats" above). Tiny RAM: one copy of each stem loop.
 - **Keep the sub band clear.** The sub-bass register must belong to the bass alone or the
   low end turns to mud. Two ways to get there: the textbook one is to high-pass every
   non-bass stem ~140 Hz (LOFI-BIBLE §4); the cheaper one this project used is to *voice the
@@ -130,21 +118,18 @@ Port the numpy synth to your runtime language reading the frozen tables. Key eng
   register belongs to the bass lane alone) so there's nothing to filter. Either way, keep ONE
   texture stem carrying all the "medium" noise — per-stem hiss *stacks* (every musical stem
   adding a little sums to real mud); texture sits 25–35 dB below the music.
-- **Perceptual volume.** Map a user volume slider as `amplitude = user²` (loudness is
-  logarithmic). Linear volume feels "still too loud at 5%" — the classic trap.
 
 ---
 
 ## The failure catalog (bugs this method hit, so you don't)
 
-- **Reference outranks literature.** A "thock" keyboard sound built to the ASMR-community
-  ideal measured the *opposite* of the owner's clacky reference. Search for physics; tune
-  to the reference.
+- **Reference outranks literature.** Search for physics; tune to the reference: the
+  BIBLE's measured rows override its literature rows wherever they disagree.
 - **Phantom-octave measurement bug.** Fingerprints extracted from the *listening artifacts*
   (stereo wav, soft-clipped) read every frequency halved (interleaved stereo read as mono =
   2× time-stretch). **Pin spectral references on the raw float synthesis chain, never on the
   exported/played wav.**
-- **Spectral averages can't see events.** Rain drops, a snare ghost, a keystroke accent —
+- **Spectral averages can't see events.** A snare ghost, a hat accent —
   measure them *temporally* (level vs. bed, onset rate) or you'll "match" a reference and
   still be missing its soul.
 - **Head-only crossfade ≠ a seamless loop.** Fading the *start* of a loop back over its end
@@ -168,12 +153,11 @@ Port the numpy synth to your runtime language reading the frozen tables. Key eng
 1. Copy `reference/LOFI-BIBLE.md` and `scripts/` into your repo (or just read them).
 2. Install: `python3 -m venv .venv && .venv/bin/pip install numpy scipy` (+ `yt-dlp`,
    `ffmpeg` for grabbing references).
-3. Pick and *character-confirm* a reference. Fingerprint it with the matching `analyze_*.py`.
+3. Pick and *character-confirm* a reference, and fingerprint it (Phase 1).
 4. Adapt `synth_audition.py`'s voices toward the fingerprint; re-measure to convergence.
 5. Human listens once. On yes, `export_score.py` freezes the take + checksum.
-6. Port to your runtime; keep the fingerprint tests as the byte-identity oracle; synthesize
-   at launch, loop the frozen composition, scatter the stochastic layers, gate stems by
-   busy-ness.
+6. Port to your runtime; keep the fingerprint tests as the oracle; synthesize at launch,
+   loop the frozen composition, gate stems by busy-ness.
 
 (The `scripts/` are the real working prototypes from pixtuoid's Phase 0, kept as a concrete
 starting point — not a turnkey CLI; `synth_audition.py` runs standalone, and `export_score.py`
