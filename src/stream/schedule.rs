@@ -1538,7 +1538,7 @@ mod tests {
     /// platform.
     #[test]
     fn a_plain_form_plays_every_cue_where_it_did() {
-        const PLAIN_FRAMES_GOLDEN: u64 = 0x57bb_21a9_97c9_7df9;
+        const PLAIN_FRAMES_GOLDEN: u64 = 0xf96b_6294_238b_f97d;
         let mut words: Vec<u64> = Vec::new();
         for daylight in [1.0, 0.0] {
             for seed in 0..4 {

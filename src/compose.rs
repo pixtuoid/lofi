@@ -342,7 +342,8 @@ const NIGHT: Style = Style {
         progressions: &NIGHT_PROGRESSIONS,
         turnaround: false,
     },
-    bpm: Spread::between(64.0, 72.0),
+    // the slow end of LOFI-BIBLE's MEASURED tempo
+    bpm: Spread::between(68.0, 72.0),
     lead: LeadStyle {
         lo: 60,
         hi: 79,
@@ -440,6 +441,23 @@ const MAJOR_SEVENTH: u8 = 11;
 const NINTH: u8 = 2;
 const OCTAVE: u8 = 12;
 
+/// The lowest note each interval, in semitones up to a major tenth, sounds
+/// clear from as its lower note, 0 where none is set: Hoffmann's chart of low
+/// interval limits (<https://robin-hoffmann.com/dfsb/low-interval-limits/>),
+/// m2 E3 to M3 B♭2, P5 B♭1, the 6ths and 7ths F2, the 9ths and 10ths E2 to
+/// B♭1. The 9 semitones are its major 6th's: its diminished 7th sits a
+/// semitone higher.
+const INTERVAL_FLOORS: [u8; 17] = [
+    0, 52, 51, 48, 46, 46, 46, 34, 41, 41, 41, 41, 0, 40, 39, 36, 34,
+];
+
+/// Whether two voices sound muddy together: the lower one under its
+/// interval's floor in [`INTERVAL_FLOORS`].
+fn muddy(a: u8, b: u8) -> bool {
+    let (lo, hi) = (a.min(b), a.max(b));
+    (INTERVAL_FLOORS.get(usize::from(hi - lo))).is_some_and(|&floor| lo < floor)
+}
+
 /// The stages a song is composed in. Each draws from its own stream, keyed
 /// by its fixed id, so a change to one stage's draws moves no other stage's,
 /// and a stage can join, leave or move without re-rolling the rest.
@@ -484,6 +502,11 @@ impl Chord {
             root_pc: ((i16::from(self.root_pc) + i16::from(t)).rem_euclid(OCTAVE.into())) as u8,
         }
     }
+
+    /// Whether no two of the chord's voices sound muddy together.
+    fn clear(&self) -> bool {
+        (self.notes.iter()).all(|&a| self.notes.iter().all(|&b| !muddy(a, b)))
+    }
 }
 
 /// One vetted progression template, pre-voiced in C.
@@ -508,6 +531,11 @@ impl Progression {
             scale_pcs,
             chromatic: self.chromatic,
         }
+    }
+
+    /// Whether every chord of the template sounds clear.
+    fn clear(&self) -> bool {
+        self.chords.iter().all(Chord::clear)
     }
 }
 
@@ -727,9 +755,9 @@ const NIGHT_PROGRESSIONS: [Progression; 8] = [
 /// The semitones a template may move, so a song's key is drawn.
 const TRANSPOSE: RangeInclusive<i8> = -3..=2;
 
-/// Where the turnaround dominant's root sits: the octave of the templates'
-/// lowest notes.
-const DOMINANT_ROOTS_FROM: u8 = 46;
+/// Where the turnaround dominant's root sits: as low as its major 3rd sounds
+/// clear.
+const DOMINANT_ROOTS_FROM: u8 = INTERVAL_FLOORS[MAJOR_THIRD as usize];
 
 fn pick(rng: &mut NoiseStream, n: usize) -> usize {
     ((rng.unit() * n as f32) as usize).min(n.saturating_sub(1))
@@ -779,12 +807,13 @@ struct Harmony {
     bars: [Chord; GEN_LOOP_BARS],
 }
 
-/// The harmony stage: a template from the mood's grammar, in a drawn key.
+/// The harmony stage: a template from the mood's grammar, in a key drawn
+/// from those its voicings sound clear in.
 fn harmony(rng: &mut NoiseStream, style: &HarmonyStyle) -> Harmony {
     let progs = style.progressions;
     let prog = &progs[pick(rng, progs.len())];
-    let t = *TRANSPOSE.start() + pick(rng, TRANSPOSE.count()) as i8;
-    let template = prog.transposed(t);
+    let keys: Vec<i8> = TRANSPOSE.filter(|&t| prog.transposed(t).clear()).collect();
+    let template = prog.transposed(keys[pick(rng, keys.len())]);
     let bars = timeline(&template, style.turnaround);
     Harmony { template, bars }
 }
