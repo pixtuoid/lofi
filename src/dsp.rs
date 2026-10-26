@@ -568,6 +568,12 @@ mod tests {
         let _ = Band::new(10.0, 100.0, f32::NAN);
     }
 
+    #[test]
+    #[should_panic(expected = "a band's share is a fraction of the power")]
+    fn a_band_with_a_negative_share_is_refused() {
+        let _ = Band::new(100.0, 200.0, -0.1);
+    }
+
     /// The shares a loop of each length plays on average over seeds: one
     /// loop's share of a band of few bins is as random as their noise.
     #[test]
