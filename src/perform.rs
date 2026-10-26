@@ -79,7 +79,7 @@ impl Controls {
 
 /// What [`Performance::render_probed`] shows of the mix as it plays.
 pub(crate) trait Probe {
-    /// The lanes' sums, in [`Lane::ALL`](crate::synth::Lane::ALL) order,
+    /// The lanes' sums, in [`Lane::ALL`](crate::compose::Lane::ALL) order,
     /// and the plate's stereo return over a step, as they enter the mix:
     /// before [`Performance::MASTER_GAIN`] and the ceiling.
     fn step(&mut self, lanes: &[Vec<f64>; LANES], plate: &[Vec<f64>; 2]);
@@ -237,10 +237,10 @@ impl Performance {
 mod tests {
     use super::*;
     use crate::audition;
+    use crate::compose::Lane;
     use crate::compose::{Edge, Form};
     use crate::dsp::NoiseStream;
     use crate::stream::schedule::{ANTICIPATION_S, UNITY, bars_and_len};
-    use crate::synth::Lane;
 
     /// The bars' first frames of song `k` of `seed`'s run under `c` playing
     /// [`Form::plain`], and its length.

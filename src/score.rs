@@ -1,4 +1,4 @@
-//! The FROZEN musical composition. These tables ARE one owner-ratified
+//! The FROZEN musical compositions. Each take's tables ARE one owner-ratified
 //! realization's events — deterministic data, not a re-roll. The day-1 tables
 //! regenerate via `.claude/skills/procedural-lofi/scripts/export_score.py`; a
 //! regen is a NEW take and needs a fresh A/B verdict before it ships.
@@ -143,15 +143,14 @@ pub(super) fn night_loop_secs() -> f32 {
     night_beat_s() * BEATS_PER_BAR * NIGHT_LOOP_BARS as f32
 }
 
-/// Am7 – Fmaj7 – Cmaj7 – Em7, one bar each, cycled over the 8 bars.
+/// Am7 – F – Cmaj7 – Em7, one bar each, cycled over the 8 bars.
 pub(super) const NIGHT_CHORDS: [[u8; 4]; 4] = [
     [57, 60, 64, 67],
     [53, 57, 60, 65],
     [48, 52, 55, 59],
     [52, 55, 59, 62],
 ];
-/// The sub-bass floor per bar (A1 F1 C2 E1) — deliberately absent from the
-/// day track.
+/// The sub-bass floor per bar — deliberately absent from the day track.
 pub(super) const NIGHT_BASS_ROOTS: [u8; 4] = [33, 29, 36, 28];
 
 pub(super) fn night_chord_at_bar(bar: usize) -> ([u8; 4], u8) {
@@ -217,18 +216,21 @@ pub(super) const NIGHT_DRUMS: [(f32, DrumKind, f32); 39] = [
     (26.9428, DrumKind::Kick, 0.447755),
     (25.1849, DrumKind::Hat, 0.320593),
 ];
-pub(super) const NIGHT_KICK_TIMES: [f32; 16] = [
-    0.0236, 2.2367, 3.5526, 5.7660, 7.0743, 9.2961, 10.6070, 12.8277, 14.1332, 16.3608, 17.6657,
-    19.8895, 21.1983, 23.4135, 24.7274, 26.9428,
-];
+/// The night take's kicks in time order, which its texture ducks under.
+pub(super) fn night_kick_times() -> Vec<f32> {
+    let mut kicks: Vec<f32> = (NIGHT_DRUMS.iter())
+        .filter(|&&(_, kind, _)| kind == DrumKind::Kick)
+        .map(|&(at, ..)| at)
+        .collect();
+    kicks.sort_by(f32::total_cmp);
+    kicks
+}
 
 mod night_tests {
     use super::*;
 
     #[test]
     fn night_tables_match_the_frozen_v4_realization() {
-        // NIGHT_KICK_TIMES and NIGHT_DRUMS are two frozen copies of one truth:
-        // the texture's baked duck desyncs from the drums if they drift apart.
         let sum3 = |t: &[(f32, u8, f32)]| {
             t.iter()
                 .fold((0.0f64, 0u32, 0.0f64), |(a, n, v), &(aa, nn, vv)| {
@@ -246,15 +248,6 @@ mod night_tests {
             });
         assert!((da - 495.7997).abs() < 1e-3 && (dg - 14.081_426).abs() < 1e-4);
         assert_eq!(NIGHT_KEYS[0], (3.9989, 53, 0.501_036));
-        let mut kicks: Vec<f32> = NIGHT_DRUMS
-            .iter()
-            .filter(|(_, k, _)| *k == DrumKind::Kick)
-            .map(|&(a, _, _)| a)
-            .collect();
-        kicks.sort_by(f32::total_cmp);
-        let mut kt = NIGHT_KICK_TIMES.to_vec();
-        kt.sort_by(f32::total_cmp);
-        assert_eq!(kicks, kt, "NIGHT_KICK_TIMES desynced from NIGHT_DRUMS");
         // DrumKind carries the day takes' full kit, so the sleepy register is
         // TABLE content, not enum shape — it needs its own pin.
         assert!(
@@ -279,9 +272,9 @@ mod night_tests {
 // SHARED cores (pad/events/drums renderers) still produce the ratified sound.
 // Same freeze contract as night — humanization baked into the at-seconds
 // timestamps; their exporter was not kept either, and a regen needs a fresh
-// A/B verdict. Day 2 "morning": royal-road IV-V-iii-vi in C, 76 BPM, boom-bap
+// A/B verdict. Day 2 "morning": royal-road IV-V-iii-vi in C, boom-bap
 // backbeats on 2&4, a hand-written lead motif. Day 3 "golden hour": I-vi-ii-V
-// turnaround with voice-led inversions, 74 BPM, half-time.
+// turnaround with voice-led inversions, half-time.
 
 /// Every day take is 8 bars of 4/4.
 pub(super) const DAY_TAKE_LOOP_BARS: usize = 8;

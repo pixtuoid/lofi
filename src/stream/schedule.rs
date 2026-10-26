@@ -12,11 +12,12 @@ use super::rain::{self, RAIN_RAMP_BARS};
 use super::ramp::{Ramp, Shape};
 use super::{BLOCK, LANES, gain_of_db};
 use crate::Controls;
+use crate::compose::Lane;
 use crate::compose::{
     Edge, Form, GEN_LOOP_BARS, HAT_JITTER_S, Layer, Mood, Score, arrange, compose,
 };
 use crate::dsp::{NoiseStream, SAMPLE_RATE, splitmix_draw};
-use crate::synth::{CRACKLE_POPS_PER_SEC, Lane, Part, bar_onset, crackle_pop, part, samples_at};
+use crate::synth::{CRACKLE_POPS_PER_SEC, Part, bar_onset, crackle_pop, part, samples_at};
 
 /// How long before its bar line a bar latches the controls asked for: the
 /// composer's earliest anticipation, a downbeat hat's half of
@@ -688,7 +689,7 @@ impl Song {
         for (i, lane) in Lane::ALL.into_iter().enumerate() {
             let part = part(&self.score, lane);
             let voice: &dyn Fn(usize) -> f32 = match part {
-                Part::Hits(_) => &hit,
+                Part::Hits { .. } => &hit,
                 _ => &unity,
             };
             let (ring, present) = (&mut self.rings[i], self.present[i]);
@@ -701,7 +702,7 @@ impl Song {
                 present.then_some(voice),
                 self.sr,
             );
-            if matches!(part, Part::Bed) {
+            if matches!(part, Part::Bed { .. }) {
                 (self.crackle).strike(
                     self.played,
                     end.min(self.window.len),
@@ -796,7 +797,7 @@ impl Cues {
             && at < to
         {
             let voice = voice.filter(|_| !muted);
-            if voice.is_some() || matches!(part, Part::Hits(_)) {
+            if voice.is_some() || matches!(part, Part::Hits { .. }) {
                 let (snippet, gain) = part.note(i, &mut self.noise, sr);
                 if let Some(voice) = voice {
                     ring.add(at - from, &snippet, gain * voice(at));
@@ -942,7 +943,7 @@ mod tests {
             let c = Controls::default().with_daylight(daylight);
             let song = Song::new(1, 0, c, SAMPLE_RATE);
             for (lane, chain) in Lane::ALL.iter().zip(&song.chains) {
-                let room = matches!(part(&song.score, *lane), Part::Bed);
+                let room = matches!(part(&song.score, *lane), Part::Bed { .. });
                 assert_eq!(fades(*lane), !room, "{lane:?} at daylight {daylight}");
                 assert_eq!(matches!(chain, Chain::Room(_)), room, "{lane:?}'s chain");
             }

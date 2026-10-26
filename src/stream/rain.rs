@@ -2,7 +2,8 @@
 //! its drums softer. Each map is exact at rain 0, so a dry room plays as it
 //! did before rain existed.
 
-use crate::synth::{Lane, TILT_LIFT};
+use crate::compose::Lane;
+use crate::synth::TILT_LIFT;
 
 /// The tape tilt's lift on the sparkle, keys and drums at rain 1, from
 /// [`TILT_LIFT`] dry: a darker top from the shelf every tape already has.
