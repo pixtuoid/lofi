@@ -187,6 +187,43 @@ impl Window {
     }
 }
 
+/// A step's working buffers, sized to [`BLOCK`] once when the schedule is
+/// made, as CLAP's `activate` is where "the plugin may allocate memory and
+/// prepare everything needed for the process call"
+/// (<https://github.com/free-audio/clap/blob/main/include/clap/plugin.h>):
+/// songs play one step after another, so one serves them all.
+pub(crate) struct Scratch {
+    /// A lane's frames over a step, its gains, and its chain's own work.
+    lane: Vec<f64>,
+    gains: Vec<f64>,
+    work: Vec<f64>,
+    /// The music lanes' edge gain on each frame where an edge ramps.
+    edged: Vec<f64>,
+    /// The plate's send and its stereo return.
+    send: Vec<f64>,
+    wet: [Vec<f64>; 2],
+}
+
+impl Default for Scratch {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Scratch {
+    pub(crate) fn new() -> Self {
+        let block = || Vec::with_capacity(BLOCK);
+        Self {
+            lane: block(),
+            gains: block(),
+            work: block(),
+            edged: block(),
+            send: block(),
+            wet: [block(), block()],
+        }
+    }
+}
+
 /// The songs a seed composes, played one after another.
 pub(crate) struct Schedule {
     seed: u64,
@@ -201,8 +238,7 @@ pub(crate) struct Schedule {
     sums: [Vec<f64>; LANES],
     /// The plates' stereo return over the step just played.
     plates: [Vec<f64>; 2],
-    /// One song's lane over a step.
-    lane: Vec<f64>,
+    scratch: Scratch,
     /// The form every song plays instead of its own, for a test of a
     /// mechanism a form would mute.
     #[cfg(test)]
@@ -220,7 +256,7 @@ impl Schedule {
             fading: Vec::new(),
             sums: std::array::from_fn(|_| Vec::with_capacity(BLOCK)),
             plates: std::array::from_fn(|_| Vec::with_capacity(BLOCK)),
-            lane: Vec::with_capacity(BLOCK),
+            scratch: Scratch::new(),
             #[cfg(test)]
             form: None,
         }
@@ -321,7 +357,7 @@ impl Schedule {
             sum.resize(n, 0.0);
         }
         for song in self.song.iter_mut().chain(&mut self.fading) {
-            song.play(&mut self.sums, &mut self.plates, &mut self.lane, n);
+            song.play(&mut self.sums, &mut self.plates, &mut self.scratch, n);
         }
         // a song at rest adds only zeros, so dropping it moves no frame
         self.fading.retain(|song| !song.at_rest());
@@ -368,18 +404,11 @@ struct Song {
     /// long rain takes to arrive, in frames.
     automation: Automation,
     rain_ramp: usize,
-    /// The song's plate, which rings out with its tails, the send into it
-    /// over a step, and its return.
+    /// The song's plate, which rings out with its tails.
     plate: Plate,
-    send: Vec<f64>,
-    wet: [Vec<f64>; 2],
     /// The music lanes' level through the intro's edge and the outro's, each
-    /// held at 1 where its edge is plain, and their product over a step where
-    /// either ramps, computed once for every music lane.
+    /// held at 1 where its edge is plain.
     edges: [Ramp; 2],
-    edged: Vec<f64>,
-    /// A lane's gain on each frame of a step.
-    gains: Vec<f64>,
 }
 
 /// The music lanes' gain through `edges` on frame `n`.
@@ -490,16 +519,12 @@ impl Song {
             .map(|lane| Ramp::held(f64::from(resting_gain(lane, controls.intensity)), Shape::Db));
         Self {
             edges: edges(&form, &window),
-            edged: Vec::with_capacity(BLOCK),
-            gains: Vec::with_capacity(BLOCK),
             latched: 1,
             level_ramp,
             grade_ramp: samples_at(GRADE_RAMP_BARS * score.bar_s(), sr),
             automation,
             rain_ramp: samples_at(RAIN_RAMP_BARS * score.bar_s(), sr),
             plate: Plate::new(sr),
-            send: Vec::with_capacity(BLOCK),
-            wet: std::array::from_fn(|_| Vec::with_capacity(BLOCK)),
             score,
             window,
             sr,
@@ -562,23 +587,29 @@ impl Song {
 
     /// The music lanes' edge gain over the `n` frames from `from`: held, or
     /// each frame's in `edged`, computed once for every music lane.
-    fn edge_over(&mut self, from: usize, n: usize) -> Option<f64> {
+    fn edge_over(&self, from: usize, n: usize, edged: &mut Vec<f64>) -> Option<f64> {
         let (edges, end) = (self.edges, from + n);
         let flat = (edges.iter())
             .all(|edge| edge.flat_over(from, end))
             .then(|| edge_at(&edges, from));
-        self.edged.clear();
+        edged.clear();
         if flat.is_none() {
-            (self.edged).extend((from..end).map(|at| edge_at(&edges, at)));
+            edged.extend((from..end).map(|at| edge_at(&edges, at)));
         }
         flat
     }
 
     /// Lane `i`'s gain into the mix on each of `out`'s frames from `from`:
     /// its intensity's level, rain's on it and, on a music lane, the edges'
-    /// ([`edge_over`](Self::edge_over)'s over the same frames), multiplied in
-    /// that order, once where all three hold.
-    fn gain_over(&self, i: usize, from: usize, edge: Option<f64>, out: &mut [f64]) {
+    /// ([`edge_over`](Self::edge_over)'s `edge` or `edged` over the same
+    /// frames), multiplied in that order, once where all three hold.
+    fn gain_over(
+        &self,
+        i: usize,
+        from: usize,
+        (edge, edged): (Option<f64>, &[f64]),
+        out: &mut [f64],
+    ) {
         let lane = Lane::ALL[i];
         let (level, rain) = (&self.levels[i], self.automation.rain());
         let wet = (rain.end() <= from).then(|| rain::level(lane, rain.to()));
@@ -588,7 +619,7 @@ impl Song {
             _ => {
                 for (k, (gain, at)) in out.iter_mut().zip(from..).enumerate() {
                     let wet = wet.unwrap_or_else(|| rain::level(lane, rain.at(at)));
-                    let edge = edge.unwrap_or_else(|| self.edged[k]);
+                    let edge = edge.unwrap_or_else(|| edged[k]);
                     *gain = level.at(at) * wet * edge;
                 }
             }
@@ -601,29 +632,35 @@ impl Song {
     #[cfg(test)]
     fn gain(&self, i: usize, n: usize) -> f64 {
         let mut gain = [0.0];
-        self.gain_over(i, n, Some(edge_at(&self.edges, n)), &mut gain);
+        self.gain_over(i, n, (Some(edge_at(&self.edges, n)), &[]), &mut gain);
         gain[0]
     }
 
     /// Strikes each note whose onset falls in the next `n` frames, then adds
     /// those frames of each lane, through its chain and at its gain, into
-    /// `sums`.
+    /// `sums`, working in `scratch`.
     fn play(
         &mut self,
         sums: &mut [Vec<f64>; LANES],
         plates: &mut [Vec<f64>; 2],
-        buf: &mut Vec<f64>,
+        scratch: &mut Scratch,
         n: usize,
     ) {
-        // taken while the song reads its gains into it, so no step allocates
-        let mut gains = std::mem::take(&mut self.gains);
+        let Scratch {
+            lane: buf,
+            gains,
+            work,
+            edged,
+            send: sent,
+            wet,
+        } = scratch;
         let end = self.played + n;
-        self.send.clear();
-        self.send.resize(n, 0.0);
+        sent.clear();
+        sent.resize(n, 0.0);
         let rain = *self.automation.rain();
         let hit = |at: usize| rain::hit(rain.at(at));
         let unity = |_: usize| 1.0;
-        let edge = self.edge_over(self.played, n);
+        let edge = self.edge_over(self.played, n, edged);
         for (i, lane) in Lane::ALL.into_iter().enumerate() {
             let part = part(&self.score, lane);
             let voice: &dyn Fn(usize) -> f32 = match part {
@@ -651,10 +688,10 @@ impl Song {
             }
             buf.resize(n, 0.0);
             ring.take(buf);
-            self.chains[i].process(buf, self.played, &self.automation, &mut cues.noise);
+            (self.chains[i]).process(buf, self.played, &self.automation, &mut cues.noise, work);
             // the lane at its gain, once: what both its sum and its send hear
             gains.resize(n, 0.0);
-            self.gain_over(i, self.played, edge, &mut gains);
+            self.gain_over(i, self.played, (edge, edged), gains);
             for (x, gain) in buf.iter_mut().zip(gains.iter()) {
                 *x *= gain;
             }
@@ -662,14 +699,13 @@ impl Song {
                 *s += x;
             }
             if let Some(send) = plate::send(lane) {
-                for (s, x) in self.send.iter_mut().zip(buf.iter()) {
+                for (s, x) in sent.iter_mut().zip(buf.iter()) {
                     *s += send * x;
                 }
             }
         }
-        self.gains = gains;
-        self.plate.process(&self.send, &mut self.wet);
-        for (sum, wet) in plates.iter_mut().zip(&self.wet) {
+        self.plate.process(sent, wet);
+        for (sum, wet) in plates.iter_mut().zip(wet.iter()) {
             for (s, x) in sum.iter_mut().zip(wet) {
                 *s += x;
             }
@@ -1015,7 +1051,7 @@ mod tests {
             )
         });
         let to = empty.window.bars[bars];
-        let (mut sums, mut buf) = (std::array::from_fn(|_| Vec::new()), Vec::new());
+        let (mut sums, mut buf) = (std::array::from_fn(|_| Vec::new()), Scratch::new());
         for song in [&mut empty, &mut moderate] {
             while song.played < to {
                 song.play(
@@ -1184,7 +1220,7 @@ mod tests {
         let seed = 6;
         let [mut dry, mut wet] = [0.0, 1.0]
             .map(|rain| plain_song(seed, 0, Controls::default().with_rain(rain), SAMPLE_RATE));
-        let (mut sums, mut buf) = (std::array::from_fn(|_| Vec::new()), Vec::new());
+        let (mut sums, mut buf) = (std::array::from_fn(|_| Vec::new()), Scratch::new());
         for song in [&mut dry, &mut wet] {
             song.play(&mut sums, &mut [Vec::new(), Vec::new()], &mut buf, BLOCK);
         }
@@ -1393,7 +1429,7 @@ mod tests {
         let mut first = Song::new(seed, 0, c, sr).at_levels(levels[0]);
         let mut second = Song::new(seed, 1, c, sr).at_levels(levels[1]);
         spans_a_form(&[song_form(seed, 0, c), song_form(seed, 1, c)]).unwrap();
-        let mut buf = Vec::new();
+        let mut buf = Scratch::new();
         // through song 1's first loop, past every tail of song 0
         let span = first.window.len + samples_at(second.score.loop_secs(), sr);
         let mut at = 0;
@@ -1450,7 +1486,7 @@ mod tests {
         let mut song = plain_song(4, 0, night, sr).at_levels(UNITY);
         let loop_len = samples_at(song.score.loop_secs(), sr);
         let texture = Lane::ALL.iter().position(|&l| l == Lane::Texture).unwrap();
-        let (mut bed, mut buf) = (Vec::with_capacity(loop_len), Vec::new());
+        let (mut bed, mut buf) = (Vec::with_capacity(loop_len), Scratch::new());
         while bed.len() < loop_len {
             let n = BLOCK.min(loop_len - bed.len());
             let mut sums: [Vec<f64>; LANES] = std::array::from_fn(|_| vec![0.0; n]);

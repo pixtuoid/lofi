@@ -9,11 +9,11 @@ use std::ops::Range;
 
 use super::biquad::{Cascade, Lowpass, butter_lowpass, cookbook_bandpass};
 use super::delay::DelayLine;
+use super::gain_of_db;
 use super::hiss::Hiss;
 use super::onepole::Tilt;
 use super::rain;
 use super::ramp::{Ramp, Shape};
-use super::{BLOCK, gain_of_db};
 use crate::Controls;
 use crate::compose::Mood;
 use crate::dsp::NoiseStream;
@@ -157,17 +157,19 @@ impl Chain {
     }
 
     /// Plays the lane's frames from song frame `from` in place, under
-    /// `automation`; the texture draws its hiss from `noise`.
+    /// `automation`, working in `work`; the texture draws its hiss from
+    /// `noise`.
     pub(crate) fn process(
         &mut self,
         buf: &mut [f64],
         from: usize,
         automation: &Automation,
         noise: &mut NoiseStream,
+        work: &mut Vec<f64>,
     ) {
         match self {
-            Self::Tape(tape) => tape.process(buf, from, automation),
-            Self::Room(room) => room.process(buf, from, noise),
+            Self::Tape(tape) => tape.process(buf, from, automation, work),
+            Self::Room(room) => room.process(buf, from, noise, work),
         }
     }
 
@@ -437,8 +439,6 @@ pub(crate) struct Tape {
     /// of now, so a causal line reads that late, and the tape lags by it.
     reach: f64,
     bump: Cascade,
-    /// The bump's band over a step.
-    band: Vec<f64>,
     rolloff: Lowpass,
     tilt: Tilt,
     sr: u32,
@@ -473,7 +473,6 @@ impl Tape {
             warps,
             reach,
             bump: cookbook_bandpass(HEAD_BUMP_HZ.0, HEAD_BUMP_HZ.1, sr),
-            band: Vec::with_capacity(BLOCK),
             rolloff: butter_lowpass(ROLLOFF_HZ, ORDER, sr),
             tilt: Tilt::new(TILT_HZ, f64::from(TILT_LIFT), sr),
             sr,
@@ -489,8 +488,15 @@ impl Tape {
         }
     }
 
-    /// Plays `buf`, song frames from `from` on, under `automation`.
-    fn process(&mut self, buf: &mut [f64], from: usize, automation: &Automation) {
+    /// Plays `buf`, song frames from `from` on, under `automation`, its head
+    /// bump's band in `band`.
+    fn process(
+        &mut self,
+        buf: &mut [f64],
+        from: usize,
+        automation: &Automation,
+        band: &mut Vec<f64>,
+    ) {
         let [gain_in, gain_out] = self.gains;
         let len = buf.len();
         let sweep = automation.sweep.as_ref();
@@ -516,10 +522,10 @@ impl Tape {
             let (_, drive) = self.own.at(n, automation);
             saturate(&mut buf[range], drive);
         }
-        self.band.clear();
-        self.band.extend_from_slice(buf);
-        self.bump.process(&mut self.band);
-        for (x, b) in buf.iter_mut().zip(&self.band) {
+        band.clear();
+        band.extend_from_slice(buf);
+        self.bump.process(band);
+        for (x, b) in buf.iter_mut().zip(band.iter()) {
             *x += f64::from(HEAD_BUMP_MIX) * b;
         }
         self.rolloff.process(buf);
@@ -562,8 +568,6 @@ impl Tape {
 #[derive(Debug)]
 pub(crate) struct Room {
     hiss: Hiss,
-    /// The hiss over a step.
-    hissed: Vec<f64>,
     gains: [f64; 2],
     /// The kick onsets the bed ducks under, in order.
     kicks: Vec<usize>,
@@ -583,7 +587,6 @@ impl Room {
     fn new(len: usize, kicks: &[usize], gains: [f64; 2], sr: u32) -> Self {
         Self {
             hiss: Hiss::new(HISS_HZ, sr),
-            hissed: Vec::with_capacity(BLOCK),
             gains,
             kicks: kicks.to_vec(),
             ducking: 0,
@@ -602,17 +605,23 @@ impl Room {
     }
 
     /// Plays the bed over `buf`, song frames from `from` on, which holds the
-    /// lane's crackle, its hiss drawn from `noise`.
-    fn process(&mut self, buf: &mut [f64], from: usize, noise: &mut NoiseStream) {
+    /// lane's crackle, its hiss drawn from `noise` into `hissed`.
+    fn process(
+        &mut self,
+        buf: &mut [f64],
+        from: usize,
+        noise: &mut NoiseStream,
+        hissed: &mut Vec<f64>,
+    ) {
         let [gain_in, gain_out] = self.gains;
         let end = self.end();
         let bed = end.saturating_sub(from).min(buf.len());
-        self.hissed.clear();
-        self.hissed.resize(buf.len(), 0.0);
-        self.hiss.fill(&mut self.hissed[..bed], noise);
+        hissed.clear();
+        hissed.resize(buf.len(), 0.0);
+        self.hiss.fill(&mut hissed[..bed], noise);
         for (i, n) in (from..from + buf.len()).enumerate() {
             buf[i] = if n < end {
-                let sum = self.hissed[i] * f64::from(HISS_LEVEL) + self.hum(n) + buf[i];
+                let sum = hissed[i] * f64::from(HISS_LEVEL) + self.hum(n) + buf[i];
                 sum * self.crossfade_gain(n) * gain_in * self.duck(n)
             } else {
                 0.0
@@ -676,6 +685,7 @@ mod tests {
     use crate::Controls;
     use crate::compose::{DrumKind, spans_a_form};
     use crate::dsp::{SAMPLE_RATE, band_energy_share};
+    use crate::stream::BLOCK;
     use crate::stream::schedule::{Schedule, UNITY, song_form};
     use crate::synth::{WOW, part};
 
@@ -719,7 +729,8 @@ mod tests {
             }
             let automation = Automation::new(controls(mood), None);
             let mut chain = Chain::new(mood, Lane::Drums, &part, drums.len(), &[], &automation, sr);
-            chain.process(&mut drums, 0, &automation, &mut NoiseStream::new(0));
+            let (mut noise, mut work) = (NoiseStream::new(0), Vec::new());
+            chain.process(&mut drums, 0, &automation, &mut noise, &mut work);
             // from rest, a causal chain is exactly silent until its input
             let first = drums.iter().position(|&v| v != 0.0);
             if first.is_none_or(|f| f < onset) {
@@ -734,11 +745,12 @@ mod tests {
         tape: Tape,
         automation: Automation,
         at: usize,
+        work: Vec<f64>,
     }
 
     impl Playing {
         fn process(&mut self, buf: &mut [f64]) {
-            self.tape.process(buf, self.at, &self.automation);
+            (self.tape).process(buf, self.at, &self.automation, &mut self.work);
             self.at += buf.len();
         }
 
@@ -771,6 +783,7 @@ mod tests {
                 tape,
                 automation,
                 at: 0,
+                work: Vec::new(),
             },
             Chain::Room(_) => panic!("{lane:?} plays through a room"),
         }
@@ -1009,7 +1022,7 @@ mod tests {
             let automation = Automation::new(Controls::default(), None);
             let mut tape = Tape::new(own, None, false, [1.0, 1.0], &automation, sr);
             let mut buf: Vec<f64> = input.iter().map(|&v| f64::from(v)).collect();
-            tape.process(&mut buf, 0, &automation);
+            tape.process(&mut buf, 0, &automation, &mut Vec::new());
             buf.iter().map(|&v| v as f32).collect()
         };
         let n = samples_at(2.0, sr);
