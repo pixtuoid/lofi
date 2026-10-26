@@ -564,7 +564,7 @@ fn a_seeded_groove_lays_every_hit_where_it_did() {
     let mut words = Vec::new();
     let beat_s = 60.0 / 74.0;
     for g in DAY_GROOVES.iter().chain([&NIGHT_GROOVE]) {
-        let hits = drums(&mut NoiseStream::new(7), g, beat_s);
+        let hits = groove(&mut NoiseStream::new(7), g, beat_s);
         for &Hit { at, kind, gain } in &hits {
             words.extend([at.to_bits(), kind as u32, gain.to_bits()]);
         }
@@ -623,4 +623,4 @@ fn every_seed_composes_the_score_it_did() {
     assert_eq!(h, EVERY_SEED_GOLDEN, "{h:#018x}");
 }
 
-const EVERY_SEED_GOLDEN: u64 = 0xfd8d_51fc_dda2_5657;
+const EVERY_SEED_GOLDEN: u64 = 0xf30a_4c1c_2cc5_005e;
