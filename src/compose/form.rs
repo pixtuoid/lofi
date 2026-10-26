@@ -715,6 +715,7 @@ mod tests {
             )
         };
         let n = FORMS as usize;
+        let at_least = |k: f32| share(counts.iter().filter(|&&c| c >= k).count(), n);
         let checks = [
             ("median song s", median(songs), 147.0, 212.0),
             ("intro share", share(intros, n), 0.9, 1.0),
@@ -723,18 +724,9 @@ mod tests {
             ("drum-drop share", share(drum, n), 0.5, 0.7),
             ("median first-drop position", median(first), 0.38, 0.56),
             ("bass-drop share", share(bass, n), 0.64, 0.84),
-            (
-                "drum drops per song, P75",
-                percentile(counts.clone(), 0.75),
-                2.0,
-                3.0,
-            ),
-            (
-                "drum drops per song, P90",
-                percentile(counts, 0.9),
-                3.0,
-                3.0,
-            ),
+            // shares, not order statistics, which sit on their bin edges
+            ("share with 2+ drum drops", at_least(2.0), 0.18, 0.36),
+            ("share with 3+ drum drops", at_least(3.0), 0.06, 0.18),
             ("1-bar share of drum drops", bars(1), 0.3, 0.5),
             ("3-bar share of drum drops", bars(3), 0.08, 0.25),
             ("share with a 4+ bar drum drop", share(long, n), 0.15, 0.35),
