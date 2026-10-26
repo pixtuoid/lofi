@@ -266,6 +266,19 @@ mod tests {
         audition::spans_a_form(&forms).unwrap();
     }
 
+    /// The first seed whose `songs` span a form: a fixture chosen by the
+    /// property its proof needs, so a recomposition re-picks it.
+    fn spanning_seed(songs: impl Fn(u64) -> Vec<(u64, u64, Controls)>) -> u64 {
+        (0..64)
+            .find(|&seed| {
+                let forms: Vec<Form> = (songs(seed).into_iter())
+                    .map(|(seed, k, c)| audition::song_form(seed, k, c))
+                    .collect();
+                audition::spans_a_form(&forms).is_ok()
+            })
+            .expect("a seed's songs span a form")
+    }
+
     fn night() -> Controls {
         Controls::default().with_daylight(0.0)
     }
@@ -584,7 +597,6 @@ mod tests {
 
     #[test]
     fn render_plays_the_same_frames_however_the_calls_chunk_them() {
-        let seed = 3;
         let busy = Controls::default().with_intensity(1.0);
         // rain asked mid-song, so its phrase-long ramps cross a seam
         let order = [
@@ -592,13 +604,13 @@ mod tests {
             night().with_rain(1.0),
             busy.with_rain(0.5),
         ];
+        let seed = spanning_seed(|seed| [0, 1, 2].map(|k| (seed, k, order[k as usize])).to_vec());
         let lens = [0, 1, 2].map(|k| audition::song_len(seed, k, order[k as usize]));
         let bounds = [lens[0], lens[0] + lens[1]];
         // each song asks for the next one's controls halfway through
         let asks = [(lens[0] / 2, order[1]), (bounds[0] + lens[1] / 2, order[2])];
         // through song 2's first loop, past every tail of song 1
         let span = bounds[1] + loop_frames(seed, 2, order[2]);
-        assert_spans_a_form(&[0, 1, 2].map(|k| (seed, k, order[k as usize])));
         let whole = play(seed, order[0], &asks, &[], span);
         assert!(
             [0, bounds[0], bounds[1]]
@@ -742,7 +754,14 @@ mod tests {
 
     #[test]
     fn a_song_plays_the_same_reached_by_playback_or_alone() {
-        let (seed, c) = (5, Controls::default());
+        let c = Controls::default();
+        let seed = spanning_seed(|seed| {
+            vec![
+                (seed, 0, night().with_intensity(0.0)),
+                (seed, 1, c.with_intensity(1.0)),
+                (seed, 2, c),
+            ]
+        });
         // songs before it at other controls, which it must not remember
         let mut playing = Performance::new(seed, night().with_intensity(0.0));
         playing.finish_song();
@@ -752,11 +771,6 @@ mod tests {
         let reached = playing.finish_song();
         let alone = audition::song(seed, 2, c, &[]);
         assert!(audible(&alone));
-        assert_spans_a_form(&[
-            (seed, 0, night().with_intensity(0.0)),
-            (seed, 1, c.with_intensity(1.0)),
-            (seed, 2, c),
-        ]);
         assert_eq!(reached.len(), alone.len());
         let first_loop = loop_frames(seed, 2, c);
         assert!(
@@ -821,19 +835,20 @@ mod tests {
             night().with_intensity(0.0),
             Controls::default().with_intensity(1.0),
         ];
-        // a run whose ten minutes fade or filter somewhere, as most seeds' do
-        let seed = 2;
         let ten = 10 * 60 * u64::from(SAMPLE_RATE);
         // as many songs as start inside ten minutes at their own lengths
-        let (mut want, mut start) = (0, 0);
-        while start < ten {
-            start += audition::song_len(seed, want, asks[want as usize % asks.len()]) as u64;
-            want += 1;
-        }
-        let songs: Vec<_> = (0..want)
-            .map(|k| (seed, k, asks[k as usize % asks.len()]))
-            .collect();
-        assert_spans_a_form(&songs);
+        let starting = |seed| {
+            let (mut songs, mut start) = (Vec::new(), 0);
+            while start < ten {
+                let k = songs.len() as u64;
+                let c = asks[k as usize % asks.len()];
+                start += audition::song_len(seed, k, c) as u64;
+                songs.push((seed, k, c));
+            }
+            songs
+        };
+        let seed = spanning_seed(starting);
+        let want = starting(seed).len() as u64;
         let mut p = Performance::new(seed, asks[0]);
         let mut songs = 0;
         while p.position() < ten {
@@ -1000,14 +1015,15 @@ mod tests {
 
     #[test]
     fn a_song_plays_its_timeline_the_same_reached_by_playback_or_alone() {
-        let (seed, c) = (5, Controls::default());
+        let c = Controls::default();
+        let into = night().with_intensity(0.2).with_rain(1.0);
+        let seed = spanning_seed(|seed| vec![(seed, 0, c), (seed, 1, into)]);
         let k0 = audition::bar_frames(seed, 0, c);
         let anticipation = crate::synth::samples_at(ANTICIPATION_S, SAMPLE_RATE);
         let boundary = audition::song_len(seed, 0, c);
         // asked at song 0's last latch, so its last bar plays `into` and song
         // 1 starts under it, while song 0's phrase of rain still ramps
         let last = k0[k0.len() - 1] - anticipation;
-        let into = night().with_intensity(0.2).with_rain(1.0);
         let mut playing = Performance::new(seed, c);
         next(&mut playing, last);
         playing.set_controls(into);
@@ -1025,7 +1041,6 @@ mod tests {
         }
         reached.extend(playing.finish_song());
         let alone = audition::song(seed, 1, into, &calls);
-        assert_spans_a_form(&[(seed, 0, c), (seed, 1, into)]);
         assert_eq!(reached.len(), alone.len());
         let first_loop = loop_frames(seed, 1, into);
         assert!(

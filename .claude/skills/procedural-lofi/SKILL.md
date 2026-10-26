@@ -135,9 +135,9 @@ Port the numpy synth to your runtime language reading the frozen tables. Key eng
 - **Head-only crossfade ≠ a seamless loop.** Fading the *start* of a loop back over its end
   leaves the wrap audible. A real seamless loop synthesizes a genuine *continuation* past the
   loop point and blends that in.
-- **Two frozen copies of one truth desync silently.** If a kick-times table duplicates the
-  drum table's kicks, add an equality test or a later edit to one drifts from the other with
-  no error.
+- **Two frozen copies of one truth desync silently.** Derive the copy from its source, as the
+  night bed's duck list reads the drums' kicks, or a later edit to one drifts from the other
+  with no error.
 - **Control plane off the data plane.** A mute/volume press must not ride the same queue as
   audio frames — a synthesis burst can saturate the queue and eat the keypress, so the beds
   fade in *unmuted* while the UI says muted. Put mute/volume on an atomic flag the audio
@@ -189,9 +189,8 @@ constraint and re-batch), and every taste axis is a data table or named const wi
 1. Write the voice as a pure note fn in `synth.rs`, a `NoteVoice` rendered at the rate it
    is given, physics-first then tuned by ear/fingerprint (Phase 1-2 of this skill still apply).
 2. Add a `compose::LeadVoice` variant + its arm in `LeadVoice::voice` (the ONE dispatch).
-3. Give it a weight in its mood's `Style::voices` — the voice draw is deliberately LAST in
-   the seed stream so new voices never redraw an already-blessed seed's notes (one banded
-   unit-draw per mood — re-weight the bands rather than adding draws).
+3. Give it a weight in its mood's `Style::voices` — the voice draws from `Stage::LeadVoice`'s
+   stream, so a new voice never recomposes a seed's notes.
 4. Extend the distribution property test; run the compose suite (fast — no synthesis).
 5. Render the batch the judge scores (`cargo run --release --example lofi_audition -- --batch
    judge`; `--engine whole --solo sparkle` isolates a lane) → `ab_judge.py` gates it → tighten
