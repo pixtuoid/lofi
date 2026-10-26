@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """The remote judge's local logic's tests: `python3 -I test_judge_local.py`, with no venv."""
 
+import re
 import sys
 import tempfile
 import unittest
@@ -92,6 +93,16 @@ class Publishing(unittest.TestCase):
         self.assertEqual(got["outcome"], "PASS")
         self.assertEqual(got["table"], "take dCE\nday_empty_000 +0.01\nnearest ref#0")
         self.assertEqual(got["record"], {"judges": {"fad": {"lufs": -20.0}}, "fad_calibration": [0.2, 0.4], "overall": "PASS"})
+
+
+class RustCopies(unittest.TestCase):
+    def test_the_warm_up_take_is_at_lofis_rate(self):
+        root = Path(__file__).resolve().parents[4]
+        rust = re.search(r"pub const SAMPLE_RATE: u32 = ([\d_]+);", (root / "src" / "dsp.rs").read_text())
+        py = re.search(r"^WARMUP_RATE = (\d+)$", (root / ".claude/skills/procedural-lofi/judge/modal_judge.py").read_text(), re.M)
+        self.assertIsNotNone(rust, "no SAMPLE_RATE in src/dsp.rs")
+        self.assertIsNotNone(py, "no WARMUP_RATE in modal_judge.py")
+        self.assertEqual(int(py[1]), int(rust[1].replace("_", "")))
 
 
 if __name__ == "__main__":

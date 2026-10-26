@@ -12,16 +12,10 @@ Usage: $J/bin/python ab_judge.py DIR --refs REFS [--fad-cache CACHE] [--score-id
   CACHE holds the corpus's FAD statistics, built on a miss.
   --score-identical scores byte-identical pairs too: the proof that they tie.
 
-The verdict is the controller's proposal (opinion), `verdict.judged`: per
-group, a take's mood or sweep, an exact one-sided sign test on each judge,
-ties dropped, that cand scores LOWER than base on its headline score, or sits
-FARTHER from the corpus by per-song FAD. Byte-identical pairs are never
-scored, and a group with only those is UNCHANGED. The batch takes its worst
-group's verdict, a detected regression first, and exits non-zero on
-REGRESSION or INSUFFICIENT. The owner's blind listen, when given, overrides
-this verdict, and a group listed SPLIT, one judge significantly for cand and
-another against, calls for it. Every third-octave band whose difference
-passes TO_EXPLAIN_DB is listed TO-EXPLAIN: a PR names its cause, but it fails
+The verdict is the controller's proposal (opinion), `verdict.judged`'s, and
+this exits non-zero on REGRESSION or INSUFFICIENT. The owner's blind listen,
+when given, overrides it. Every third-octave band whose difference passes
+TO_EXPLAIN_DB is listed TO-EXPLAIN: a PR names its cause, but it fails
 nothing.
 
 A score is a guard against regression from a base batch to a candidate,

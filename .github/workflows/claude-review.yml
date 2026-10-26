@@ -3,6 +3,10 @@ on:
   pull_request:
     types: [opened, synchronize, ready_for_review, reopened]
 permissions: {}
+# a review of a commit the PR has moved past only posts stale findings
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 jobs:
   claude-review:
     uses: pixtuoid/.github/.github/workflows/claude-review.yml@main

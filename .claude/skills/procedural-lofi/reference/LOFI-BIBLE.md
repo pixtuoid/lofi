@@ -36,7 +36,7 @@ Each rule → the parameter it maps to here.
 
 ## 3. SOUND targets per voice
 
-**Pad** — extensions/upper-shell register (MIDI 60–72+). Slow attack / long release AR; dual-voice detune **±5–10 cents**. Brickwall LPF ~2–4 kHz; HPF ~140 Hz. Primary sidechain-pump target. Loop length incommensurate with all other stems (see §4) (declined here: the musical lanes phase-lock — AGENTS.md Invariants). [M fractal forum detune; SD modeaudio.com]
+**Pad** — extensions/upper-shell register (MIDI 60–72+). Slow attack / long release AR; dual-voice detune **±5–10 cents**. Brickwall LPF ~2–4 kHz; HPF ~140 Hz. Primary sidechain-pump target. Loop length incommensurate with all other stems (see §4) (declined here: the musical lanes phase-lock — `generated_beds_are_finite_phase_locked_and_in_the_sound_world`). [M fractal forum detune; SD modeaudio.com]
 
 **Bass** — sine + tanh saturation for audible harmonics (the sub carries power, harmonics carry audibility — matches our <62 Hz fingerprint). Root-only below MIDI 48; line restricted to root/5th/leading-tone. Dead center, mono. Soft attack; ducked by kick (kick wins the transient, sub swells behind). [SD edmprod.com/lofi-hip-hop/; G devpost lofigen; M joeysturgistones.com]
 
@@ -60,7 +60,7 @@ Each rule → the parameter it maps to here.
 - **Bus order & glue**: corrective EQ → **glue comp (1.5–2:1, attack 10–30 ms, release ~150 ms, ≤2 dB GR, total chain <4 dB)** → tape chain (sat/wow/flutter) → limiter. [M audiospectra.net]
 - **Loudness**: **−16 to −14 LUFS integrated, ≤−1 dBTP**, no heavy limiting — an office bed plays under speech and quieter/more dynamic than a release master; preserved dynamics are themselves anti-fatigue. [M veniamastering.studio, widenisland.com]
 - **Stereo**: sub + kick dead center; **side-channel HPF ~150 Hz @ 6 dB/oct** (vinyl elliptical EQ — a slope, not a brickwall); width comes from the top: stereo-opposed wow/flutter, 180° EP autopan, slightly-panned duplicate noise beds. [SD gearspace mastering thread, flotownmastering.com]
-- **Anti-repetition**: stem loop lengths mutually **incommensurate** (Eno's 23½ s / 25⅞ s / 29 15/16 s model — never re-align) (declined here: the musical lanes phase-lock — AGENTS.md Invariants); texture layers get ±2% pitch / ±3 dB per-instance variation; QA gate = **listen ≥4 repetitions** (the brain catches the seam on rep 3–4). [M reverbmachine.com, soundcy.com, audioedit.io]
+- **Anti-repetition**: stem loop lengths mutually **incommensurate** (Eno's 23½ s / 25⅞ s / 29 15/16 s model — never re-align) (declined here: the musical lanes phase-lock — `generated_beds_are_finite_phase_locked_and_in_the_sound_world`); texture layers get ±2% pitch / ±3 dB per-instance variation; QA gate = **listen ≥4 repetitions** (the brain catches the seam on rep 3–4). [M reverbmachine.com, soundcy.com, audioedit.io]
 
 ## 5. GENERATIVE lessons (prior art)
 
@@ -73,4 +73,4 @@ Each rule → the parameter it maps to here.
 
 ---
 
-**Deltas vs the engine at the cut**: done — (1) head bump at 60–120 Hz (`lofi_post`), (2) differential swing + kick drag, (4) velocity-keyed EP 2nd harmonic (`ep_pluck_vel`); partial — (5) the night texture ducks off the kick; declined — (3) incommensurate loops (the musical lanes phase-lock by design, AGENTS.md Invariants; only the day texture runs free) and (7)'s 140 Hz HPF (stems are voiced out of the sub register instead, SKILL.md Phase 4); open — (6) glue comp.
+**Deltas vs the engine at the cut**: done — (1) head bump at 60–120 Hz (`lofi_post`), (2) differential swing + kick drag, (4) velocity-keyed EP 2nd harmonic (`ep_pluck_vel`); partial — (5) the night texture ducks off the kick; declined — (3) incommensurate loops (the musical lanes phase-lock by design, `generated_beds_are_finite_phase_locked_and_in_the_sound_world`; only the day texture runs free) and (7)'s 140 Hz HPF (stems are voiced out of the sub register instead, SKILL.md Phase 4); open — (6) glue comp.

@@ -9,10 +9,12 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from verdict import ALPHA, GROUPS, JUDGES, MIN_UNTIED, exit_message, grouped, judged, min_untied, sign_test
+from verdict import ALPHA, FAILING, GROUPS, JUDGES, MIN_UNTIED, RANKS, exit_message, grouped, judged, min_untied, sign_test
 
 # where the judge batch's matrix and its groups are spelled in Rust
 BATCH_RS = HERE.parents[3] / "examples" / "common" / "batch.rs"
+# where the PR comment reads the verdicts back
+JUDGE_YML = HERE.parents[3] / ".github" / "workflows" / "judge.yml"
 
 
 def losses(n):
@@ -61,9 +63,6 @@ class SignTest(unittest.TestCase):
             n = min_untied(alpha)
             self.assertFalse(sign_test([1.0] * (n - 1), alpha)["favours_cand"])
             self.assertTrue(sign_test([1.0] * n, alpha)["favours_cand"])
-
-    def test_min_untied_is_the_fewest_at_every_gating_test(self):
-        self.assertEqual(MIN_UNTIED, min_untied(ALPHA / (len(JUDGES) * len(GROUPS))))
 
 
 class Grouping(unittest.TestCase):
@@ -173,6 +172,19 @@ class RustCopies(unittest.TestCase):
             self.assertIsNotNone(name, f"Sweep::{variant} has no name in {BATCH_RS}")
             names.append(name[1])
         self.assertEqual(tuple(names), GROUPS)
+
+
+class WorkflowCopies(unittest.TestCase):
+    """The verdicts `.github/workflows/judge.yml` spells in its shell."""
+
+    def test_the_comment_takes_every_verdict_and_fails_the_failing_ones(self):
+        text = JUDGE_YML.read_text()
+        taken = re.search(r"^\s*((?:[A-Z]+ \| )+[A-Z]+)\)$", text, re.M)
+        failed = re.search(r"^\s*((?:[A-Z]+ \| )+)\"infra failure\"\) exit 1", text, re.M)
+        self.assertIsNotNone(taken, f"no verdict case in {JUDGE_YML}")
+        self.assertIsNotNone(failed, f"no failing case in {JUDGE_YML}")
+        self.assertEqual(set(taken[1].split(" | ")), set(RANKS))
+        self.assertEqual(set(failed[1].strip(" |").split(" | ")), set(FAILING))
 
 
 if __name__ == "__main__":

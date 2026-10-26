@@ -12,6 +12,9 @@ on:
       - "examples/**"
       - Cargo.toml
       - Cargo.lock
+      # sin and exp round by toolchain, so a bump can move the render
+      - rust-toolchain.toml
+      - .github/workflows/judge.yml
 
 permissions: {}
 
@@ -34,7 +37,7 @@ jobs:
       # the PR's head: a pull_request run's own checkout is the "Last merge
       # commit on the GITHUB_REF branch"
       # (https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request)
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
@@ -101,7 +104,7 @@ jobs:
       # (https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflows-in-forked-repositories),
       # so no job would read it
       - if: steps.compare.outputs.changed == 'true' && github.event.pull_request.head.repo.full_name == github.repository
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ab-batch
           path: ${{ runner.temp }}/ab-batch
@@ -113,6 +116,7 @@ jobs:
     needs: render
     if: needs.render.outputs.changed == 'true' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
+    # modal_judge.py's JUDGE_TIMEOUT_S, with room for the job's own setup
     timeout-minutes: 55
     permissions:
       contents: read
@@ -120,7 +124,7 @@ jobs:
       artifact-id: ${{ steps.upload.outputs.artifact-id }}
     steps:
       # the base branch's judge, so no file the PR wrote runs where the token is
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
@@ -134,7 +138,7 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/modal"
           "$RUNNER_TEMP/modal/bin/pip" install --quiet --require-hashes --only-binary :all: \
             -r .claude/skills/procedural-lofi/judge/modal-requirements.txt
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ab-batch
           path: ${{ runner.temp }}/ab-batch
@@ -161,11 +165,11 @@ jobs:
           code=0
           "$RUNNER_TEMP/modal/bin/modal" run .claude/skills/procedural-lofi/judge/modal_judge.py::judge \
             --batch "$RUNNER_TEMP/ab-batch" --out "$RUNNER_TEMP/verdict" || code=$?
-          # 1 is REGRESSION or INSUFFICIENT, a score `verdict` reports; anything
+          # 1 is a verdict in verdict.py's FAILING, a score `verdict` reports; anything
           # higher stopped before one
           [ "$code" -le 1 ]
       - id: upload
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: verdict
           path: ${{ runner.temp }}/verdict/verdict.json
@@ -191,7 +195,7 @@ jobs:
       pull-requests: write
     steps:
       - if: needs.judge.result == 'success'
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.judge.outputs.artifact-id }}
           path: ${{ runner.temp }}/verdict

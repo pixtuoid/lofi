@@ -5,12 +5,15 @@ import sys
 from pathlib import Path
 
 sys.dont_write_bytecode = True
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+HERE = Path(__file__).resolve().parent
+# `scripts/` sits beside `judge/` here and in the Modal image alike
+sys.path[:0] = [str(HERE), str(HERE.parent / "scripts")]
 from validate_batch import validate
+from verdict import FAILING, RANKS
 
 # a run's outcome as its exit code: a score that fails is 1, and anything
 # that isn't a score at all is 2
-EXIT_CODES = {"PASS": 0, "UNCHANGED": 0, "REGRESSION": 1, "INSUFFICIENT": 1}
+EXIT_CODES = {rank: int(rank in FAILING) for rank in RANKS}
 NOT_A_SCORE = 2
 
 

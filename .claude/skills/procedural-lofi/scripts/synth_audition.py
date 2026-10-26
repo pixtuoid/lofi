@@ -347,8 +347,8 @@ def stem_rain(dur_s=LOOP_S, stereo=False):
 
 
 def one_keystroke(r):
-    """A BRIGHT office clack matched to the owner's reference (fingerprinted with
-    analyze_typing.py): most energy in 1-4kHz, almost no low end. The ASMR-ideal
+    """A BRIGHT office clack matched to the owner's reference: most energy in
+    1-4kHz, almost no low end. The ASMR-ideal
     "thock" measured exactly opposite — the reference outranks the literature."""
     d = 0.05
     n = n_samples(d)
