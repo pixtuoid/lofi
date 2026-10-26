@@ -481,8 +481,9 @@ mod tests {
     }
 
     impl Heard {
-        /// Renders `n` frames of `p`, a step at most at a time, hearing what
-        /// its ceiling did to each.
+        /// Renders `n` frames of `p` at most [`BLOCK`] frames per call, hearing
+        /// what its ceiling did to each, so no probe holds a whole run's gains
+        /// and limited frames at once.
         fn play(&mut self, p: &mut Performance, n: usize) {
             let mut out = vec![Frame::default(); BLOCK];
             for k in (0..n).step_by(BLOCK).map(|at| BLOCK.min(n - at)) {
