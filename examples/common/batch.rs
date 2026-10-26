@@ -6,7 +6,6 @@ use std::io;
 use std::ops::Range;
 
 use pixtuoid_lofi::audition::{self, Lane, Score, TIER_INTENSITIES, lane_gain, render_lane};
-use pixtuoid_lofi::dsp::NoiseStream;
 use pixtuoid_lofi::{Controls, Frame, Performance};
 
 /// The `--mood` vocabulary paired with the daylight it plays at, so the parse
@@ -628,11 +627,11 @@ pub(crate) fn lane_gains(controls: Controls) -> [f32; Lane::ALL.len()] {
     Lane::ALL.map(|lane| lane_gain(lane, controls.intensity))
 }
 
-/// Every lane of `score` in [`Lane::ALL`] order, drawn from one rng stream as a
-/// take renders.
+/// Every lane of `score` in [`Lane::ALL`] order, each drawing its own fork of
+/// [`LANE_SEED`]'s noise, as a stream song's lanes do.
 fn render_take(score: &Score) -> [Vec<f32>; Lane::ALL.len()] {
-    let mut rng = NoiseStream::new(LANE_SEED);
-    Lane::ALL.map(|lane| render_lane(score, lane, &mut rng))
+    let mut noise = audition::lane_noise(LANE_SEED);
+    std::array::from_fn(|i| render_lane(score, Lane::ALL[i], &mut noise[i]))
 }
 
 #[cfg(test)]
@@ -640,6 +639,26 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
+
+    /// The texture draws its own fork whatever the lanes before it draw: on
+    /// one stream for every lane, its pops would follow theirs.
+    #[test]
+    fn a_takes_texture_draws_from_its_own_fork() {
+        let texture = Lane::ALL
+            .iter()
+            .position(|&lane| lane == Lane::Texture)
+            .expect("a texture lane");
+        let score = audition::song_score(0, 0, pixtuoid_lofi::Controls::default());
+        let alone = render_lane(
+            &score,
+            Lane::Texture,
+            &mut audition::lane_noise(LANE_SEED)[texture],
+        );
+        assert!(
+            render_take(&score)[texture] == alone,
+            "the take's texture drew another lane's noise"
+        );
+    }
 
     #[test]
     fn every_listed_flag_parses_and_no_other_does() {

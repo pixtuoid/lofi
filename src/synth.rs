@@ -280,15 +280,64 @@ fn snare(rng: &mut NoiseStream, sr: u32) -> Vec<f32> {
         .collect()
 }
 
-fn hat(rng: &mut NoiseStream, open: bool, sr: u32) -> Vec<f32> {
+/// Where a hat's hash starts: the bottom of the 3–6 kHz band LOFI-BIBLE.md
+/// §3 low-passes the drums into, so the hat sounds under the drums' cutoff
+/// and the tape's [`ROLLOFF_HZ`].
+const HAT_HZ: f32 = 3000.0;
+/// A hat's level under the kick and snare: 6 dB under the one that played
+/// above the chain, now that its band sounds (opinion, judged).
+const HAT_LEVEL: f32 = 0.25;
+
+/// The metallic hash an analogue hat strikes: six square waves "tuned to
+/// random intervals" across "around 200-800 Hz, though it's not that
+/// critical" (<https://docs.cherryaudio.com/misfit-audio/transistor-808-hats>),
+/// the TR-808's "six square-wave oscillators tuned enharmonically"
+/// (<https://www.soundonsound.com/techniques/practical-cymbal-synthesis>).
+/// These tunings are opinion: no two share a simple ratio.
+const HAT_SQUARES_HZ: [f32; 6] = [207.0, 293.0, 371.0, 513.0, 593.0, 769.0];
+/// The hash's gain to the level white noise had in the hat's band up to the
+/// drums' cutoff, its RMS there over 32 seeds' noise.
+const HAT_HASH_GAIN: f32 = 5.29;
+
+/// The residual PolyBLEP adds near a unit step at phase `t` in `[0, 1)`, for
+/// a phase step of `dt` a sample: a polynomial over the sample each side of
+/// the step, which cancels most of a naive waveform's aliasing
+/// (<https://metafunction.co.uk/post/all-about-digital-oscillators-part-2-blits-bleps>,
+/// after Välimäki et al. 2010).
+fn poly_blep(t: f32, dt: f32) -> f32 {
+    if t < dt {
+        let x = t / dt;
+        2.0 * x - x * x - 1.0
+    } else if t > 1.0 - dt {
+        let x = (t - 1.0) / dt;
+        x * x + 2.0 * x + 1.0
+    } else {
+        0.0
+    }
+}
+
+/// Sample `i` of a unit square wave at `hz` at `sr`, rising at phase 0 and
+/// falling at a half, each step [`poly_blep`]'d.
+fn square(hz: f32, i: usize, sr: u32) -> f32 {
+    let dt = hz / sr as f32;
+    let t = (dt * i as f32).fract();
+    let naive = if t < 0.5 { 1.0 } else { -1.0 };
+    naive + poly_blep(t, dt) - poly_blep((t + 0.5).fract(), dt)
+}
+
+fn hat(open: bool, sr: u32) -> Vec<f32> {
     let (dur, decay) = if open { (0.35, 9.0) } else { (0.06, 60.0) };
     let n = samples_at(dur, sr);
-    let white = white_noise_gain(sr);
-    let raw: Vec<f32> = (0..n).map(|_| rng.norm() * white).collect();
-    let hp = highpass(&raw, 6000.0, sr);
+    let raw: Vec<f32> = (0..n)
+        .map(|i| {
+            let sum: f32 = HAT_SQUARES_HZ.iter().map(|&hz| square(hz, i, sr)).sum();
+            sum * HAT_HASH_GAIN / HAT_SQUARES_HZ.len() as f32
+        })
+        .collect();
+    let hp = highpass(&raw, HAT_HZ, sr);
     hp.iter()
         .enumerate()
-        .map(|(i, hp)| hp * (-(i as f32 / sr as f32) * decay).exp() * 0.5)
+        .map(|(i, hp)| hp * (-(i as f32 / sr as f32) * decay).exp() * HAT_LEVEL)
         .collect()
 }
 
@@ -331,7 +380,8 @@ pub(crate) fn stem_keys() -> Vec<f32> {
 }
 
 /// The day-1 anchor's kick/snare/swung-hat groove, its hat velocities the
-/// frozen score's, through the shipped drums' core; each hit's NOISE is fresh.
+/// frozen score's, through the shipped drums' core; the kick's and snare's
+/// NOISE is fresh each hit, and a hat is the fixed metallic hash.
 #[cfg(test)]
 pub(crate) fn stem_drums(rng: &mut NoiseStream) -> Vec<f32> {
     let swing = 0.10 * beat_s();
@@ -689,13 +739,14 @@ pub(crate) fn night_sparkle() -> Vec<f32> {
     night_part(&sparkle, &mut NoiseStream::new(0))
 }
 
-/// NOISE content is fresh per call; only timing/gain are frozen.
+/// A kick's or snare's NOISE is fresh each call, drawn from `rng`; a hat
+/// draws nothing, its hash fixed.
 fn drum_hit(rng: &mut NoiseStream, kind: DrumKind, sr: u32) -> Vec<f32> {
     match kind {
         DrumKind::Kick => kick(rng, sr),
         DrumKind::Snare => snare(rng, sr),
-        DrumKind::Hat => hat(rng, false, sr),
-        DrumKind::OpenHat => hat(rng, true, sr),
+        DrumKind::Hat => hat(false, sr),
+        DrumKind::OpenHat => hat(true, sr),
     }
 }
 
@@ -1268,6 +1319,53 @@ mod tests {
                 "{name}: {got} Hz at {RATE} vs {want} Hz"
             );
         }
+    }
+
+    /// A square at 2.5 kHz folds its harmonics past Nyquist onto 1.6, 6.6 and
+    /// 11.6 kHz, each 0.9 kHz under one of its own, further than
+    /// `HALF_WIDTH_HZ`: PolyBLEP keeps them 20 dB under the naive square's
+    /// there (opinion).
+    #[test]
+    fn a_squares_aliases_stay_under_a_naive_ones() {
+        const HZ: f32 = 2500.0;
+        const ALIASES_HZ: [f32; 3] = [1600.0, 6600.0, 11600.0];
+        const HALF_WIDTH_HZ: f32 = 300.0;
+        const MARGIN_DB: f32 = 20.0;
+        let sr = SAMPLE_RATE;
+        let n = 1 << 16;
+        let blep: Vec<f32> = (0..n).map(|i| square(HZ, i, sr)).collect();
+        let naive: Vec<f32> = (0..n)
+            .map(|i| {
+                if (HZ / sr as f32 * i as f32).fract() < 0.5 {
+                    1.0
+                } else {
+                    -1.0
+                }
+            })
+            .collect();
+        let aliased = |buf: &[f32]| -> f32 {
+            (ALIASES_HZ.iter())
+                .map(|&hz| band_energy_share(buf, hz - HALF_WIDTH_HZ, hz + HALF_WIDTH_HZ))
+                .sum()
+        };
+        let under_db = 10.0 * (aliased(&naive) / aliased(&blep)).log10();
+        assert!(
+            under_db > MARGIN_DB,
+            "aliases {under_db:.1} dB under the naive square's"
+        );
+    }
+
+    /// The hat's hash spans an octave under the lowest corner the drums'
+    /// chain low-passes at: a hat that starts at the corner, as one did,
+    /// plays nothing the chain lets through.
+    #[test]
+    fn a_hat_sounds_under_the_drums_chain() {
+        let corner = DRUMS
+            .night
+            .cutoff_hz
+            .min(DRUMS.day.cutoff_hz)
+            .min(ROLLOFF_HZ);
+        assert!(2.0 * HAT_HZ <= corner, "{HAT_HZ} Hz under {corner} Hz");
     }
 
     #[test]

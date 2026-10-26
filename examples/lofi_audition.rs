@@ -34,7 +34,7 @@ use pixtuoid_lofi::audition::{TARGET_LUFS, channels, gated_lufs};
 /// scale at [`TARGET_LUFS`]: the loudest level at which every lane's solo,
 /// both moods and seeds 0–23, kept its peak under full scale, as the commit
 /// that set it records, less [`SOLO_MARGIN_DB`].
-const SOLO_TARGET_LUFS: f64 = -29.1 - SOLO_MARGIN_DB;
+const SOLO_TARGET_LUFS: f64 = -27.6 - SOLO_MARGIN_DB;
 
 /// Room for a seed past that sweep to peak higher (opinion).
 const SOLO_MARGIN_DB: f64 = 1.0;
