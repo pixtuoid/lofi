@@ -10,9 +10,6 @@
 //!   cargo build --release --example lofi_bench --target wasm32-unknown-unknown
 //!   node examples/lofi_bench.mjs target/wasm32-unknown-unknown/release/examples/lofi_bench.wasm
 
-#[path = "common/loudness.rs"]
-mod loudness;
-
 use std::hint::black_box;
 use std::ops::Range;
 use std::process::ExitCode;
@@ -22,21 +19,21 @@ use pixtuoid_lofi::dsp::SAMPLE_RATE;
 use pixtuoid_lofi::{Controls, Frame, Performance};
 
 use host::{Clock, machine, say};
-use loudness::{fold, gated_lufs};
 
 /// The span a player renders ahead in, in seconds.
 const CHUNK_S: f64 = 0.5;
 
 /// The most of a chunk's duration that rendering it may take. Opinion: it
-/// keeps a player's catch-up after its slowest chunk inside its underrun
-/// bound.
+/// keeps a player's catch-up after its slowest chunk inside the render-ahead
+/// pixtuoid's player keeps, `MUSIC_AHEAD` in
+/// crates/pixtuoid-scene/src/audio/mod.rs.
 const WORST_CHUNK_SHARE: f64 = 0.5;
 
-/// The most of one core the render may take on average: a proposal the
-/// owner hasn't ruled on, which the measured figures go to.
+/// The most of one core the render may take on average: the owner's gate
+/// ("保留 0.05 作为 gate", 2026-10-26), which the measured figures go to.
 const MEAN_RTF: f64 = 0.05;
 
-/// The seeds the slowest chunk is sought over.
+/// The seeds the slowest chunk is sought over (opinion).
 const SEEDS: Range<u64> = 0..3;
 
 /// The daylight the timeline's day song grades to: halfway from
@@ -182,9 +179,10 @@ fn play_room(buf: &mut [Frame], room: &str, controls: Controls) -> bool {
                 say(&format!("{room} room: frame {frame} plays {:?}", buf[i]));
                 return false;
             }
-            song.extend(fold(&buf[..n]));
+            song.extend_from_slice(&buf[..n]);
         }
-        songs.push(gated_lufs(&song, SAMPLE_RATE));
+        let [left, right] = audition::channels(&song);
+        songs.push(audition::gated_lufs(&[&left, &right], SAMPLE_RATE));
     }
     let played = music.position() as f64 / f64::from(SAMPLE_RATE);
     let rtf = took / played;

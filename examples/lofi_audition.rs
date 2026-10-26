@@ -15,8 +15,6 @@
 
 #[path = "common/batch.rs"]
 mod batch;
-#[path = "common/loudness.rs"]
-mod loudness;
 
 use std::f64::consts::PI;
 use std::fs::File;
@@ -29,18 +27,14 @@ use pixtuoid_lofi::Frame;
 use pixtuoid_lofi::audition::Lane;
 use pixtuoid_lofi::dsp::{NoiseStream, SAMPLE_RATE};
 
-use batch::{Batch, Engine, lane_gains, parse_choice, usage_error};
-use loudness::{fold, gated_lufs};
-
-/// Every take renders at ONE gated loudness, so a blind A/B compares takes, not
-/// gain.
-const TARGET_LUFS: f64 = -18.0;
+use batch::{Batch, Engine, lane_gains, parse_choice, usage_error, valid_flags};
+use pixtuoid_lofi::audition::{TARGET_LUFS, channels, gated_lufs};
 
 /// What a solo take renders at instead, since a lane alone peaks past full
 /// scale at [`TARGET_LUFS`]: the loudest level at which every lane's solo,
 /// both moods and seeds 0–23, kept its peak under full scale, as the commit
 /// that set it records, less [`SOLO_MARGIN_DB`].
-const SOLO_TARGET_LUFS: f64 = -31.6 - SOLO_MARGIN_DB;
+const SOLO_TARGET_LUFS: f64 = -29.1 - SOLO_MARGIN_DB;
 
 /// Room for a seed past that sweep to peak higher (opinion).
 const SOLO_MARGIN_DB: f64 = 1.0;
@@ -110,12 +104,15 @@ struct Take {
     name: String,
 }
 
+/// The flags lofi_audition takes beyond the batch's.
+const OWN_FLAGS: [&str; 3] = ["--out", "--solo", "--shuffle"];
+
 /// What a run renders, and where.
 struct Args {
     batch: Batch,
     out: PathBuf,
-    /// The lane `--solo` plays alone, as its index in [`Lane::NAMES`].
-    solo: Option<usize>,
+    /// The lane `--solo` plays alone.
+    solo: Option<Lane>,
     key: Option<PathBuf>,
 }
 
@@ -136,14 +133,18 @@ impl Args {
                     Some(v) => parsed.out = PathBuf::from(v),
                     None => return Err(usage_error("--out needs a directory".into())),
                 },
-                "--solo" => parsed.solo = Some(parse_choice(args.next(), "--solo", &Lane::NAMES)?),
+                "--solo" => {
+                    parsed.solo =
+                        Some(Lane::ALL[parse_choice(args.next(), "--solo", &Lane::NAMES)?]);
+                }
                 "--shuffle" => match args.next() {
                     Some(v) => parsed.key = Some(PathBuf::from(v)),
                     None => return Err(usage_error("--shuffle needs a key file".into())),
                 },
                 other => {
                     return Err(usage_error(format!(
-                        "unknown argument {other:?}; valid: --engine --mood --seeds --start --out --tier --sweep --songs --batch --solo --shuffle"
+                        "unknown argument {other:?}; valid: {}",
+                        valid_flags(&OWN_FLAGS)
                     )));
                 }
             }
@@ -173,7 +174,7 @@ impl Args {
         let runs = self.batch.runs();
         let takes = runs.iter().flat_map(|run| {
             let mix = match self.solo {
-                Some(s) => Lane::NAMES[s],
+                Some(lane) => lane.name(),
                 None => run.mix_name(),
             };
             let mood = run.mood_name();
@@ -201,15 +202,11 @@ impl Args {
         let mut take = match run.engine {
             Engine::WholeLane => {
                 let gains = |controls| match self.solo {
-                    Some(s) => {
-                        let mut gains = [0.0; Lane::ALL.len()];
-                        gains[s] = 1.0;
-                        gains
-                    }
+                    Some(lane) => Lane::ALL.map(|l| f32::from(u8::from(l == lane))),
                     None => lane_gains(controls),
                 };
                 (run.whole(seed, gains).into_iter())
-                    .flat_map(|(.., mix)| mix)
+                    .flat_map(|song| song.mix())
                     .map(|x| [x; 2])
                     .collect()
             }
@@ -217,7 +214,8 @@ impl Args {
         };
         fade_edges(&mut take);
         let target = self.target_lufs();
-        let gain = 10f64.powf((target - gated_lufs(&fold(&take), SAMPLE_RATE)) / 20.0) as f32;
+        let [left, right] = channels(&take);
+        let gain = 10f64.powf((target - gated_lufs(&[&left, &right], SAMPLE_RATE)) / 20.0) as f32;
         for v in take.iter_mut().flatten() {
             *v *= gain;
         }
@@ -275,22 +273,46 @@ fn pcm(x: f32) -> i16 {
     (x * f32::from(i16::MAX)) as i16
 }
 
-/// 16-bit stereo RIFF/WAVE.
+/// A take's channels and each sample's bits, as `write_wav` writes them.
+const CHANNELS: u16 = 2;
+const BITS: u16 = 16;
+/// The fmt chunk's size and its format code for PCM, "0x0001
+/// WAVE_FORMAT_PCM" (https://www.mmsp.ece.mcgill.ca/Documents/AudioFormats/WAVE/WAVE.html).
+const FMT_SIZE: u32 = 16;
+const WAVE_FORMAT_PCM: u16 = 1;
+/// The header's bytes after the RIFF size: "WAVE", the fmt chunk and the data
+/// chunk's header.
+const HEADER_AFTER_SIZE: u32 = 4 + 8 + FMT_SIZE + 8;
+
+/// The data chunk's size for a take of `frames`, or `None` past what the
+/// header's RIFF size can count.
+fn data_len(frames: usize) -> Option<u32> {
+    (u32::try_from(frames).ok())
+        .and_then(|n| n.checked_mul(u32::from(CHANNELS * BITS / 8)))
+        .filter(|n| n.checked_add(HEADER_AFTER_SIZE).is_some())
+}
+
+/// 16-bit stereo RIFF/WAVE; an error if `take` holds more data than a RIFF
+/// size can count.
 fn write_wav(path: &Path, take: &[Frame]) -> io::Result<()> {
+    let frame = CHANNELS * BITS / 8;
+    let data_len = data_len(take.len()).ok_or_else(|| {
+        usage_error(format!(
+            "a take of {} frames is too long for a wav",
+            take.len()
+        ))
+    })?;
     let mut w = BufWriter::new(File::create(path)?);
-    let n = take.len() as u32;
-    let data_len = n * 4; // 2 channels × i16
-    let byte_rate = SAMPLE_RATE * 2 * 2;
     w.write_all(b"RIFF")?;
-    w.write_all(&(36 + data_len).to_le_bytes())?;
+    w.write_all(&(HEADER_AFTER_SIZE + data_len).to_le_bytes())?;
     w.write_all(b"WAVEfmt ")?;
-    w.write_all(&16u32.to_le_bytes())?;
-    w.write_all(&1u16.to_le_bytes())?; // PCM
-    w.write_all(&2u16.to_le_bytes())?; // stereo
+    w.write_all(&FMT_SIZE.to_le_bytes())?;
+    w.write_all(&WAVE_FORMAT_PCM.to_le_bytes())?;
+    w.write_all(&CHANNELS.to_le_bytes())?;
     w.write_all(&SAMPLE_RATE.to_le_bytes())?;
-    w.write_all(&byte_rate.to_le_bytes())?;
-    w.write_all(&4u16.to_le_bytes())?; // block align
-    w.write_all(&16u16.to_le_bytes())?;
+    w.write_all(&(SAMPLE_RATE * u32::from(frame)).to_le_bytes())?;
+    w.write_all(&frame.to_le_bytes())?;
+    w.write_all(&BITS.to_le_bytes())?;
     w.write_all(b"data")?;
     w.write_all(&data_len.to_le_bytes())?;
     for s in take.iter().flatten() {
@@ -303,7 +325,46 @@ fn write_wav(path: &Path, take: &[Frame]) -> io::Result<()> {
 mod tests {
     use super::*;
     use batch::Sweep;
-    use pixtuoid_lofi::audition;
+    use pixtuoid_lofi::{Controls, audition};
+
+    #[test]
+    fn the_usage_names_every_flag() {
+        let usage: String = (include_str!("lofi_audition.rs").lines())
+            .take_while(|line| line.starts_with("//!"))
+            .collect();
+        for flag in valid_flags(&OWN_FLAGS).split(' ') {
+            assert!(
+                usage.contains(&format!("[{flag}")) || usage.contains(&format!("| {flag}")),
+                "the usage leaves out {flag}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_wav_counts_every_take_its_riff_size_can_and_no_longer_one() {
+        let frame = u32::from(CHANNELS * BITS / 8);
+        let longest = ((u32::MAX - HEADER_AFTER_SIZE) / frame) as usize;
+        assert_eq!(data_len(0), Some(0));
+        assert_eq!(data_len(longest), Some(longest as u32 * frame));
+        assert_eq!(data_len(longest + 1), None);
+        // past what the multiply and the conversion count, each alone
+        assert_eq!(data_len((u32::MAX / frame) as usize + 1), None);
+        #[cfg(target_pointer_width = "64")]
+        assert_eq!(data_len(u32::MAX as usize + 1), None);
+    }
+
+    #[test]
+    fn a_wav_header_counts_every_byte_after_it() {
+        let path = std::env::temp_dir().join(format!("lofi-wav-{}.wav", std::process::id()));
+        write_wav(&path, &[[0.5, -0.5], [0.0, 1.0], [-1.0, 0.25]]).expect("the take writes");
+        let raw = std::fs::read(&path).expect("the take reads back");
+        std::fs::remove_file(&path).expect("the take is removed");
+        let u32_at = |at: usize| u32::from_le_bytes(raw[at..at + 4].try_into().expect("4 bytes"));
+        // RIFF's size is the file's after its first 8 bytes, and data's its samples'
+        assert_eq!(u32_at(4) as usize, raw.len() - 8);
+        assert_eq!(u32_at(40) as usize, 3 * 2 * 2);
+        assert_eq!(&raw[36..40], b"data");
+    }
 
     fn parsed(args: &[&str]) -> Args {
         Args::parse(args.iter().map(|&a| a.to_owned())).expect("the arguments parse")
@@ -358,18 +419,33 @@ mod tests {
         let takes = parsed(&["--batch", "judge"])
             .takes()
             .expect("the takes' names are distinct");
-        for take in &takes {
-            // the group, apart from `mood_name`, since `ab_judge.py` groups by it
-            let group = match take.run.sweep {
-                Some(sweep) => sweep.name(),
-                None => take.run.mood_name(),
-            };
-            let mix = match take.run.sweep {
-                Some(_) => take.run.mix_name(),
-                None => take.run.tier().name(),
-            };
-            assert_eq!(take.name, format!("gen_{group}_{mix}_{:03}.wav", take.seed));
-        }
+        // `ab_judge.py` groups a take by its name's first word, and pairs it
+        // by the rest
+        let mut named: Vec<(String, String)> = (takes.iter())
+            .map(|take| {
+                let [group, mix, seed] = (take.name.strip_prefix("gen_"))
+                    .and_then(|n| n.strip_suffix(".wav"))
+                    .map(|n| n.splitn(3, '_').collect::<Vec<_>>())
+                    .and_then(|parts| parts.try_into().ok())
+                    .expect("gen_GROUP_MIX_SEED.wav");
+                assert_eq!(seed, format!("{:03}", take.seed), "{}", take.name);
+                (group.to_owned(), mix.to_owned())
+            })
+            .collect();
+        named.sort();
+        named.dedup();
+        let want = [
+            ("day", "busy"),
+            ("day", "empty"),
+            ("day", "moderate"),
+            ("night", "busy"),
+            ("night", "empty"),
+            ("night", "moderate"),
+            ("rain", "moderate"),
+            ("twilight", "quarter"),
+            ("twilight", "threequarters"),
+        ];
+        assert_eq!(named, want.map(|(g, m)| (g.to_owned(), m.to_owned())));
         assert!(
             Args::parse(
                 ["--batch", "judge", "--solo", "pad"]
@@ -388,7 +464,8 @@ mod tests {
             let written: Vec<Frame> = (take.expect("the take renders").iter())
                 .map(|frame| frame.map(|x| f32::from(pcm(x)) / f32::from(i16::MAX)))
                 .collect();
-            let lufs = gated_lufs(&fold(&written), SAMPLE_RATE);
+            let [left, right] = channels(&written);
+            let lufs = gated_lufs(&[&left, &right], SAMPLE_RATE);
             assert!(
                 (lufs - TARGET_LUFS).abs() <= 0.1,
                 "{engine} writes {lufs:.3} LUFS"
@@ -412,14 +489,18 @@ mod tests {
     #[test]
     fn every_sweep_renders_alike_twice_and_as_long_under_either_engine() {
         for sweep in Sweep::ALL {
+            let runs = parsed(&["--sweep", sweep.name(), "--seeds", "1"])
+                .batch
+                .runs();
+            let lens: Vec<usize> = (runs.iter())
+                .map(|run| take_len(run, 0).unwrap_or_else(|| panic!("{sweep:?} ends mid-song")))
+                .collect();
             for engine in ["whole", "stream"] {
                 let args = parsed(&["--engine", engine, "--sweep", sweep.name(), "--seeds", "1"]);
-                for run in args.batch.runs() {
-                    let take = args.render(&run, 0).expect("the sweep renders");
-                    let again = args.render(&run, 0).expect("the sweep renders");
+                for (run, &len) in args.batch.runs().iter().zip(&lens) {
+                    let take = args.render(run, 0).expect("the sweep renders");
+                    let again = args.render(run, 0).expect("the sweep renders");
                     assert!(take == again, "{sweep:?} under {engine} renders apart");
-                    let songs = run.timeline(0).songs;
-                    let len: usize = songs.iter().map(|&(_, len)| len).sum();
                     assert_eq!(take.len(), len, "{sweep:?} under {engine}");
                 }
             }
@@ -449,12 +530,35 @@ mod tests {
 
     #[test]
     fn songs_writes_that_many_songs_under_either_engine() {
-        let c = Batch::default().controls();
-        let want: usize = (0..2).map(|k| audition::song_len(3, k, c)).sum();
+        let want = take_len(&parsed(&["--songs", "2"]).batch, 3);
         for engine in ["whole", "stream"] {
             let take = rendered(&["--engine", engine, "--songs", "2"], 3);
-            assert_eq!(take.map(|t| t.len()).ok(), Some(want), "{engine}");
+            assert_eq!(take.map(|t| t.len()).ok(), want, "{engine}");
         }
+    }
+
+    /// How long `run`'s take of `seed` lasts, if it ends as its last song plays
+    /// alone, past the first loop the song before rings into: song lengths the
+    /// timeline got wrong would end it mid-song, or in the next.
+    fn take_len(run: &Batch, seed: u64) -> Option<usize> {
+        let (take, timeline) = (run.perform(seed), run.timeline(seed));
+        let k = timeline.songs.len() - 1;
+        let starts: usize = timeline.songs[..k].iter().map(|&(_, len)| len).sum();
+        let calls: Vec<(usize, Controls)> = (timeline.calls.iter())
+            .filter(|&&(at, _)| at >= starts)
+            .map(|&(at, controls)| (at - starts, controls))
+            .collect();
+        let alone = audition::song(seed, k as u64, timeline.songs[k].0, &calls);
+        let rung = if k == 0 {
+            0
+        } else {
+            audition::samples_at(
+                audition::song_score(seed, k as u64, timeline.songs[k].0).loop_secs(),
+                SAMPLE_RATE,
+            )
+        };
+        (take.len() >= alone.len() && take[take.len() - alone.len() + rung..] == alone[rung..])
+            .then_some(take.len())
     }
 
     #[test]
@@ -467,7 +571,7 @@ mod tests {
     fn a_run_whose_takes_share_a_file_name_is_refused() {
         // the twilight takes, both named for the lane past the parse's guard
         let mut args = parsed(&["--engine", "whole", "--sweep", "twilight"]);
-        args.solo = Some(0);
+        args.solo = Some(Lane::Pad);
         assert!(args.takes().is_err());
         assert!(parsed(&["--sweep", "twilight"]).takes().is_ok());
     }
