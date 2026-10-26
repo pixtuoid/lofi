@@ -530,6 +530,29 @@ mod tests {
     }
 
     #[test]
+    fn takes_render_inside_lofi_bibles_loudness_target() {
+        let bible = include_str!("../../.claude/skills/procedural-lofi/reference/LOFI-BIBLE.md");
+        let row = (bible.lines())
+            .find_map(|line| line.strip_prefix("- **Loudness**: **"))
+            .expect("LOFI-BIBLE.md has a loudness row");
+        let target = row
+            .split(" LUFS")
+            .next()
+            .unwrap_or_default()
+            .replace('−', "-");
+        let [lo, hi] = [0, 1].map(|i| {
+            (target.split(" to ").nth(i))
+                .and_then(|v| v.parse::<f64>().ok())
+                .unwrap_or_else(|| panic!("LOFI-BIBLE.md's loudness row reads {target:?}"))
+        });
+        assert!(
+            (lo..=hi).contains(&audition::TARGET_LUFS),
+            "{} LUFS outside {lo}..={hi}",
+            audition::TARGET_LUFS
+        );
+    }
+
+    #[test]
     fn a_corpus_with_no_tracks_is_refused() {
         let dir = std::env::temp_dir().join(format!("lofi-corpus-{}", std::process::id()));
         std::fs::create_dir_all(dir.join("audio")).expect("the corpus dir");

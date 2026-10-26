@@ -28,11 +28,7 @@ use pixtuoid_lofi::audition::Lane;
 use pixtuoid_lofi::dsp::{NoiseStream, SAMPLE_RATE};
 
 use batch::{Batch, Engine, lane_gains, parse_choice, usage_error, valid_flags};
-use pixtuoid_lofi::audition::{channels, gated_lufs};
-
-/// Every take renders at ONE gated loudness, so a blind A/B compares takes, not
-/// gain: inside LOFI-BIBLE.md §4's loudness target.
-const TARGET_LUFS: f64 = -15.0;
+use pixtuoid_lofi::audition::{TARGET_LUFS, channels, gated_lufs};
 
 /// What a solo take renders at instead, since a lane alone peaks past full
 /// scale at [`TARGET_LUFS`]: the loudest level at which every lane's solo,
@@ -288,8 +284,6 @@ const WAVE_FORMAT_PCM: u16 = 1;
 /// chunk's header.
 const HEADER_AFTER_SIZE: u32 = 4 + 8 + FMT_SIZE + 8;
 
-/// 16-bit stereo RIFF/WAVE; an error if `take` holds more data than a RIFF
-/// size can count.
 /// The data chunk's size for a take of `frames`, or `None` past what the
 /// header's RIFF size can count.
 fn data_len(frames: usize) -> Option<u32> {
@@ -298,6 +292,8 @@ fn data_len(frames: usize) -> Option<u32> {
         .filter(|n| n.checked_add(HEADER_AFTER_SIZE).is_some())
 }
 
+/// 16-bit stereo RIFF/WAVE; an error if `take` holds more data than a RIFF
+/// size can count.
 fn write_wav(path: &Path, take: &[Frame]) -> io::Result<()> {
     let frame = CHANNELS * BITS / 8;
     let data_len = data_len(take.len()).ok_or_else(|| {
@@ -345,34 +341,16 @@ mod tests {
     }
 
     #[test]
-    fn takes_render_inside_lofi_bibles_loudness_target() {
-        let bible = include_str!("../.claude/skills/procedural-lofi/reference/LOFI-BIBLE.md");
-        let row = (bible.lines())
-            .find_map(|line| line.strip_prefix("- **Loudness**: **"))
-            .expect("LOFI-BIBLE.md has a loudness row");
-        let target = row
-            .split(" LUFS")
-            .next()
-            .unwrap_or_default()
-            .replace('−', "-");
-        let [lo, hi] = [0, 1].map(|i| {
-            (target.split(" to ").nth(i))
-                .and_then(|v| v.parse::<f64>().ok())
-                .unwrap_or_else(|| panic!("LOFI-BIBLE.md's loudness row reads {target:?}"))
-        });
-        assert!(
-            (lo..=hi).contains(&TARGET_LUFS),
-            "{TARGET_LUFS} LUFS outside {lo}..={hi}"
-        );
-    }
-
-    #[test]
     fn a_wav_counts_every_take_its_riff_size_can_and_no_longer_one() {
         let frame = u32::from(CHANNELS * BITS / 8);
         let longest = ((u32::MAX - HEADER_AFTER_SIZE) / frame) as usize;
         assert_eq!(data_len(0), Some(0));
         assert_eq!(data_len(longest), Some(longest as u32 * frame));
         assert_eq!(data_len(longest + 1), None);
+        // past what the multiply and the conversion count, each alone
+        assert_eq!(data_len((u32::MAX / frame) as usize + 1), None);
+        #[cfg(target_pointer_width = "64")]
+        assert_eq!(data_len(u32::MAX as usize + 1), None);
     }
 
     #[test]
