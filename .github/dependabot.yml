@@ -1,5 +1,13 @@
 version: 2
 updates:
+  # rust-toolchain.toml's exact pin: each release lands as its own PR.
+  - package-ecosystem: rust-toolchain
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+
   - package-ecosystem: github-actions
     directory: /
     schedule:

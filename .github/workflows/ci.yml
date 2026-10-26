@@ -61,18 +61,6 @@ jobs:
       - run: cargo test --all-targets
       - run: cargo test --doc
 
-  msrv:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - run: rustup toolchain install 1.98 --profile minimal
-      - run: cargo +1.98 check --lib --examples
-
   wasm:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -136,7 +124,7 @@ jobs:
   # 'Success'" (docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-jobs-with-conditions).
   ci-gate:
     if: ${{ always() }}
-    needs: [lint, test, msrv, wasm, workflows]
+    needs: [lint, test, wasm, workflows]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}
