@@ -5,7 +5,8 @@ use std::fmt;
 
 use crate::dsp::SAMPLE_RATE;
 use crate::stream::master::{Ceiling, TIER_INTENSITIES};
-use crate::stream::schedule::{BLOCK, LANES, Schedule};
+use crate::stream::schedule::Schedule;
+use crate::stream::{BLOCK, LANES};
 
 /// One stereo frame, `[left, right]`, at [`SAMPLE_RATE`].
 pub type Frame = [f32; 2];
@@ -86,6 +87,12 @@ pub(crate) trait Probe {
     /// The gain the ceiling plays the next frame out at, a step's frames each
     /// heard after the step.
     fn gain(&mut self, gain: f64);
+
+    /// A step's frames as they enter the ceiling.
+    fn mixed(&mut self, _frames: &[[f64; 2]]) {}
+
+    /// A step's frames as the ceiling's limiter plays them, before its clamp.
+    fn limited(&mut self, _frames: &[[f64; 2]]) {}
 }
 
 /// What [`Performance::render`] shows: nothing.
@@ -185,8 +192,10 @@ impl Performance {
         while done < out.len() {
             self.mix_next(out.len() - done);
             probe.step(self.schedule.sums(), self.schedule.returned());
+            probe.mixed(&self.mix);
             self.ceiling
                 .limit_heard(&mut self.mix, |gain| probe.gain(gain));
+            probe.limited(&self.mix);
             for (frame, x) in out[done..].iter_mut().zip(&self.mix) {
                 *frame = x.map(|side| self.ceiling.clamp(side));
             }
@@ -199,10 +208,7 @@ impl Performance {
     /// `max`, [`BLOCK`] and the frames to the playing song's next latch, so
     /// each bar latches on its own frame however the calls chunk the render.
     fn mix_next(&mut self, max: usize) {
-        self.start_due_song();
-        self.schedule.latch_due(self.asked.clamped());
-        let n = max.min(BLOCK).min(self.schedule.until_latch());
-        self.schedule.play(n);
+        let n = self.schedule.step(self.asked.clamped(), max);
         let (lanes, plate) = (self.schedule.sums(), self.schedule.returned());
         self.mix.clear();
         self.mix.extend((0..n).map(|i| {
@@ -217,18 +223,10 @@ impl Performance {
         self.position
     }
 
-    /// Starts the next song if [`position`](Self::position) is its first bar,
-    /// under the controls asked for last.
-    fn start_due_song(&mut self) {
-        if self.schedule.song_left() == 0 {
-            self.schedule.start_song(self.asked.clamped());
-        }
-    }
-
     /// The frames from [`position`](Self::position) to the next song's first
     /// bar, the song at `position` started first if it is due.
     pub(crate) fn finish_song(&mut self) -> Vec<Frame> {
-        self.start_due_song();
+        self.schedule.start_if_due(self.asked.clamped());
         let mut out = vec![Frame::default(); self.schedule.song_left()];
         self.render(&mut out);
         out
@@ -392,25 +390,15 @@ mod tests {
                         let last = bars[bars.len() - 1]
                             - crate::synth::samples_at(ANTICIPATION_S, SAMPLE_RATE);
                         let mut p = Performance::new(seed, a);
-                        let mut ceiling = Ceiling::new(SAMPLE_RATE);
                         let mut heard = Heard::default();
                         while heard.played < span {
                             if heard.played == last + 1 {
                                 p.set_controls(b);
                             }
                             let until = if heard.played <= last { last + 1 } else { span };
-                            p.mix_next(until - heard.played);
-                            if heard.played == 0 {
+                            heard.play(&mut p, until - heard.played);
+                            if heard.first.is_none() {
                                 heard.first = p.schedule.playing().cloned();
-                            }
-                            // a frame at a time, which plays the same frames,
-                            // to read the gain each one plays at
-                            for i in 0..p.mix.len() {
-                                heard.loudest =
-                                    (p.mix[i].iter()).fold(heard.loudest, |m, x| m.max(x.abs()));
-                                ceiling.limit(&mut p.mix[i..=i]);
-                                let clamped = p.mix[i].map(|side| ceiling.clamp(side));
-                                heard.hear(ceiling.gain(), clamped, p.mix[i]);
                             }
                         }
                         heard.second = p.schedule.playing().cloned();
@@ -467,7 +455,49 @@ mod tests {
         second: Option<audition::Score>,
     }
 
+    /// What the ceiling did to a stretch [`Performance::render_probed`]
+    /// played.
+    #[derive(Default)]
+    struct Ceilinged {
+        loudest: f64,
+        gains: Vec<f64>,
+        limited: Vec<[f64; 2]>,
+    }
+
+    impl Probe for Ceilinged {
+        fn step(&mut self, _: &[Vec<f64>; LANES], _: &[Vec<f64>; 2]) {}
+
+        fn gain(&mut self, gain: f64) {
+            self.gains.push(gain);
+        }
+
+        fn mixed(&mut self, frames: &[[f64; 2]]) {
+            self.loudest = (frames.iter().flatten()).fold(self.loudest, |m, x| m.max(x.abs()));
+        }
+
+        fn limited(&mut self, frames: &[[f64; 2]]) {
+            self.limited.extend_from_slice(frames);
+        }
+    }
+
     impl Heard {
+        /// Renders `n` frames of `p` at most [`BLOCK`] frames per call, hearing
+        /// what its ceiling did to each, so no probe holds a whole run's gains
+        /// and limited frames at once.
+        fn play(&mut self, p: &mut Performance, n: usize) {
+            let mut out = vec![Frame::default(); BLOCK];
+            for k in (0..n).step_by(BLOCK).map(|at| BLOCK.min(n - at)) {
+                let mut probe = Ceilinged::default();
+                p.render_probed(&mut out[..k], &mut probe);
+                self.loudest = self.loudest.max(probe.loudest);
+                for ((&gain, &limited), &clamped) in
+                    probe.gains.iter().zip(&probe.limited).zip(&out[..k])
+                {
+                    self.hear(gain, clamped, limited);
+                }
+            }
+        }
+
         fn hear(&mut self, gain: f64, clamped: [f32; 2], limited: [f64; 2]) {
             self.played += 1;
             if gain < 1.0 {
@@ -1030,7 +1060,6 @@ mod tests {
                             .map(|k| audition::song_len(seed, k, Controls::default()))
                             .sum::<usize>();
                         let mut p = Performance::new(seed, Controls::default());
-                        let mut ceiling = Ceiling::new(SAMPLE_RATE);
                         let mut heard = Heard::default();
                         let mut next_call = 0;
                         while heard.played < span {
@@ -1043,14 +1072,8 @@ mod tests {
                                 );
                                 next_call += 1 + (rng.unit() * 4.0 * SAMPLE_RATE as f32) as usize;
                             }
-                            p.mix_next((span - heard.played).min(next_call - heard.played));
-                            for i in 0..p.mix.len() {
-                                heard.loudest =
-                                    (p.mix[i].iter()).fold(heard.loudest, |m, x| m.max(x.abs()));
-                                ceiling.limit(&mut p.mix[i..=i]);
-                                let clamped = p.mix[i].map(|side| ceiling.clamp(side));
-                                heard.hear(ceiling.gain(), clamped, p.mix[i]);
-                            }
+                            let n = (span - heard.played).min(next_call - heard.played);
+                            heard.play(&mut p, n);
                         }
                         heard
                     })

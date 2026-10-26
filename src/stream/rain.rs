@@ -45,12 +45,12 @@ pub(crate) fn level(lane: Lane, rain: f64) -> f64 {
         Lane::Pad => RAIN_PAD_DB,
         _ => return 1.0,
     };
-    10f64.powf(db * rain / 20.0)
+    super::gain_of_db(db * rain)
 }
 
 /// A drum hit's gain at `rain`.
 pub(crate) fn hit(rain: f64) -> f32 {
-    10f64.powf(RAIN_DRUM_DB * rain / 20.0) as f32
+    super::gain_of_db(RAIN_DRUM_DB * rain) as f32
 }
 
 #[cfg(test)]

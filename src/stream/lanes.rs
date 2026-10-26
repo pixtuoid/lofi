@@ -7,13 +7,13 @@
 use std::f64::consts::{FRAC_PI_2, TAU};
 use std::ops::Range;
 
-use super::biquad::{Cascade, butter_lowpass, cookbook_bandpass};
+use super::biquad::{Cascade, Lowpass, butter_lowpass, cookbook_bandpass};
 use super::delay::DelayLine;
+use super::gain_of_db;
 use super::hiss::Hiss;
 use super::onepole::Tilt;
 use super::rain;
 use super::ramp::{Ramp, Shape};
-use super::schedule::BLOCK;
 use crate::Controls;
 use crate::compose::Mood;
 use crate::dsp::NoiseStream;
@@ -91,115 +91,60 @@ pub(crate) enum Chain {
 
 impl Chain {
     /// `lane`'s chain in a `mood` song `len` frames long at `sr`, picked by
-    /// its `part` as `render_lane` picks its whole-lane core, its colour
-    /// graded to the daylight and darkened by the rain `controls` start at;
-    /// the texture ducks under each onset in `kicks`.
+    /// its `part` as `render_lane` picks its whole-lane core, playing under
+    /// `automation` from its first frame; the texture ducks under each onset
+    /// in `kicks`.
     pub(crate) fn new(
         mood: Mood,
         lane: Lane,
         part: &Part<'_>,
         len: usize,
         kicks: &[usize],
-        controls: Controls,
+        automation: &Automation,
         sr: u32,
     ) -> Self {
         let gains = staging(mood, lane);
         let [(night0, night1, _), (day0, day1, _)] =
             [Mood::Night, Mood::Day].map(|mood| lane_recipe(mood, lane));
-        let t = f64::from(controls.daylight);
-        let mut chain = match part {
+        let darkens = rain::darkens(lane);
+        let tape = |own, pad| Self::Tape(Tape::new(own, pad, darkens, gains, automation, sr));
+        match part {
             Part::Chords { .. } => {
                 let pad = PadTone::of(mood);
                 let own = Tone::Fixed {
                     corner_hz: pad.cutoff_hz,
                     drive: f64::from(DRIVE),
                 };
-                Self::Tape(Tape::new(own, Some(pad), gains, sr))
+                tape(own, Some(pad))
             }
-            Part::Notes { .. } => {
-                let grade = Grade::new([night1, day1], [DRIVE, DRIVE], t);
-                Self::Tape(Tape::new(Tone::Graded(grade), None, gains, sr))
-            }
-            Part::Hits(_) => {
-                let grade = Grade::new([night0, day0], [night1, day1], t);
-                Self::Tape(Tape::new(Tone::Graded(grade), None, gains, sr))
-            }
+            Part::Notes { .. } => tape(
+                Tone::Graded(Grade::new([night1, day1], [DRIVE, DRIVE])),
+                None,
+            ),
+            Part::Hits(_) => tape(
+                Tone::Graded(Grade::new([night0, day0], [night1, day1])),
+                None,
+            ),
             Part::Bed => Self::Room(Room::new(len, kicks, gains, sr)),
-        };
-        if let Self::Tape(tape) = &mut chain
-            && rain::darkens(lane)
-        {
-            tape.rain = Some(Ramp::held(f64::from(controls.rain), Shape::Linear));
-        }
-        chain
-    }
-
-    /// The chain with its tone swept by `sweep`: a music lane's, which the
-    /// schedule picks; the room has no tone to sweep.
-    pub(crate) fn swept(mut self, sweep: &Sweep) -> Self {
-        match &mut self {
-            Self::Tape(tape) => tape.sweep = Some(sweep.clone()),
-            Self::Room(_) => debug_assert!(false, "the room plays through every edge"),
-        }
-        self
-    }
-
-    /// Darkens the lane from frame `at` toward `rain` over `over` frames, if
-    /// rain darkens it.
-    pub(crate) fn rain(&mut self, at: usize, rain: f64, over: usize) {
-        if let Self::Tape(Tape {
-            rain: Some(ramp), ..
-        }) = self
-        {
-            ramp.toward(at, rain, over);
         }
     }
 
-    /// Holds the lane's colour where it is on frame `at`, the song's end.
-    pub(crate) fn freeze(&mut self, at: usize) {
-        if let Self::Tape(tape) = self {
-            if let Tone::Graded(grade) = &mut tape.own {
-                grade.clock.t.hold(at);
-            }
-            if let Some(ramp) = &mut tape.rain {
-                ramp.hold(at);
-            }
-        }
-    }
-
-    /// Grades the lane's colour from frame `at` to `daylight` over `over`
-    /// frames, if it grades.
-    pub(crate) fn grade(&mut self, at: usize, daylight: f32, over: usize) {
-        if let Self::Tape(Tape {
-            own: Tone::Graded(grade),
-            ..
-        }) = self
-        {
-            grade.clock.t.toward(at, f64::from(daylight), over);
-        }
-    }
-
-    /// The frame the lane's rain holds from, if rain darkens it.
+    /// Whether the lane's colour grades with the daylight.
     #[cfg(test)]
-    pub(crate) fn rained_until(&self) -> Option<usize> {
-        match self {
+    pub(crate) fn grades(&self) -> bool {
+        matches!(
+            self,
             Self::Tape(Tape {
-                rain: Some(ramp), ..
-            }) => Some(ramp.end()),
-            _ => None,
-        }
-    }
-
-    /// The frame the lane's colour holds from, if it grades.
-    #[cfg(test)]
-    pub(crate) fn graded_until(&self) -> Option<usize> {
-        match self {
-            Self::Tape(Tape {
-                own: Tone::Graded(grade),
+                own: Tone::Graded(_),
                 ..
-            }) => Some(grade.clock.t.end()),
-            _ => None,
-        }
+            })
+        )
+    }
+
+    /// Whether rain darkens the lane's tilt.
+    #[cfg(test)]
+    pub(crate) fn darkens(&self) -> bool {
+        matches!(self, Self::Tape(Tape { darkens: true, .. }))
     }
 
     /// The corner the lane's tone is tuned to, if it has one.
@@ -211,20 +156,29 @@ impl Chain {
         }
     }
 
-    /// Plays the lane's next frames in place; the texture draws its hiss
-    /// from `noise`.
-    pub(crate) fn process(&mut self, buf: &mut [f64], noise: &mut NoiseStream) {
+    /// Plays the lane's frames from song frame `from` in place, under
+    /// `automation`, working in `work`; the texture draws its hiss from
+    /// `noise`.
+    pub(crate) fn process(
+        &mut self,
+        buf: &mut [f64],
+        from: usize,
+        automation: &Automation,
+        noise: &mut NoiseStream,
+        work: &mut Vec<f64>,
+    ) {
         match self {
-            Self::Tape(tape) => tape.process(buf),
-            Self::Room(room) => room.process(buf, noise),
+            Self::Tape(tape) => tape.process(buf, from, automation, work),
+            Self::Room(room) => room.process(buf, from, noise, work),
         }
     }
 
-    /// Whether silence in now plays exact silence out, for good.
-    pub(crate) fn at_rest(&self) -> bool {
+    /// Whether silence in from song frame `at` on plays exact silence out,
+    /// for good.
+    pub(crate) fn at_rest(&self, at: usize) -> bool {
         match self {
             Self::Tape(tape) => tape.at_rest(),
-            Self::Room(room) => room.at_rest(),
+            Self::Room(room) => room.at_rest(at),
         }
     }
 }
@@ -245,32 +199,78 @@ fn saturate(buf: &mut [f64], drive: f64) {
 pub(crate) struct Grade {
     corners_hz: [f32; 2],
     drives: [f32; 2],
-    clock: GradeClock,
 }
 
-/// When a [`Grade`]'s daylight moves.
-#[derive(Clone, Copy, Debug)]
-struct GradeClock {
-    /// The daylight, ramping from each latch.
-    t: Ramp,
+/// What a song's chains play under, each one timeline on the song's clock,
+/// as an `AudioParam` "maintains a list of zero or more automation events"
+/// (<https://webaudio.github.io/web-audio-api/>) however many nodes it
+/// moves: the daylight the colours grade to and the form's low-pass sweep,
+/// read once per coefficient block, and the rain the tilts darken by, read
+/// on every frame.
+#[derive(Clone, Debug)]
+pub(crate) struct Automation {
+    daylight: Ramp,
+    rain: Ramp,
+    sweep: Option<Sweep>,
 }
 
-impl GradeClock {
-    /// The daylight frame `n` plays at: the ramp's at the start of `n`'s
-    /// coefficient block, or its target exactly from its end on.
-    fn at(&self, n: usize) -> f64 {
-        if n >= self.t.end() {
-            self.t.to()
-        } else {
-            self.t.at(block_of(n))
+impl Automation {
+    /// Holding `controls`' daylight and rain from the song's first frame,
+    /// with the form's `sweep`, if it has one.
+    pub(crate) fn new(controls: Controls, sweep: Option<Sweep>) -> Self {
+        Self {
+            daylight: Ramp::held(f64::from(controls.daylight), Shape::Linear),
+            rain: Ramp::held(f64::from(controls.rain), Shape::Linear),
+            sweep,
         }
     }
 
-    /// The frame after `n` from which [`at`](Self::at) may differ, or `None`
-    /// once it holds.
-    fn next_change(&self, n: usize) -> Option<usize> {
-        let end = self.t.end();
+    /// From frame `at`, grades toward `controls`' daylight over `grade_ramp`
+    /// frames and darkens toward their rain over `rain_ramp` frames.
+    pub(crate) fn latch(
+        &mut self,
+        at: usize,
+        controls: Controls,
+        grade_ramp: usize,
+        rain_ramp: usize,
+    ) {
+        self.daylight
+            .toward(at, f64::from(controls.daylight), grade_ramp);
+        self.rain.toward(at, f64::from(controls.rain), rain_ramp);
+    }
+
+    /// Holds every timeline where it is on frame `at`, the song's end.
+    pub(crate) fn freeze(&mut self, at: usize) {
+        self.daylight.hold(at);
+        self.rain.hold(at);
+    }
+
+    /// The rain, on every frame.
+    pub(crate) fn rain(&self) -> &Ramp {
+        &self.rain
+    }
+
+    /// The daylight frame `n` plays at: the ramp's at the start of `n`'s
+    /// coefficient block, or its target exactly from its end on.
+    fn daylight(&self, n: usize) -> f64 {
+        if n >= self.daylight.end() {
+            self.daylight.to()
+        } else {
+            self.daylight.at(block_of(n))
+        }
+    }
+
+    /// The frame after `n` from which [`daylight`](Self::daylight) may
+    /// differ, or `None` once it holds.
+    fn daylight_changes(&self, n: usize) -> Option<usize> {
+        let end = self.daylight.end();
         (n < end).then(|| next_block(n, end))
+    }
+
+    /// The frame the daylight holds from.
+    #[cfg(test)]
+    pub(crate) fn graded_until(&self) -> usize {
+        self.daylight.end()
     }
 }
 
@@ -348,12 +348,12 @@ enum Tone {
 }
 
 impl Tone {
-    /// The tone's own corner and drive on frame `n`.
-    fn at(&self, n: usize) -> (f32, f64) {
+    /// The tone's own corner and drive on frame `n` under `automation`.
+    fn at(&self, n: usize, automation: &Automation) -> (f32, f64) {
         match self {
             Self::Fixed { corner_hz, drive } => (*corner_hz, *drive),
             Self::Graded(grade) => {
-                let t = grade.clock.at(n);
+                let t = automation.daylight(n);
                 (grade.corner_hz(t), grade.drive(t))
             }
         }
@@ -361,20 +361,20 @@ impl Tone {
 
     /// The frame after `n` from which [`at`](Self::at) may differ, or `None`
     /// once it holds.
-    fn next_change(&self, n: usize) -> Option<usize> {
+    fn next_change(&self, n: usize, automation: &Automation) -> Option<usize> {
         match self {
             Self::Fixed { .. } => None,
-            Self::Graded(grade) => grade.clock.next_change(n),
+            Self::Graded(_) => automation.daylight_changes(n),
         }
     }
 }
 
-/// `len` frames from frame `from`, cut wherever `tone`'s grade or `sweep` may
-/// move the tone: each piece's range from `from`, and its first frame, which
-/// both read the whole piece at.
+/// `len` frames from frame `from`, cut wherever `automation` may move
+/// `tone`, by its grade or its sweep: each piece's range from `from`, and its
+/// first frame, which both read the whole piece at.
 fn pieces<'a>(
     tone: &'a Tone,
-    sweep: Option<&'a Sweep>,
+    automation: &'a Automation,
     from: usize,
     len: usize,
 ) -> impl Iterator<Item = (Range<usize>, usize)> + 'a {
@@ -383,8 +383,8 @@ fn pieces<'a>(
         (at < len).then(|| {
             let n = from + at;
             let next = [
-                tone.next_change(n),
-                sweep.and_then(|sweep| sweep.next_change(n)),
+                tone.next_change(n, automation),
+                (automation.sweep.as_ref()).and_then(|sweep| sweep.next_change(n)),
             ];
             let next =
                 (next.into_iter().flatten().min()).map_or(len, |next| (next - from).min(len));
@@ -396,14 +396,8 @@ fn pieces<'a>(
 }
 
 impl Grade {
-    fn new(corners_hz: [f32; 2], drives: [f32; 2], daylight: f64) -> Self {
-        Self {
-            corners_hz,
-            drives,
-            clock: GradeClock {
-                t: Ramp::held(daylight, Shape::Linear),
-            },
-        }
+    fn new(corners_hz: [f32; 2], drives: [f32; 2]) -> Self {
+        Self { corners_hz, drives }
     }
 
     fn corner_hz(&self, t: f64) -> f32 {
@@ -433,13 +427,11 @@ impl Grade {
 /// the tilt.
 #[derive(Debug)]
 pub(crate) struct Tape {
-    tone: Cascade,
+    tone: Lowpass,
     /// The tone's own corner and drive.
     own: Tone,
-    /// The rain that darkens its tilt, if rain does.
-    rain: Option<Ramp>,
-    /// The song's low-pass automation over the tone, if it has one.
-    sweep: Option<Sweep>,
+    /// Whether the song's rain darkens its tilt.
+    darkens: bool,
     /// The pad's slow swell.
     pad: Option<PadTone>,
     /// The corner the tone is tuned to.
@@ -453,19 +445,22 @@ pub(crate) struct Tape {
     /// of now, so a causal line reads that late, and the tape lags by it.
     reach: f64,
     bump: Cascade,
-    /// The bump's band over a step.
-    band: Vec<f64>,
-    rolloff: Cascade,
+    rolloff: Lowpass,
     tilt: Tilt,
     sr: u32,
-    /// Frames played: the song's clock.
-    frame: usize,
 }
 
 impl Tape {
-    /// A tape whose tone starts at `own`'s first frame.
-    fn new(own: Tone, pad: Option<PadTone>, gains: [f64; 2], sr: u32) -> Self {
-        let (cutoff_hz, _) = own.at(0);
+    /// A tape whose tone starts at `own`'s first frame under `automation`.
+    fn new(
+        own: Tone,
+        pad: Option<PadTone>,
+        darkens: bool,
+        gains: [f64; 2],
+        automation: &Automation,
+        sr: u32,
+    ) -> Self {
+        let (cutoff_hz, _) = own.at(0, automation);
         let rate = f64::from(sr);
         // the excursion `warp_resample` gives a `(hz, dev)` pair
         let warps = WARPS.map(|(hz, dev)| {
@@ -477,19 +472,16 @@ impl Tape {
             tone: butter_lowpass(cutoff_hz, ORDER, sr),
             own,
             tuned: cutoff_hz,
-            rain: None,
-            sweep: None,
+            darkens,
             pad,
             gains,
             warp: DelayLine::new(2.0 * reach),
             warps,
             reach,
             bump: cookbook_bandpass(HEAD_BUMP_HZ.0, HEAD_BUMP_HZ.1, sr),
-            band: Vec::with_capacity(BLOCK),
             rolloff: butter_lowpass(ROLLOFF_HZ, ORDER, sr),
             tilt: Tilt::new(TILT_HZ, f64::from(TILT_LIFT), sr),
             sr,
-            frame: 0,
         }
     }
 
@@ -502,27 +494,28 @@ impl Tape {
         }
     }
 
-    #[cfg(test)]
-    fn grade_mut(&mut self) -> Option<&mut Grade> {
-        match &mut self.own {
-            Tone::Graded(grade) => Some(grade),
-            Tone::Fixed { .. } => None,
-        }
-    }
-
-    fn process(&mut self, buf: &mut [f64]) {
+    /// Plays `buf`, song frames from `from` on, under `automation`, its head
+    /// bump's band in `band`.
+    fn process(
+        &mut self,
+        buf: &mut [f64],
+        from: usize,
+        automation: &Automation,
+        band: &mut Vec<f64>,
+    ) {
         let [gain_in, gain_out] = self.gains;
-        let (from, len) = (self.frame, buf.len());
-        for (range, n) in pieces(&self.own, self.sweep.as_ref(), from, len) {
-            let (own, _) = self.own.at(n);
-            let corner = swept(own, self.sweep.as_ref().map_or(1.0, |sweep| sweep.at(n)));
+        let len = buf.len();
+        let sweep = automation.sweep.as_ref();
+        for (range, n) in pieces(&self.own, automation, from, len) {
+            let (own, _) = self.own.at(n, automation);
+            let corner = swept(own, sweep.map_or(1.0, |sweep| sweep.at(n)));
             if corner != self.tuned {
-                self.tone.retune_lowpass(corner, self.sr);
+                self.tone.retune(corner, self.sr);
                 self.tuned = corner;
             }
             self.tone.process(&mut buf[range]);
         }
-        for (n, x) in (self.frame..).zip(buf.iter_mut()) {
+        for (n, x) in (from..).zip(buf.iter_mut()) {
             *x *= self.swell(n) * gain_in;
         }
         let (warps, reach) = (self.warps, self.reach);
@@ -531,32 +524,32 @@ impl Tape {
                 .iter()
                 .fold(reach, |d, &(w, a)| d - a * (w * n as f64).sin())
         });
-        for (range, n) in pieces(&self.own, self.sweep.as_ref(), from, len) {
-            let (_, drive) = self.own.at(n);
+        for (range, n) in pieces(&self.own, automation, from, len) {
+            let (_, drive) = self.own.at(n, automation);
             saturate(&mut buf[range], drive);
         }
-        self.band.clear();
-        self.band.extend_from_slice(buf);
-        self.bump.process(&mut self.band);
-        for (x, b) in buf.iter_mut().zip(&self.band) {
+        band.clear();
+        band.extend_from_slice(buf);
+        self.bump.process(band);
+        for (x, b) in buf.iter_mut().zip(band.iter()) {
             *x += f64::from(HEAD_BUMP_MIX) * b;
         }
         self.rolloff.process(buf);
-        match self.rain {
-            Some(rain) if rain.end() > from => {
+        let rain = automation.rain();
+        match self.darkens {
+            true if rain.end() > from => {
                 self.tilt
                     .process_lifted(buf, |i| rain::lift(rain.at(from + i)));
             }
-            Some(rain) => {
+            true => {
                 let lift = rain::lift(rain.to());
                 self.tilt.process_lifted(buf, |_| lift);
             }
-            None => self.tilt.process(buf),
+            false => self.tilt.process(buf),
         }
         for x in buf.iter_mut() {
             *x *= gain_out;
         }
-        self.frame += buf.len();
     }
 
     /// The pad's swell on frame `n`; 1 on every other lane.
@@ -581,8 +574,6 @@ impl Tape {
 #[derive(Debug)]
 pub(crate) struct Room {
     hiss: Hiss,
-    /// The hiss over a step.
-    hissed: Vec<f64>,
     gains: [f64; 2],
     /// The kick onsets the bed ducks under, in order.
     kicks: Vec<usize>,
@@ -596,25 +587,21 @@ pub(crate) struct Room {
     len: usize,
     crossfade: usize,
     sr: u32,
-    /// Frames played: the song's clock.
-    frame: usize,
 }
 
 impl Room {
     fn new(len: usize, kicks: &[usize], gains: [f64; 2], sr: u32) -> Self {
         Self {
             hiss: Hiss::new(HISS_HZ, sr),
-            hissed: Vec::with_capacity(BLOCK),
             gains,
             kicks: kicks.to_vec(),
             ducking: 0,
-            floor: 10f64.powf(f64::from(DUCK_DB) / 20.0),
+            floor: gain_of_db(f64::from(DUCK_DB)),
             release: samples_at(DUCK_RELEASE_S, sr),
             tilt: Tilt::new(TILT_HZ, f64::from(TILT_LIFT), sr),
             len,
             crossfade: samples_at(BED_CROSSFADE_S, sr),
             sr,
-            frame: 0,
         }
     }
 
@@ -623,18 +610,24 @@ impl Room {
         self.len + self.crossfade
     }
 
-    /// Plays the bed over `buf`, which holds the lane's crackle, its hiss
-    /// drawn from `noise`.
-    fn process(&mut self, buf: &mut [f64], noise: &mut NoiseStream) {
+    /// Plays the bed over `buf`, song frames from `from` on, which holds the
+    /// lane's crackle, its hiss drawn from `noise` into `hissed`.
+    fn process(
+        &mut self,
+        buf: &mut [f64],
+        from: usize,
+        noise: &mut NoiseStream,
+        hissed: &mut Vec<f64>,
+    ) {
         let [gain_in, gain_out] = self.gains;
         let end = self.end();
-        let bed = end.saturating_sub(self.frame).min(buf.len());
-        self.hissed.clear();
-        self.hissed.resize(buf.len(), 0.0);
-        self.hiss.fill(&mut self.hissed[..bed], noise);
-        for (i, n) in (self.frame..self.frame + buf.len()).enumerate() {
+        let bed = end.saturating_sub(from).min(buf.len());
+        hissed.clear();
+        hissed.resize(buf.len(), 0.0);
+        self.hiss.fill(&mut hissed[..bed], noise);
+        for (i, n) in (from..from + buf.len()).enumerate() {
             buf[i] = if n < end {
-                let sum = self.hissed[i] * f64::from(HISS_LEVEL) + self.hum(n) + buf[i];
+                let sum = hissed[i] * f64::from(HISS_LEVEL) + self.hum(n) + buf[i];
                 sum * self.crossfade_gain(n) * gain_in * self.duck(n)
             } else {
                 0.0
@@ -644,7 +637,6 @@ impl Room {
         for x in buf.iter_mut() {
             *x *= gain_out;
         }
-        self.frame += buf.len();
     }
 
     /// The room tone on frame `n`.
@@ -686,8 +678,10 @@ impl Room {
             .product()
     }
 
-    fn at_rest(&self) -> bool {
-        self.frame >= self.end() && self.tilt.at_rest()
+    /// Whether the bed is past its end at song frame `at` with its tilt at
+    /// rest.
+    fn at_rest(&self, at: usize) -> bool {
+        at >= self.end() && self.tilt.at_rest()
     }
 }
 
@@ -697,6 +691,7 @@ mod tests {
     use crate::Controls;
     use crate::compose::{DrumKind, spans_a_form};
     use crate::dsp::{SAMPLE_RATE, band_energy_share};
+    use crate::stream::BLOCK;
     use crate::stream::schedule::{Schedule, UNITY, song_form};
     use crate::synth::{WOW, part};
 
@@ -738,16 +733,10 @@ mod tests {
             for (slot, &s) in drums[onset..].iter_mut().zip(&kick) {
                 *slot = f64::from(s * gain);
             }
-            let mut chain = Chain::new(
-                mood,
-                Lane::Drums,
-                &part,
-                drums.len(),
-                &[],
-                controls(mood),
-                sr,
-            );
-            chain.process(&mut drums, &mut NoiseStream::new(0));
+            let automation = Automation::new(controls(mood), None);
+            let mut chain = Chain::new(mood, Lane::Drums, &part, drums.len(), &[], &automation, sr);
+            let (mut noise, mut work) = (NoiseStream::new(0), Vec::new());
+            chain.process(&mut drums, 0, &automation, &mut noise, &mut work);
             // from rest, a causal chain is exactly silent until its input
             let first = drums.iter().position(|&v| v != 0.0);
             if first.is_none_or(|f| f < onset) {
@@ -757,25 +746,51 @@ mod tests {
         assert!(echoes.is_empty(), "kick pre-echoes: {echoes:?}");
     }
 
+    /// A tape as a song plays it: under the song's automation, on its clock.
+    struct Playing {
+        tape: Tape,
+        automation: Automation,
+        at: usize,
+        work: Vec<f64>,
+    }
+
+    impl Playing {
+        fn process(&mut self, buf: &mut [f64]) {
+            (self.tape).process(buf, self.at, &self.automation, &mut self.work);
+            self.at += buf.len();
+        }
+
+        /// The tone's own corner and drive on the frame it plays next.
+        fn own(&self) -> (f32, f64) {
+            self.tape.own.at(self.at, &self.automation)
+        }
+    }
+
     /// `lane`'s tape in a `mood` song at `daylight`, a minute long.
-    fn graded_tape(mood: Mood, lane: Lane, daylight: f32) -> Tape {
+    fn graded_tape(mood: Mood, lane: Lane, daylight: f32) -> Playing {
         tape(mood, lane, Controls::default().with_daylight(daylight))
     }
 
     /// `lane`'s tape in a `mood` song under `controls`, a minute long.
-    fn tape(mood: Mood, lane: Lane, controls: Controls) -> Tape {
+    fn tape(mood: Mood, lane: Lane, controls: Controls) -> Playing {
         let score = crate::compose::compose(mood, 0);
         let len = samples_at(60.0, SAMPLE_RATE);
+        let automation = Automation::new(controls, None);
         match Chain::new(
             mood,
             lane,
             &part(&score, lane),
             len,
             &[],
-            controls,
+            &automation,
             SAMPLE_RATE,
         ) {
-            Chain::Tape(tape) => tape,
+            Chain::Tape(tape) => Playing {
+                tape,
+                automation,
+                at: 0,
+                work: Vec::new(),
+            },
             Chain::Room(_) => panic!("{lane:?} plays through a room"),
         }
     }
@@ -826,8 +841,8 @@ mod tests {
                 Lane::Drums,
                 Controls::default().with_rain(rain as f32),
             );
-            if ramp && let Some(r) = &mut tape.rain {
-                r.toward(latch, 1.0, samples_at(4.0, SAMPLE_RATE));
+            if ramp {
+                (tape.automation.rain).toward(latch, 1.0, samples_at(4.0, SAMPLE_RATE));
             }
             let mut buf = noise.clone();
             tape.process(&mut buf);
@@ -867,13 +882,13 @@ mod tests {
         for lane in GRADED {
             for (mood, daylight) in [(Mood::Night, 0.0), (Mood::Day, 1.0)] {
                 let tape = graded_tape(mood, lane, daylight);
-                let grade = tape.grade().expect("the lane grades");
-                let got = (tape.tuned, tape.own.at(0).1);
-                assert_eq!(tape.tuned, grade.corner_hz(f64::from(daylight)));
+                let grade = tape.tape.grade().expect("the lane grades");
+                let got = (tape.tape.tuned, tape.own().1);
+                assert_eq!(tape.tape.tuned, grade.corner_hz(f64::from(daylight)));
                 assert_eq!(got, recipe(mood, lane), "{lane:?} at {daylight}");
             }
             let tape = graded_tape(Mood::Day, lane, 1.0);
-            let grade = tape.grade().expect("the lane grades");
+            let grade = tape.tape.grade().expect("the lane grades");
             let steps: Vec<(f32, f64)> = (0..=16)
                 .map(|i| f64::from(i) / 16.0)
                 .map(|t| (grade.corner_hz(t), grade.drive(t)))
@@ -894,25 +909,17 @@ mod tests {
         }
         for lane in [Lane::Pad, Lane::Texture] {
             let score = crate::compose::compose(Mood::Day, 0);
+            let automation = Automation::new(Controls::default().with_daylight(0.5), None);
             let chain = Chain::new(
                 Mood::Day,
                 lane,
                 &part(&score, lane),
                 1,
                 &[],
-                Controls::default().with_daylight(0.5),
+                &automation,
                 SAMPLE_RATE,
             );
-            assert!(
-                !matches!(
-                    chain,
-                    Chain::Tape(Tape {
-                        own: Tone::Graded(_),
-                        ..
-                    })
-                ),
-                "{lane:?} grades"
-            );
+            assert!(!chain.grades(), "{lane:?} grades");
         }
     }
 
@@ -920,9 +927,7 @@ mod tests {
     fn a_grade_lands_on_its_target_at_its_end_and_tunes_to_it_exactly() {
         let mut tape = graded_tape(Mood::Day, Lane::Drums, 0.6);
         let (latch, over) = (1000, samples_at(2.0, SAMPLE_RATE));
-        if let Some(grade) = tape.grade_mut() {
-            grade.clock.t.toward(latch, 1.0, over);
-        }
+        tape.automation.daylight.toward(latch, 1.0, over);
         let mut rng = NoiseStream::new(4);
         let mut buf: Vec<f64> = (0..latch + over + BLOCK)
             .map(|_| f64::from(rng.norm()))
@@ -930,31 +935,29 @@ mod tests {
         for chunk in buf.chunks_mut(BLOCK) {
             tape.process(chunk);
         }
-        let grade = tape.grade().expect("the lane grades");
+        let grade = tape.tape.grade().expect("the lane grades");
         assert!(
-            grade.clock.at(latch + over - 1) < 1.0,
+            tape.automation.daylight(latch + over - 1) < 1.0,
             "the grade ends early"
         );
-        assert_eq!(grade.clock.at(latch + over), 1.0);
+        assert_eq!(tape.automation.daylight(latch + over), 1.0);
         assert_eq!(
-            tape.tuned,
+            tape.tape.tuned,
             grade.corner_hz(1.0),
             "no recompute at the ramp's end"
         );
-        assert_eq!(tape.own.at(tape.frame).1, recipe(Mood::Day, Lane::Drums).1);
+        assert_eq!(tape.own().1, recipe(Mood::Day, Lane::Drums).1);
     }
 
     #[test]
     fn a_swept_grading_tape_plays_the_same_however_it_is_chunked() {
         let make = || {
             let mut tape = graded_tape(Mood::Day, Lane::Drums, 1.0);
-            if let Some(grade) = tape.grade_mut() {
-                grade.clock.t.toward(1001, 0.0, 5003);
-            }
+            tape.automation.daylight.toward(1001, 0.0, 5003);
             // segments that start and end between coefficient blocks, one
             // across the grade's ramp
             let points = vec![(0, 0.0), (3001, 1.0), (7013, 1.0), (9029, 0.0)];
-            tape.sweep = Some(Sweep::new(points));
+            tape.automation.sweep = Some(Sweep::new(points));
             tape
         };
         crate::stream::assert_chunk_invariant(1, make, |tape, buf| tape.process(buf));
@@ -964,11 +967,9 @@ mod tests {
     fn a_grading_tape_plays_the_same_however_it_is_chunked() {
         let make = || {
             let mut tape = graded_tape(Mood::Day, Lane::Drums, 1.0);
-            if let Some(grade) = tape.grade_mut() {
-                // through odd lengths, so the ramp starts and ends between
-                // coefficient blocks
-                grade.clock.t.toward(1001, 0.0, 5003);
-            }
+            // through odd lengths, so the ramp starts and ends between
+            // coefficient blocks
+            tape.automation.daylight.toward(1001, 0.0, 5003);
             tape
         };
         crate::stream::assert_chunk_invariant(1, make, |tape, buf| tape.process(buf));
@@ -986,8 +987,8 @@ mod tests {
             .collect();
         let play = |from: f32, to: Option<f32>| {
             let mut tape = graded_tape(Mood::Day, Lane::Drums, from);
-            if let (Some(grade), Some(to)) = (tape.grade_mut(), to) {
-                grade.clock.t.toward(latch, f64::from(to), over);
+            if let Some(to) = to {
+                tape.automation.daylight.toward(latch, f64::from(to), over);
             }
             let mut buf = noise.clone();
             for chunk in buf.chunks_mut(BLOCK) {
@@ -1024,9 +1025,10 @@ mod tests {
                 corner_hz: cutoff,
                 drive: f64::from(drive),
             };
-            let mut tape = Tape::new(own, None, [1.0, 1.0], sr);
+            let automation = Automation::new(Controls::default(), None);
+            let mut tape = Tape::new(own, None, false, [1.0, 1.0], &automation, sr);
             let mut buf: Vec<f64> = input.iter().map(|&v| f64::from(v)).collect();
-            tape.process(&mut buf);
+            tape.process(&mut buf, 0, &automation, &mut Vec::new());
             buf.iter().map(|&v| v as f32).collect()
         };
         let n = samples_at(2.0, sr);
@@ -1076,7 +1078,8 @@ mod tests {
             corner_hz: pad.cutoff_hz,
             drive: f64::from(DRIVE),
         };
-        let tape = Tape::new(own, Some(pad), [1.0, 1.0], sr);
+        let automation = Automation::new(Controls::default(), None);
+        let tape = Tape::new(own, Some(pad), false, [1.0, 1.0], &automation, sr);
         let mut off = Vec::new();
         for n in [(1 << 24) + 1, (1 << 24) + 3, (1 << 26) + 5, (1 << 27) + 7] {
             let hum = f64::from(room_tone(exact(HUM_HZ, n), exact(HUM_SWELL_HZ, n)));

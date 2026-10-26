@@ -79,18 +79,6 @@ impl Biquad {
 pub(crate) struct Cascade(Vec<Biquad>);
 
 impl Cascade {
-    /// Moves a [`butter_lowpass`]'s corner to `hz`, its state kept: a Direct
-    /// Form 1 section's state is its last inputs and outputs alone, so the new
-    /// coefficients filter on from the signal as it was.
-    pub(crate) fn retune_lowpass(&mut self, hz: f32, sr: u32) {
-        let order = 2 * self.0.len();
-        for (k, section) in (1..).zip(&mut self.0) {
-            let tuned = Biquad::lowpass(hz, butter_q(k, order), sr);
-            (section.b0, section.b1, section.b2) = (tuned.b0, tuned.b1, tuned.b2);
-            (section.a1, section.a2) = (tuned.a1, tuned.a2);
-        }
-    }
-
     pub(crate) fn process(&mut self, buf: &mut [f64]) {
         for s in &mut self.0 {
             s.process(buf);
@@ -103,20 +91,48 @@ impl Cascade {
     }
 }
 
+/// A [`butter_lowpass`]: the one cascade whose corner may move, since only
+/// its sections' coefficients are the low-pass ones at the new corner.
+#[derive(Debug)]
+pub(crate) struct Lowpass(Cascade);
+
+impl Lowpass {
+    /// Moves the corner to `hz`, its state kept: a Direct Form 1 section's
+    /// state is its last inputs and outputs alone, so the new coefficients
+    /// filter on from the signal as it was.
+    pub(crate) fn retune(&mut self, hz: f32, sr: u32) {
+        let order = 2 * self.0.0.len();
+        for (k, section) in (1..).zip(&mut self.0.0) {
+            let tuned = Biquad::lowpass(hz, butter_q(k, order), sr);
+            (section.b0, section.b1, section.b2) = (tuned.b0, tuned.b1, tuned.b2);
+            (section.a1, section.a2) = (tuned.a1, tuned.a2);
+        }
+    }
+
+    pub(crate) fn process(&mut self, buf: &mut [f64]) {
+        self.0.process(buf);
+    }
+
+    /// Whether its state is all zero, so silence in plays silence out.
+    pub(crate) fn at_rest(&self) -> bool {
+        self.0.at_rest()
+    }
+}
+
 /// A Butterworth low-pass of even `order` at `hz` at `sr`: one section per
 /// quadratic factor of the normalized Butterworth polynomial,
 /// `s² − 2s·cos((2k + n − 1)π / 2n) + 1` for `k` in `1..=n/2`
 /// (<https://en.wikipedia.org/wiki/Butterworth_filter>).
-pub(crate) fn butter_lowpass(hz: f32, order: usize, sr: u32) -> Cascade {
+pub(crate) fn butter_lowpass(hz: f32, order: usize, sr: u32) -> Lowpass {
     debug_assert!(
         order.is_multiple_of(2),
         "an odd order needs a first-order section"
     );
-    Cascade(
+    Lowpass(Cascade(
         (1..=order / 2)
             .map(|k| Biquad::lowpass(hz, butter_q(k, order), sr))
             .collect(),
-    )
+    ))
 }
 
 /// A Butterworth high-pass of even `order` at `hz` at `sr`, from the
@@ -196,7 +212,7 @@ mod tests {
         for (sr, order) in RATES.into_iter().flat_map(|sr| [(sr, 2), (sr, 4)]) {
             let warped = |hz: f64| (PI * hz / f64::from(sr)).tan();
             let n = order as i32;
-            let cascade = butter_lowpass(corner as f32, order, sr);
+            let cascade = butter_lowpass(corner as f32, order, sr).0;
             for hz in [20.0, 60.0, 90.0, 1000.0, 6500.0, 12000.0] {
                 let want = 1.0 / (1.0 + (warped(hz) / warped(corner)).powi(2 * n));
                 let got = power_gain(&cascade, hz, sr);
@@ -253,8 +269,8 @@ mod tests {
         for (mut cascade, hz) in [
             (cookbook_bandpass(60.0, 120.0, SAMPLE_RATE), 30.0),
             (cookbook_bandpass(60.0, 120.0, SAMPLE_RATE), 90.0),
-            (butter_lowpass(6500.0, 4, SAMPLE_RATE), 1000.0),
-            (butter_lowpass(6500.0, 4, SAMPLE_RATE), 12000.0),
+            (butter_lowpass(6500.0, 4, SAMPLE_RATE).0, 1000.0),
+            (butter_lowpass(6500.0, 4, SAMPLE_RATE).0, 12000.0),
         ] {
             let want = power_gain(&cascade, hz, SAMPLE_RATE) / 2.0;
             let mut buf: Vec<f64> = (0..2 * sr)
@@ -273,17 +289,20 @@ mod tests {
             let mut moved = butter_lowpass(2000.0, 4, sr);
             let mut signal = vec![0.5; 64];
             moved.process(&mut signal);
-            let state: Vec<[f64; 4]> = moved.0.iter().map(|s| [s.x1, s.x2, s.y1, s.y2]).collect();
-            moved.retune_lowpass(7500.0, sr);
+            let state = |lp: &Lowpass| -> Vec<[f64; 4]> {
+                lp.0.0.iter().map(|s| [s.x1, s.x2, s.y1, s.y2]).collect()
+            };
+            let before = state(&moved);
+            moved.retune(7500.0, sr);
             let fresh = butter_lowpass(7500.0, 4, sr);
             for hz in [100.0, 2000.0, 7500.0, 15_000.0] {
                 assert_eq!(
-                    response(&moved, hz, sr),
-                    response(&fresh, hz, sr),
+                    response(&moved.0, hz, sr),
+                    response(&fresh.0, hz, sr),
                     "{sr} at {hz}"
                 );
             }
-            let kept: Vec<[f64; 4]> = moved.0.iter().map(|s| [s.x1, s.x2, s.y1, s.y2]).collect();
+            let (kept, state) = (state(&moved), before);
             assert_eq!(kept, state, "{sr}");
         }
     }
@@ -312,7 +331,7 @@ mod tests {
         crate::stream::assert_chunk_invariant(
             1,
             || butter_lowpass(6500.0, 4, SAMPLE_RATE),
-            Cascade::process,
+            Lowpass::process,
         );
     }
 }

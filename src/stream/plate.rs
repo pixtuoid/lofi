@@ -29,7 +29,7 @@ pub(crate) fn send(lane: Lane) -> Option<f64> {
         Lane::Sparkle => SPARKLE_SEND_DB,
         Lane::Drums | Lane::Bass | Lane::Texture => return None,
     };
-    Some(10f64.powf(db / 20.0))
+    Some(super::gain_of_db(db))
 }
 
 /// The rate Table 1's lengths and Table 2's taps are counted at: "Sample
