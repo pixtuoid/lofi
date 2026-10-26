@@ -106,7 +106,8 @@ impl Form {
         self.exit
     }
 
-    /// The body bar whose music lanes low-pass for one bar, if any.
+    /// The song bar, phrase 1's last, whose music lanes low-pass for one bar,
+    /// if any.
     pub fn dip(&self) -> Option<usize> {
         self.dip
     }
@@ -127,6 +128,20 @@ impl Form {
     #[cfg(test)]
     pub(crate) fn mutes_any(&self) -> bool {
         self.plays.iter().any(|&plays| plays != Plays::ALL)
+    }
+
+    /// Whether the form fades or filters somewhere: an edge or a dip.
+    #[cfg(test)]
+    pub(crate) fn edged(&self) -> bool {
+        self.entry != Edge::Plain || self.exit != Edge::Plain || self.dip.is_some()
+    }
+
+    /// The form with its intro's edge `entry` and its outro's `exit`, the
+    /// rest kept, for a test's twin.
+    #[cfg(test)]
+    pub(crate) fn with_edges(mut self, entry: Edge, exit: Edge) -> Self {
+        (self.entry, self.exit) = (entry, exit);
+        self
     }
 
     /// The lanes song bar `bar` strikes, to change for a test.

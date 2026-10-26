@@ -99,8 +99,8 @@ fn run() -> std::io::Result<()> {
                     (Lanes::Stems(stems), mix, took, rendered)
                 }
             };
-            // the score's loop, rounded as the engine rounds it
-            let loop_len = (f64::from(score.loop_secs()) * SR).round() as usize;
+            // the score's loop, rounded in f32 as the engine rounds it
+            let loop_len = (score.loop_secs() * SAMPLE_RATE as f32).round() as usize;
             println!(
                 "{} seed {seed}: {}; lead {}, loop {:.2} s; song {:.1} s: {}",
                 batch.mood_name(),

@@ -199,7 +199,7 @@ constraint and re-batch), and every taste axis is a data table or named const wi
 | room-tone crackle          | `synth::CRACKLE_POPS_PER_SEC` (one knob, both beds)      |
 | lane gains, mix level      | `stream::master`: `tier_gains`; `Performance::MASTER_GAIN` |
 | staging, bed crossfade     | `stream::lanes`: `staging`, `BED_CROSSFADE_S`            |
-| song form (intro, sections, outro, edges) | `compose::form`: `INTRO_KINDS`, `OUTRO_KINDS`, `THINNINGS`, its `_P` consts |
+| song form (intro, sections, outro, edges) | `compose::form`: `INTRO_KINDS`, `OUTRO_KINDS`, `THINNINGS`, its `_P` consts; edges' depth and corner: `stream::schedule::FADE_FLOOR_DB`, `stream::lanes::FILTERED_HZ` |
 | **a new instrument**       | see the checklist below                                  |
 
 **Add-an-instrument checklist** (executed once for the `Pluck` lead — repeat verbatim):

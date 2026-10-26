@@ -5,13 +5,14 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 
+use pixtuoid_lofi::audition::Edge;
 use pixtuoid_lofi::dsp::SAMPLE_RATE;
 use pixtuoid_lofi::{Controls, Frame, Performance, audition};
 
 /// The most heap a `Performance` may hold at once, in bytes: the highest
 /// high-water this test measured plus 25 %, both of which the commit that set
 /// it records.
-const BUDGET: usize = 11_134_025;
+const BUDGET: usize = 11_331_440;
 
 /// Bytes allocated and not yet freed, and the most there have been.
 static LIVE: AtomicUsize = AtomicUsize::new(0);
@@ -56,12 +57,20 @@ fn fingerprint(frames: &[Frame]) -> u64 {
 /// `a`, `b` from its second bar, then song 1 under `b`; panics unless it
 /// played those two songs.
 fn high_water(seed: u64, a: Controls, b: Controls) -> usize {
-    // songs with an intro or an outro, which mute a lane: the budget holds
-    // for a song's form, not only for one that plays every lane throughout
-    for (k, c) in [(0, a), (1, b)] {
-        let form = audition::song_score(seed, k, c).form().clone();
-        assert!(form.intro() + form.outro() > 0, "song {k}: {form}");
+    // songs with an intro or an outro, which mute a lane, and one that fades
+    // or filters: the budget holds for a song's form, not only for one that
+    // plays every lane throughout
+    let forms = [(0, a), (1, b)].map(|(k, c)| audition::song_score(seed, k, c).form().clone());
+    for form in &forms {
+        assert!(form.intro() + form.outro() > 0, "{form}");
     }
+    let edged = |f: &audition::Form| {
+        f.entry() != Edge::Plain || f.exit() != Edge::Plain || f.dip().is_some()
+    };
+    assert!(
+        forms.iter().any(edged),
+        "neither song fades or filters: {forms:?}"
+    );
     let span = audition::song_len(seed, 0, a) + audition::song_len(seed, 1, b);
     // a chunk as a player renders ahead, allocated before the count starts
     let mut chunk = vec![Frame::default(); SAMPLE_RATE as usize / 2];

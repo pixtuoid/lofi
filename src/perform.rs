@@ -274,12 +274,21 @@ mod tests {
         crate::synth::samples_at(audition::song_score(seed, k, c).loop_secs(), SAMPLE_RATE)
     }
 
-    /// Asserts song `k` of `seed`'s run mutes some lane somewhere, so an
-    /// invariance proven over it is proven over a form.
-    fn assert_arranged(seed: u64, k: u64, c: Controls) {
+    /// Asserts each of `songs`, `(seed, k)`, mutes some lane somewhere and
+    /// one of them fades or filters, so an invariance proven over them is
+    /// proven over a form. A form reads no control.
+    fn assert_spans_a_form(songs: &[(u64, u64)]) {
+        let form = |&(seed, k): &(u64, u64)| audition::song_score(seed, k, Controls::default());
+        for song in songs {
+            let score = form(song);
+            assert!(
+                score.form().mutes_any(),
+                "{song:?} plays every lane in every bar"
+            );
+        }
         assert!(
-            audition::song_score(seed, k, c).form().mutes_any(),
-            "song {k} of seed {seed} plays every lane in every bar"
+            songs.iter().any(|song| form(song).form().edged()),
+            "no song of {songs:?} fades or filters"
         );
     }
 
@@ -391,11 +400,15 @@ mod tests {
                 (corners.iter().zip(corners.iter().rev())).map(move |(&a, &b)| (seed, a, b))
             })
             .collect();
+        let songs: Vec<(u64, u64)> = runs
+            .iter()
+            .flat_map(|&(seed, ..)| [(seed, 0), (seed, 1)])
+            .collect();
+        assert_spans_a_form(&songs);
         let heard: Vec<Heard> = std::thread::scope(|scope| {
             let runs: Vec<_> = (runs.iter())
                 .map(|&(seed, a, b)| {
                     scope.spawn(move || {
-                        assert_arranged(seed, 0, a);
                         let span = audition::song_len(seed, 0, a) + loop_frames(seed, 1, b);
                         // past song 0's last latch, so it plays its corner to
                         // its end and the next song latches the opposite one
@@ -579,9 +592,7 @@ mod tests {
         let asks = [(lens[0] / 2, order[1]), (bounds[0] + lens[1] / 2, order[2])];
         // through song 2's first loop, past every tail of song 1
         let span = bounds[1] + loop_frames(seed, 2, order[2]);
-        for k in 0..3 {
-            assert_arranged(seed, k, order[k as usize]);
-        }
+        assert_spans_a_form(&[(seed, 0), (seed, 1), (seed, 2)]);
         let whole = play(seed, order[0], &asks, &[], span);
         assert!(
             [0, bounds[0], bounds[1]]
@@ -680,6 +691,53 @@ mod tests {
     }
 
     #[test]
+    fn a_cold_start_after_a_ringing_or_fading_close_plays_as_it_does_alone() {
+        use crate::compose::{Edge, Form};
+        type Close = (&'static str, fn(&Form) -> bool);
+        let c = Controls::default();
+        // a ring-out is the one two-bar outro
+        let closes: [Close; 2] = [
+            ("ring-out", |f| f.outro() == 2),
+            ("fade-out", |f| f.exit() == Edge::Fade),
+        ];
+        for (name, closes) in closes {
+            let (seed, k) = (0..64)
+                .flat_map(|seed| (0..6).map(move |k| (seed, k)))
+                .find(|&(seed, k)| {
+                    closes(audition::song_score(seed, k, c).form())
+                        && audition::song_score(seed, k + 1, c).form().intro() == 0
+                })
+                .expect("a seed plays the pair");
+            let mut playing = Performance::from_song(seed, k, c);
+            let closing = playing.finish_song();
+            let reached = playing.finish_song();
+            let alone = audition::song(seed, k + 1, c, &[]);
+            assert_eq!(reached.len(), alone.len(), "{name}");
+            let first_loop = loop_frames(seed, k + 1, c);
+            assert_eq!(
+                first_diff(&reached[first_loop..], &alone[first_loop..]),
+                None,
+                "{name}: the cold start after its first loop"
+            );
+            // the join steps no further than the closing song itself does
+            let step = |frames: &[Frame]| {
+                (frames.windows(2))
+                    .flat_map(|w| [0, 1].map(|side| (w[1][side] - w[0][side]).abs()))
+                    .fold(0.0f32, f32::max)
+            };
+            let join: Vec<Frame> = (closing[closing.len() - BLOCK..].iter())
+                .chain(&reached[..BLOCK])
+                .copied()
+                .collect();
+            let (at_join, within) = (step(&join), step(&closing));
+            assert!(
+                at_join <= within,
+                "{name}: the join steps {at_join}, the song {within}"
+            );
+        }
+    }
+
+    #[test]
     fn a_song_plays_the_same_reached_by_playback_or_alone() {
         let (seed, c) = (5, Controls::default());
         // songs before it at other controls, which it must not remember
@@ -691,7 +749,7 @@ mod tests {
         let reached = playing.finish_song();
         let alone = audition::song(seed, 2, c, &[]);
         assert!(audible(&alone));
-        assert_arranged(seed, 2, c);
+        assert_spans_a_form(&[(seed, 0), (seed, 1), (seed, 2)]);
         assert_eq!(reached.len(), alone.len());
         let first_loop = loop_frames(seed, 2, c);
         assert!(
@@ -757,15 +815,17 @@ mod tests {
             night().with_intensity(0.0),
             Controls::default().with_intensity(1.0),
         ];
+        // a run whose ten minutes fade or filter somewhere, as most seeds' do
+        let seed = 2;
         let ten = 10 * 60 * u64::from(SAMPLE_RATE);
         // as many songs as start inside ten minutes at their own lengths
         let (mut want, mut start) = (0, 0);
         while start < ten {
-            assert_arranged(7, want, asks[want as usize % asks.len()]);
-            start += audition::song_len(7, want, asks[want as usize % asks.len()]) as u64;
+            start += audition::song_len(seed, want, asks[want as usize % asks.len()]) as u64;
             want += 1;
         }
-        let mut p = Performance::new(7, asks[0]);
+        assert_spans_a_form(&(0..want).map(|k| (seed, k)).collect::<Vec<_>>());
+        let mut p = Performance::new(seed, asks[0]);
         let mut songs = 0;
         while p.position() < ten {
             let from = p.position();
@@ -956,7 +1016,7 @@ mod tests {
         }
         reached.extend(playing.finish_song());
         let alone = audition::song(seed, 1, into, &calls);
-        assert_arranged(seed, 1, into);
+        assert_spans_a_form(&[(seed, 0), (seed, 1)]);
         assert_eq!(reached.len(), alone.len());
         let first_loop = loop_frames(seed, 1, into);
         assert!(
@@ -975,6 +1035,11 @@ mod tests {
         // opinion, as the corners' row: few frames turned down, and not far
         const MOST_LIMITED_SHARE: f64 = 0.001;
         const DEEPEST_REDUCTION_DB: f64 = 1.0;
+        assert_spans_a_form(
+            &(0..4)
+                .flat_map(|seed| (0..3).map(move |k| (seed, k)))
+                .collect::<Vec<_>>(),
+        );
         let runs: Vec<Heard> = std::thread::scope(|scope| {
             let runs: Vec<_> = (0..4u64)
                 .map(|seed| {

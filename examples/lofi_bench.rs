@@ -17,7 +17,7 @@ use std::hint::black_box;
 use std::ops::Range;
 use std::process::ExitCode;
 
-use pixtuoid_lofi::audition::{self, TIER_INTENSITIES, WHOLE_LANE_LUFS_SD};
+use pixtuoid_lofi::audition::{self, Edge, TIER_INTENSITIES, WHOLE_LANE_LUFS_SD};
 use pixtuoid_lofi::dsp::SAMPLE_RATE;
 use pixtuoid_lofi::{Controls, Frame, Performance};
 
@@ -96,6 +96,17 @@ fn main() -> ExitCode {
 fn slowest_chunk(buf: &mut [Frame]) -> Result<(f64, u64, u64), String> {
     let day = Controls::default().with_intensity(1.0);
     let night = day.with_daylight(0.0).with_rain(1.0);
+    // a song that mutes no lane or no song that fades or filters would time
+    // a render of less than the forms the run plays
+    let forms: Vec<_> = (SEEDS.flat_map(|seed| [(seed, 0, day), (seed, 1, night)]))
+        .map(|(seed, k, c)| audition::song_score(seed, k, c).form().clone())
+        .collect();
+    let edged = |f: &audition::Form| {
+        f.entry() != Edge::Plain || f.exit() != Edge::Plain || f.dip().is_some()
+    };
+    if forms.iter().any(|f| f.intro() + f.outro() == 0) || !forms.iter().any(edged) {
+        return Err(format!("the timed songs play too little form: {forms:?}"));
+    }
     let mut worst = (0.0, SEEDS.start, 0);
     for seed in SEEDS {
         let span = audition::song_len(seed, 0, day) + audition::song_len(seed, 1, night);
