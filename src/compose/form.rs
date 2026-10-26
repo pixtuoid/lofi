@@ -24,13 +24,16 @@ impl Plays {
         .with(Lane::Pad, true)
         .with(Lane::Texture, true);
 
-    /// Every lane but the lead, which sings in the dense cores only.
-    const BAND: Self = Self::ALL.with(Lane::Sparkle, false);
-
     /// These lanes, with `lane` striking or not.
     const fn with(mut self, lane: Lane, strikes: bool) -> Self {
         self.0[lane as usize] = strikes;
         self
+    }
+
+    /// These lanes, with the keys and the lead striking or not: R11's "keys"
+    /// band holds both, so the form moves them together.
+    const fn with_keys(self, strikes: bool) -> Self {
+        self.with(Lane::Keys, strikes).with(Lane::Sparkle, strikes)
     }
 
     /// Whether `lane` strikes.
@@ -161,7 +164,7 @@ impl Form {
 }
 
 /// Each part's bar count, then each lane out in it as the bars it is out:
-/// `intro 4: drums 0-3 · body 40: sparkle 20-27 · outro 4 fade`.
+/// `intro 4: drums 0-3 · body 40: bass 20-27 · outro 4 fade`.
 impl fmt::Display for Form {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let body = self.intro + self.body;
@@ -227,16 +230,15 @@ enum Closing {
 }
 
 /// The intros and their weights: LOFI-BIBLE R11's start counts, the sparse
-/// ones split by the lanes out and its unsplit ones left out. The lead sits
-/// out every intro.
+/// ones split by the lanes out and its unsplit ones left out.
 const INTRO_KINDS: [(Opening, u32); 8] = [
-    (Opening::Sparse(Plays::BED.with(Lane::Keys, true)), 27),
+    (Opening::Sparse(Plays::BED.with_keys(true)), 27),
     (
-        Opening::Sparse(Plays::BED.with(Lane::Keys, true).with(Lane::Bass, true)),
+        Opening::Sparse(Plays::BED.with_keys(true).with(Lane::Bass, true)),
         13,
     ),
     (
-        Opening::Sparse(Plays::BED.with(Lane::Keys, true).with(Lane::Drums, true)),
+        Opening::Sparse(Plays::BED.with_keys(true).with(Lane::Drums, true)),
         10,
     ),
     (Opening::Sparse(Plays::BED), 7),
@@ -253,13 +255,13 @@ const INTRO_KINDS: [(Opening, u32); 8] = [
 /// the lanes out, its noise-only ones joining the ring-out and its unsplit
 /// ones left out.
 const OUTRO_KINDS: [(Closing, u32); 7] = [
-    (Closing::Sparse(Plays::BED.with(Lane::Keys, true)), 14),
+    (Closing::Sparse(Plays::BED.with_keys(true)), 14),
     (
-        Closing::Sparse(Plays::BED.with(Lane::Keys, true).with(Lane::Drums, true)),
+        Closing::Sparse(Plays::BED.with_keys(true).with(Lane::Drums, true)),
         11,
     ),
     (
-        Closing::Sparse(Plays::BED.with(Lane::Keys, true).with(Lane::Bass, true)),
+        Closing::Sparse(Plays::BED.with_keys(true).with(Lane::Bass, true)),
         10,
     ),
     (Closing::RingOut, 18),
@@ -276,14 +278,14 @@ enum Thinning {
     Break,
     /// The bass drops out.
     BassDrop,
-    /// Only the lead rests.
-    Rest,
+    /// Nothing drops out.
+    Steady,
 }
 
 const THINNINGS: [(Thinning, u32); 3] = [
     (Thinning::Break, 3),
     (Thinning::BassDrop, 5),
-    (Thinning::Rest, 2),
+    (Thinning::Steady, 2),
 ];
 
 /// Short and long intros' bars, and the long one's share: R11's count of
@@ -375,8 +377,8 @@ pub(crate) fn arrange(seed: u64) -> Form {
 
     let (intro_plays, intro, entry) = match opening {
         Opening::Sparse(plays) => (plays, INTRO_BARS[usize::from(long_intro)], Edge::Plain),
-        Opening::Edged(edge) => (Plays::BAND, INTRO_BARS[usize::from(long_intro)], edge),
-        Opening::Cold => (Plays::BAND, 0, Edge::Plain),
+        Opening::Edged(edge) => (Plays::ALL, INTRO_BARS[usize::from(long_intro)], edge),
+        Opening::Cold => (Plays::ALL, 0, Edge::Plain),
     };
     let mut plays = vec![intro_plays; intro];
 
@@ -384,9 +386,6 @@ pub(crate) fn arrange(seed: u64) -> Form {
     let thin = phrases / 2;
     let phrase = |p: usize| p * GEN_LOOP_BARS..(p + 1) * GEN_LOOP_BARS;
     let half = |p: usize| p * GEN_LOOP_BARS + GEN_LOOP_BARS / 2..(p + 1) * GEN_LOOP_BARS;
-    for bar in &mut body[phrase(thin)] {
-        bar.set(Lane::Sparkle, false);
-    }
     let span = if whole { phrase(thin) } else { half(thin) };
     let keeps_low = match thinning {
         Thinning::Break => {
@@ -402,7 +401,7 @@ pub(crate) fn arrange(seed: u64) -> Form {
             }
             false
         }
-        Thinning::Rest => true,
+        Thinning::Steady => true,
     };
     // a dense phrase cuts only into a phrase that opens on the beat, and never
     // into the outro, where a cut would just start a beatless outro early
@@ -442,7 +441,7 @@ pub(crate) fn arrange(seed: u64) -> Form {
         }
         Closing::Edged(edge) => {
             let bars = OUTRO_BARS[usize::from(long_outro < LONG_EDGED_OUTRO_P)];
-            plays.extend(std::iter::repeat_n(Plays::BAND, bars));
+            plays.extend(std::iter::repeat_n(Plays::ALL, bars));
             (bars, edge)
         }
         Closing::Cold => (0, Edge::Plain),
@@ -469,11 +468,6 @@ mod tests {
 
     fn forms() -> impl Iterator<Item = (u64, Form)> {
         (0..FORMS).map(|seed| (seed, arrange(seed)))
-    }
-
-    /// The body phrase that thins: the middle one, rounded down.
-    fn thinner(form: &Form) -> usize {
-        (form.body() / GEN_LOOP_BARS) / 2
     }
 
     /// The body's bars, by index into the song.
@@ -548,15 +542,13 @@ mod tests {
                     at(&format!("pad out at {bar}"))
                 );
             }
-            let t = thinner(&form);
             for bar in 0..form.bars() {
-                let phrase = bar.checked_sub(form.intro()).map(|b| b / GEN_LOOP_BARS);
-                let dense = body(&form).contains(&bar) && phrase != Some(t);
+                let plays = form.plays(bar);
                 assert_eq!(
-                    form.plays(bar).strikes(Lane::Sparkle),
-                    dense,
+                    plays.strikes(Lane::Sparkle),
+                    plays.strikes(Lane::Keys),
                     "{}",
-                    at(&format!("lead at {bar}"))
+                    at(&format!("the lead apart from the keys at {bar}"))
                 );
             }
             // a row changes on a 4-bar line, but for a cut or a ring-out
@@ -611,10 +603,8 @@ mod tests {
                 if edge != Edge::Plain {
                     assert!(!part.is_empty(), "{}", at("an edge with no bars"));
                     for bar in part {
-                        let mut band = *form.plays(bar);
-                        band.set(Lane::Sparkle, true);
                         assert_eq!(
-                            band,
+                            *form.plays(bar),
                             Plays::ALL,
                             "{}",
                             at(&format!("an edge's band at {bar}"))
@@ -772,7 +762,7 @@ mod tests {
         assert_eq!(h, FORM_GOLDEN, "{h:#018x}");
     }
 
-    const FORM_GOLDEN: u64 = 0xf625_62fa_d799_fb89;
+    const FORM_GOLDEN: u64 = 0x3dec_540e_1881_cac9;
 
     #[test]
     fn a_form_prints_its_parts() {

@@ -274,18 +274,15 @@ mod tests {
         crate::synth::samples_at(audition::song_score(seed, k, c).loop_secs(), SAMPLE_RATE)
     }
 
-    /// Asserts each of `songs`, `(seed, k)`, mutes some lane somewhere and
-    /// one of them fades or filters, so an invariance proven over them is
-    /// proven over a form. A form reads no control.
+    /// Asserts one of `songs`, `(seed, k)`, mutes some lane somewhere and one
+    /// fades or filters, so an invariance proven over them is proven over a
+    /// form. A form reads no control.
     fn assert_spans_a_form(songs: &[(u64, u64)]) {
         let form = |&(seed, k): &(u64, u64)| audition::song_score(seed, k, Controls::default());
-        for song in songs {
-            let score = form(song);
-            assert!(
-                score.form().mutes_any(),
-                "{song:?} plays every lane in every bar"
-            );
-        }
+        assert!(
+            songs.iter().any(|song| form(song).form().mutes_any()),
+            "every song of {songs:?} plays every lane in every bar"
+        );
         assert!(
             songs.iter().any(|song| form(song).form().edged()),
             "no song of {songs:?} fades or filters"

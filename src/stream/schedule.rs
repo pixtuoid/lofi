@@ -1793,7 +1793,7 @@ mod tests {
             .filter(|(_, l)| **l != Lane::Texture)
         {
             let (got, want) = (&got[i][len..], &want[i][len..]);
-            // the lead sits the outro out, so it may ring nothing past the end
+            // a lane whose last note died before the end rings nothing past it
             ringing += usize::from(energy(want) > 0.0);
             let off = got
                 .iter()
