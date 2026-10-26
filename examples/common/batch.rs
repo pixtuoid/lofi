@@ -6,7 +6,6 @@ use std::io;
 use std::ops::Range;
 
 use pixtuoid_lofi::audition::{self, Lane, Score, TIER_INTENSITIES, lane_gain, render_lane};
-use pixtuoid_lofi::dsp::NoiseStream;
 use pixtuoid_lofi::{Controls, Frame, Performance};
 
 /// The `--mood` vocabulary paired with the daylight it plays at, so the parse
@@ -631,8 +630,8 @@ pub(crate) fn lane_gains(controls: Controls) -> [f32; Lane::ALL.len()] {
 /// Every lane of `score` in [`Lane::ALL`] order, drawn from one rng stream as a
 /// take renders.
 fn render_take(score: &Score) -> [Vec<f32>; Lane::ALL.len()] {
-    let mut rng = NoiseStream::new(LANE_SEED);
-    Lane::ALL.map(|lane| render_lane(score, lane, &mut rng))
+    let mut noise = audition::lane_noise(LANE_SEED);
+    std::array::from_fn(|i| render_lane(score, Lane::ALL[i], &mut noise[i]))
 }
 
 #[cfg(test)]

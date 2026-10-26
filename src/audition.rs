@@ -15,6 +15,14 @@ pub use crate::stream::master::{TIER_INTENSITIES, lane_gain};
 pub use crate::stream::schedule::{bar_frames, song_bars, song_form, song_score};
 pub use crate::synth::{render_lane, samples_at};
 
+/// Each lane's noise for a whole-lane take seeded at `seed`: one fork of the
+/// seed's stream a lane, in [`Lane::ALL`] order, as a stream song gives each
+/// lane's cues one, so what one lane draws moves no other lane's draws.
+pub fn lane_noise(seed: u64) -> [crate::dsp::NoiseStream; Lane::ALL.len()] {
+    let mut noise = crate::dsp::NoiseStream::new(seed);
+    Lane::ALL.map(|_| noise.fork())
+}
+
 use crate::dsp::SAMPLE_RATE;
 use crate::perform::Probe;
 use crate::stream::LANES;
@@ -159,8 +167,8 @@ pub const LUFS_SEEDS: Range<u64> = 0..24;
 /// --engine whole` prints it over those seeds at the row's `--tier` and
 /// `--mood`. A non-regression, not a target.
 pub const WHOLE_LANE_LUFS_SD: [(f32, f32, f64); 2] = [
-    (TIER_INTENSITIES[1], 1.0, 0.3872),
-    (TIER_INTENSITIES[1], 0.0, 0.2765),
+    (TIER_INTENSITIES[1], 1.0, 0.4182),
+    (TIER_INTENSITIES[1], 0.0, 0.2912),
 ];
 
 /// How much a `Performance`'s songs' gated loudness varied across
