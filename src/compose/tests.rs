@@ -56,6 +56,33 @@ fn template_chords_and_roots_are_diatonic_or_deliberately_chromatic() {
     }
 }
 
+/// The chart's own pairs: an interval at its floor sounds clear, a semitone
+/// under muddy, and a unison or an octave at any height clear.
+#[test]
+fn an_interval_under_its_floor_sounds_muddy() {
+    for (lo, hi) in [(52, 53), (48, 51), (46, 50), (34, 41), (41, 49), (34, 50)] {
+        assert!(!muddy(lo, hi) && muddy(lo - 1, hi - 1), "{lo}-{hi}");
+    }
+    assert!(!muddy(24, 24) && !muddy(24, 36));
+}
+
+/// Every chord a song voices sounds clear: each template only in the keys it
+/// sounds clear in, its own among them so the draw has one, and the
+/// turnaround's dominant.
+#[test]
+fn every_chord_a_song_voices_sounds_clear() {
+    for (mood, i, p) in templates() {
+        assert!(p.clear(), "{mood:?}[{i}] in its own key");
+    }
+    for mood in [Mood::Day, Mood::Night] {
+        for seed in 0..SWEEP {
+            for notes in compose(mood, seed).bar_chords {
+                assert!(chord(notes, 0).clear(), "{mood:?} seed {seed}: {notes:?}");
+            }
+        }
+    }
+}
+
 #[test]
 fn every_shift_keeps_a_template_in_its_own_key() {
     for (mood, i, p) in templates() {
@@ -669,4 +696,4 @@ fn every_seed_composes_the_score_it_did() {
     assert_eq!(h, EVERY_SEED_GOLDEN, "{h:#018x}");
 }
 
-const EVERY_SEED_GOLDEN: u64 = 0xbfde_8336_275f_100a;
+const EVERY_SEED_GOLDEN: u64 = 0x1761_ed49_8eeb_4e98;

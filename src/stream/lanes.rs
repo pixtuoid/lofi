@@ -161,18 +161,19 @@ impl Chain {
 
     /// Plays the lane's frames from song frame `from` in place, under
     /// `automation`, working in `work`; the texture draws its hiss from
-    /// `noise`.
+    /// `noise`, and ducks under the kicks in them if `drums_present`.
     pub(crate) fn process(
         &mut self,
         buf: &mut [f64],
         from: usize,
         automation: &Automation,
         noise: &mut NoiseStream,
+        drums_present: bool,
         work: &mut Vec<f64>,
     ) {
         match self {
             Self::Tape(tape) => tape.process(buf, from, automation, work),
-            Self::Room(room) => room.process(buf, from, noise, work),
+            Self::Room(room) => room.process(buf, from, noise, drums_present, work),
         }
     }
 
@@ -578,8 +579,12 @@ impl Tape {
 pub(crate) struct Room {
     hiss: Hiss,
     gains: [f64; 2],
-    /// The kick onsets the bed ducks under, in order.
-    kicks: Vec<usize>,
+    /// The kick onsets the form strikes, in order, each with whether it
+    /// sounded once the bed reached it: a kick struck while the drums are
+    /// absent is silent, and a duck under it would pump the room with no beat.
+    kicks: Vec<(usize, bool)>,
+    /// The first of `kicks` the bed hasn't reached.
+    reached: usize,
     /// The first of `kicks` whose duck still releases.
     ducking: usize,
     /// The duck's floor gain, and its release in frames.
@@ -597,7 +602,8 @@ impl Room {
         Self {
             hiss: Hiss::new(HISS_HZ, sr),
             gains,
-            kicks: kicks.to_vec(),
+            kicks: kicks.iter().map(|&kick| (kick, false)).collect(),
+            reached: 0,
             ducking: 0,
             floor: gain_of_db(f64::from(DUCK_DB)),
             release: samples_at(DUCK_RELEASE_S, sr),
@@ -614,14 +620,23 @@ impl Room {
     }
 
     /// Plays the bed over `buf`, song frames from `from` on, which holds the
-    /// lane's crackle, its hiss drawn from `noise` into `hissed`.
+    /// lane's crackle, its hiss drawn from `noise` into `hissed`: ducked
+    /// under the kicks in them if `drums_present`, which a step holds from
+    /// one latch to the next.
     fn process(
         &mut self,
         buf: &mut [f64],
         from: usize,
         noise: &mut NoiseStream,
+        drums_present: bool,
         hissed: &mut Vec<f64>,
     ) {
+        while let Some(kick) = self.kicks.get_mut(self.reached)
+            && kick.0 < from + buf.len()
+        {
+            kick.1 = drums_present;
+            self.reached += 1;
+        }
         let [gain_in, gain_out] = self.gains;
         let end = self.end();
         let bed = end.saturating_sub(from).min(buf.len());
@@ -663,21 +678,23 @@ impl Room {
         (x * FRAC_PI_2).sin()
     }
 
-    /// The duck's gain on frame `n`: each kick's dip releasing linearly,
-    /// multiplied where releases overlap, as the whole-lane night texture ducks.
+    /// The duck's gain on frame `n`: each sounded kick's dip releasing
+    /// linearly, multiplied where releases overlap, as the whole-lane night
+    /// texture ducks.
     fn duck(&mut self, n: usize) -> f64 {
         while self
             .kicks
             .get(self.ducking)
-            .is_some_and(|&kick| kick + self.release <= n)
+            .is_some_and(|&(kick, _)| kick + self.release <= n)
         {
             self.ducking += 1;
         }
         let (floor, release) = (self.floor, self.release as f64);
         self.kicks[self.ducking..]
             .iter()
-            .take_while(|&&kick| kick <= n)
-            .map(|&kick| floor + (1.0 - floor) * (n - kick) as f64 / release)
+            .take_while(|&&(kick, _)| kick <= n)
+            .filter(|&&(_, sounded)| sounded)
+            .map(|&(kick, _)| floor + (1.0 - floor) * (n - kick) as f64 / release)
             .product()
     }
 
@@ -747,7 +764,7 @@ mod tests {
             let automation = Automation::new(controls(mood), None);
             let mut chain = Chain::new(mood, Lane::Drums, &part, drums.len(), &[], &automation, sr);
             let (mut noise, mut work) = (NoiseStream::new(0), Vec::new());
-            chain.process(&mut drums, 0, &automation, &mut noise, &mut work);
+            chain.process(&mut drums, 0, &automation, &mut noise, true, &mut work);
             // from rest, a causal chain is exactly silent until its input
             let first = drums.iter().position(|&v| v != 0.0);
             if first.is_none_or(|f| f < onset) {
