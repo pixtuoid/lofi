@@ -34,12 +34,13 @@ class Selection(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def assertRefused(self, base_sha, cand_sha):
-        """`select` ends the run as no score at all, never as a verdict."""
+    def assertRefused(self, base_sha, cand_sha, reason):
+        """`select` ends the run as no score at all, never as a verdict, and
+        says why on stderr."""
         with self.assertRaises(SystemExit) as caught, contextlib.redirect_stderr(io.StringIO()) as err:
             select(self.dir, base_sha, cand_sha, force_score=False)
         self.assertEqual(caught.exception.code, NOT_A_SCORE)
-        self.assertIn("invalid batch", err.getvalue())
+        self.assertIn(f"invalid batch: {reason}", err.getvalue())
 
     def test_only_the_pairs_that_differ_are_sent(self):
         self.assertEqual(select(self.dir, BASE, CAND, force_score=False), (TAKES, PAIRS[1:]))
@@ -54,13 +55,13 @@ class Selection(unittest.TestCase):
             self.assertEqual(select(up, BASE, CAND, force_score), (TAKES, PAIRS[1:]))
 
     def test_a_batch_of_other_commits_is_refused(self):
-        self.assertRefused(CAND, BASE)
+        self.assertRefused(CAND, BASE, "base/COMMIT doesn't name")
 
     def test_a_batch_with_no_pair_is_refused(self):
         for side in ("base", "cand"):
             for p in (self.dir / side).glob("*.wav"):
                 p.unlink()
-        self.assertRefused(BASE, CAND)
+        self.assertRefused(BASE, CAND, "no take on both sides")
 
     def test_a_take_on_one_side_only_is_left_out_and_the_pairs_still_sent(self):
         (self.dir / "cand" / "gen_day_empty_000.wav").unlink()
@@ -71,11 +72,11 @@ class Selection(unittest.TestCase):
     def test_a_batch_whose_takes_are_each_on_one_side_is_refused(self):
         (self.dir / "cand" / "gen_day_empty_000.wav").unlink()
         (self.dir / "base" / "gen_night_busy_001.wav").unlink()
-        self.assertRefused(BASE, CAND)
+        self.assertRefused(BASE, CAND, "no take on both sides")
 
     def test_a_missing_commit_is_refused(self):
         (self.dir / "cand" / "COMMIT").unlink()
-        self.assertRefused(BASE, CAND)
+        self.assertRefused(BASE, CAND, "cand/COMMIT doesn't name")
 
 
 class Outcomes(unittest.TestCase):
