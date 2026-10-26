@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from validate_batch import IDENTICAL, Invalid, Takes, stage, validate
+from validate_batch import IDENTICAL, Invalid, Takes, scored, stage, validate
 
 BASE, CAND = "a" * 40, "b" * 40
 # the takes `Batches` writes on both sides
@@ -78,6 +78,16 @@ class Batches(unittest.TestCase):
         self.assertEqual((up / IDENTICAL).read_text(), PAIRS[0] + "\n")
         # what went up reads back as the batch it came from
         self.assertEqual(validate(up, BASE, CAND), Takes(PAIRS, [], [], [PAIRS[1]], [PAIRS[0]]))
+
+    def test_the_pairs_that_differ_are_scored_or_every_pair_still_held(self):
+        write_wav(self.dir / "cand" / PAIRS[1], frames=9)
+        takes = validate(self.dir, BASE, CAND)
+        self.assertEqual([scored(self.dir, takes), scored(self.dir, takes, every=True)], [[PAIRS[1]], PAIRS])
+        up = self.dir / "up"
+        stage(self.dir, takes, up)
+        # the IDENTICAL list's pairs went nowhere, so none is scored
+        staged = validate(up, BASE, CAND)
+        self.assertEqual([scored(up, staged), scored(up, staged, every=True)], [[PAIRS[1]], [PAIRS[1]]])
 
     def test_an_identical_list_naming_a_take_still_there_or_none_is_invalid(self):
         (self.dir / IDENTICAL).write_text(PAIRS[0] + "\n")

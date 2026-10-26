@@ -8,7 +8,7 @@ sys.dont_write_bytecode = True
 HERE = Path(__file__).resolve().parent
 # `scripts/` sits beside `judge/` here and in the Modal image alike
 sys.path[:0] = [str(HERE), str(HERE.parent / "scripts")]
-from validate_batch import validate
+from validate_batch import scored, validate
 from verdict import FAILING, RANKS
 
 # a run's outcome as its exit code: a score that fails is 1, and anything
@@ -28,8 +28,7 @@ def select(root, base_sha, cand_sha, force_score):
     commits the caller names, so a batch with no pair, or another commit's,
     is refused rather than read as unchanged."""
     takes = validate(root, base_sha, cand_sha)
-    held = [n for n in takes.paired if (root / "base" / n).exists()]
-    return takes, held if force_score else takes.differ
+    return takes, scored(root, takes, force_score)
 
 
 def redact(text, tracks):

@@ -11,7 +11,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from judge_local import exit_code, published, redact, select
 from test_validate_batch import write_wav
-from validate_batch import Invalid, Takes
+from validate_batch import Invalid, Takes, stage, validate
 
 # the takes `Selection` writes on both sides
 PAIRS = ["gen_day_empty_000.wav", "gen_night_busy_001.wav"]
@@ -37,6 +37,12 @@ class Selection(unittest.TestCase):
 
     def test_force_score_sends_every_pair(self):
         self.assertEqual(select(self.dir, BASE, CAND, force_score=True), (TAKES, PAIRS))
+
+    def test_a_staged_batch_sends_only_the_pairs_it_holds(self):
+        up = self.dir / "up"
+        stage(self.dir, validate(self.dir, BASE, CAND), up)
+        for force_score in (False, True):
+            self.assertEqual(select(up, BASE, CAND, force_score), (TAKES, PAIRS[1:]))
 
     def test_a_batch_of_other_commits_is_refused(self):
         with self.assertRaises(Invalid):

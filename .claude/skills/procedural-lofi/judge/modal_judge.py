@@ -6,8 +6,9 @@ Usage, with modal-requirements.txt's client and a configured token:
   modal run modal_judge.py::provision     fetch the corpus, then build the caches
   modal run modal_judge.py::upload_missing --refs-dir REFS
                                           what archive.org didn't serve, from REFS
-  modal run modal_judge.py::judge --batch DIR [--out OUT] [--force-score]
-                                          judge DIR's base/ and cand/
+  modal run modal_judge.py::judge --batch DIR --base SHA --cand SHA [--out OUT] [--force-score]
+                                          judge DIR's base/ and cand/, rendered
+                                          at the commits their COMMIT files name
 
 REFS is the private corpus: its manifest's names and its audio never leave
 Modal in anything this prints or returns, which names a reference by its
@@ -36,16 +37,19 @@ SCRIPTS = HERE.parent / "scripts" if modal.is_local() else Path(REMOTE_SCRIPTS)
 JUDGE = HERE if modal.is_local() else Path(REMOTE_JUDGE)
 MODELS, REFS, BATCH = "/models", "/refs", "/batch"
 sys.path.insert(0, str(JUDGE))
-from judge_local import exit_code, published, redact, select
+from judge_local import NOT_A_SCORE, exit_code, published, redact, select
 from validate_batch import IDENTICAL, Invalid
 
 # the uv the image installs with, the release judge-requirements.txt was
 # compiled by
 UV_VERSION = "0.13.0"
 # the lock, baked in where uv reads it a second time as the build constraints:
-# three pins ship only source, `--require-hashes` doesn't reach the backend
-# that builds them, and `--require-build-hashes`, a preview in this uv, fails
-# the build on a build dependency the lock doesn't hash
+# encodec, wget and progressbar publish only an sdist
+# (https://pypi.org/pypi/encodec/0.1.1/json and wget's and progressbar's), and
+# uv's `--require-build-hashes`, a preview feature, "only applies to build
+# dependencies" (https://docs.astral.sh/uv/pip/compile/,
+# /uv/concepts/preview/): under `--require-hashes` alone, uv 0.13.0 built
+# them with the newest setuptools, unpinned
 LOCK = HERE / "judge-requirements.txt"
 REMOTE_LOCK = "/root/judge-requirements.txt"
 
@@ -247,7 +251,9 @@ def judge(batch: str, base: str, cand: str, out: str = "", force_score: bool = F
     try:
         takes, differ = select(root, base, cand, force_score)
     except Invalid as e:
-        raise SystemExit(f"invalid batch: {e}") from None
+        # refused before any score, so not a verdict's exit code
+        print(f"invalid batch: {e}", file=sys.stderr)
+        raise SystemExit(NOT_A_SCORE) from None
     if differ:
         with modal.Volume.ephemeral() as vol:
             with vol.batch_upload() as upload:

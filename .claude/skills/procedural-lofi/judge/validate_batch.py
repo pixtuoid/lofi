@@ -155,6 +155,16 @@ def validate(batch, base_sha=None, cand_sha=None):
     )
 
 
+def scored(batch, takes, every=False):
+    """The pairs of `batch`'s `takes` a judge scores and a listener hears:
+    the ones whose sides differ, since a byte-identical pair can only tie, or
+    with `every` each pair `batch` still holds, not the ones its IDENTICAL
+    list names."""
+    if not every:
+        return takes.differ
+    return [n for n in takes.paired if (batch / "base" / n).exists()]
+
+
 def stage(batch, takes, up):
     """Moves `takes`' pairs that differ into `up`, beside each side's COMMIT
     and an IDENTICAL list of the rest: what the judge is sent, since a

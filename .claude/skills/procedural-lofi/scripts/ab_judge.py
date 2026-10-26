@@ -85,7 +85,7 @@ sys.dont_write_bytecode = True
 HERE = Path(__file__).resolve().parent
 # `judge/` sits beside `scripts/` here and in the Modal image alike
 sys.path[:0] = [str(HERE), str(HERE.parent / "judge")]
-from validate_batch import NAME, Invalid, validate
+from validate_batch import NAME, Invalid, scored, validate
 from verdict import JUDGES, exit_message, judged
 
 # the clone of https://github.com/dgtql/MuQ-Eval that SKILL.md's setup and
@@ -445,9 +445,7 @@ def main():
         print(f"unpaired, left out: {', '.join(takes.new + takes.gone)}")
     commits = {"base": read_commit(base_dir), "cand": read_commit(cand_dir)}
     sides = (("base", base_dir), ("cand", cand_dir))
-    # a pair the change left byte for byte as it was can only tie, so no judge
-    # hears it; --score-identical scores every pair the batch still holds
-    changed = [n for n in takes.paired if (base_dir / n).exists()] if args.score_identical else takes.differ
+    changed = scored(args.dir, takes, args.score_identical)
     pairs = [
         {"take": n.removesuffix(".wav"), "mood": NAME.fullmatch(n)["mood"], "identical": n not in changed}
         for n in takes.paired

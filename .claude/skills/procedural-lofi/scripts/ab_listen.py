@@ -22,7 +22,7 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "judge"))
-from validate_batch import NAME, Invalid, validate
+from validate_batch import NAME, Invalid, scored, validate
 
 VERDICTS = ("cand", "base", "same")
 
@@ -84,7 +84,7 @@ def main():
         print(f"unpaired, left out: {', '.join(takes.new + takes.gone)}")
     if takes.identical:
         print(f"byte-identical, left out: {len(takes.identical)} pairs")
-    names = sorted(set(takes.differ) - judged)
+    names = sorted(set(scored(args.dir, takes)) - judged)
     if not names and not pairs:
         sys.exit("no pair differs")
     rng = random.SystemRandom()
