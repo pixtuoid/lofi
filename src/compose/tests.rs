@@ -248,8 +248,6 @@ fn assert_well_formed(s: &Score, h: &Harmony, seed: u64) {
     let loop_s = s.loop_secs();
     let bar_s = s.bar_s();
     let bar_of = |at: f32| ((at / bar_s) as usize).min(GEN_LOOP_BARS - 1);
-    // the sub window D1-C#2: each pitch class's one note in it
-    let sub = |pc: u8| (26..=37).find(|n| n % 12 == pc % 12).expect("an octave");
     for &Note { at, vel, .. } in s.sparkle.iter().chain(s.keys.iter()).chain(s.bass.iter()) {
         assert!(
             at >= 0.0 && at < loop_s,
@@ -261,24 +259,29 @@ fn assert_well_formed(s: &Score, h: &Harmony, seed: u64) {
         // the floor: the root, sounding in the bar's first beat
         let one = (bar as f32 * bar_s)..(bar as f32 * bar_s + s.beat_s());
         assert!(
-            (s.bass.iter())
-                .any(|&Note { at, midi, .. }| one.contains(&at) && midi == sub(chord.root_pc)),
+            (s.bass.iter()).any(|&Note { at, midi, .. }| one.contains(&at)
+                && midi == bass_pitch(chord.root_pc, chord)),
             "seed {seed}: the bass must sound bar {bar}'s root on its ONE"
         );
     }
     for &Note { at, midi: note, .. } in &s.bass {
-        // the sub window D1-C#2, and the leading-tone pickup one step under it
+        // the window G1-F#2, a root an octave under it, and the leading-tone
+        // pickup a step under that
         assert!(
-            (25..=37).contains(&note),
-            "seed {seed}: bass note {note} at {at}s out of the sub window"
+            (26..=42).contains(&note),
+            "seed {seed}: bass note {note} at {at}s out of the bass window"
         );
         // closed vocabulary: root/5th/pickup — anything else is a wrong join
         let bar = bar_of(at);
-        let root = h.bars[bar].root_pc;
-        let mut allowed = vec![sub(root), sub(root + 7)];
+        let chord = &h.bars[bar];
+        let mut allowed = vec![
+            bass_pitch(chord.root_pc, chord),
+            bass_pitch(chord.root_pc + 7, chord),
+        ];
         if let Some(next) = h.bars.get(bar + 1) {
-            // a semitone under the next root, not that pitch class folded in
-            allowed.push(sub(next.root_pc) - 1);
+            // a semitone under the next root as its bar folds it, not that
+            // pitch class folded in
+            allowed.push(bass_pitch(next.root_pc, next) - 1);
         }
         assert!(
             allowed.contains(&note),
@@ -478,6 +481,49 @@ fn the_peak_and_the_close_land_on_chord_tones_and_the_close_comes_home() {
     assert!(peaks > 0 && closes > 0);
 }
 
+/// R7's low-interval limit, checked against every voice the pad and keys
+/// sound in the bass's bar.
+#[test]
+fn no_bass_note_sounds_within_a_fifth_of_a_chord_voice_below_48() {
+    for mood in MOODS {
+        for seed in 0..200 {
+            let s = compose(mood, seed);
+            let bar_s = s.bar_s();
+            let bar_of = |at: f32| ((at / bar_s) as usize).min(GEN_LOOP_BARS - 1);
+            for bass in &s.bass {
+                let bar = bar_of(bass.at);
+                let keys = (s.keys.iter())
+                    .filter(|k| bar_of(k.at) == bar)
+                    .map(|k| k.midi);
+                for voice in s.bar_chords[bar].into_iter().chain(keys) {
+                    assert!(
+                        voice >= 48 || voice.abs_diff(bass.midi) >= 7,
+                        "{mood:?} seed {seed} bar {bar}: bass {} under {voice}",
+                        bass.midi
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn a_bass_note_drops_an_octave_only_where_it_would_clash() {
+    let over = |low: u8| chord([low, 52, 55, 59], 0);
+    // (pitch class, the bar's lowest chord voice, the bass note)
+    for (pc, low, want) in [
+        (7, 45, 31),
+        (2, 45, 38),
+        (3, 45, 27),
+        (4, 45, 28),
+        (6, 47, 30),
+        (6, 48, 42),
+        (6 + 12, 48, 42),
+    ] {
+        assert_eq!(bass_pitch(pc, &over(low)), want, "pc {pc} over {low}");
+    }
+}
+
 #[test]
 fn day_keys_comp_in_rolled_shell_pairs() {
     for seed in 0..SWEEP {
@@ -623,4 +669,4 @@ fn every_seed_composes_the_score_it_did() {
     assert_eq!(h, EVERY_SEED_GOLDEN, "{h:#018x}");
 }
 
-const EVERY_SEED_GOLDEN: u64 = 0xf30a_4c1c_2cc5_005e;
+const EVERY_SEED_GOLDEN: u64 = 0xbfde_8336_275f_100a;

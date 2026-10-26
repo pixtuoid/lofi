@@ -1436,13 +1436,37 @@ fn groove(rng: &mut NoiseStream, g: &GrooveTemplate, beat_s: f32) -> Vec<Hit> {
     out
 }
 
-/// The sub register's lowest note, D1: the bass folds every root into the
-/// octave from here, inside R5's D1–G2.
-const SUB_LOW: u8 = 26;
+/// The bass window's lowest note, G1: a root folds into the octave from here.
+/// Opinion, from the sweep the commit that set it records: the smallest move
+/// that puts the mix's power under 62 Hz, as a share of its power under
+/// 125 Hz, inside the reference corpus's interquartile range with room on
+/// both sides.
+pub const BASS_LOW: u8 = 31;
 
-/// Fold a pitch class into the sub window — the ONE bass-register authority.
-fn sub_note(pc: u8) -> u8 {
-    in_octave_from(SUB_LOW, pc)
+/// The note under which no two voices sound closer than a fifth: LOFI-BIBLE.md
+/// R7's low-interval limit.
+pub const LOW_INTERVAL_LIMIT: u8 = 48;
+
+/// Whether a `bass` note sounds within a fifth of `voice` under
+/// [`LOW_INTERVAL_LIMIT`].
+fn clashes(bass: u8, voice: u8) -> bool {
+    voice < LOW_INTERVAL_LIMIT && voice.abs_diff(bass) < FIFTH
+}
+
+/// A chord's lowest voice.
+fn lowest(chord: &Chord) -> u8 {
+    chord.notes.iter().copied().fold(u8::MAX, u8::min)
+}
+
+/// Fold a pitch class into the bass window, an octave under it where it would
+/// clash with `chord`'s lowest voice — the ONE bass-register authority.
+fn bass_pitch(pc: u8, chord: &Chord) -> u8 {
+    let note = in_octave_from(BASS_LOW, pc);
+    if clashes(note, lowest(chord)) {
+        note - OCTAVE
+    } else {
+        note
+    }
 }
 
 /// How far behind the beat each bass note lands, in seconds, so the kick keeps
@@ -1480,7 +1504,7 @@ fn bass(
     let mut out = Vec::new();
     for (bar, chord) in bars.iter().enumerate() {
         let b0 = bar as f32 * bar_s;
-        let root = sub_note(chord.root_pc);
+        let root = bass_pitch(chord.root_pc, chord);
         let at = BASS_LAG.after(b0, rng);
         out.push(Note {
             at,
@@ -1489,7 +1513,7 @@ fn bass(
         });
         if chance(rng, style.answer_p) {
             let note = if chance(rng, style.fifth_p) {
-                sub_note(chord.root_pc + FIFTH)
+                bass_pitch(chord.root_pc + FIFTH, chord)
             } else {
                 root
             };
@@ -1506,11 +1530,13 @@ fn bass(
             // literal semitone below the folded next root (pc-folding rendered an
             // 11-semitone drop); no last-bar pickup — place() clips at the seam
             let at = PICKUP_LAG.after(b0 + PICKUP_BEAT * beat_s, rng);
-            out.push(Note {
-                at,
-                midi: sub_note(next.root_pc) - 1,
-                vel: PICKUP_VELOCITY.draw(rng),
-            });
+            let midi = bass_pitch(next.root_pc, next) - 1;
+            let vel = PICKUP_VELOCITY.draw(rng);
+            // one that would clash under this bar's chord is left out, its
+            // draws kept
+            if !clashes(midi, lowest(chord)) {
+                out.push(Note { at, midi, vel });
+            }
         }
     }
     out
