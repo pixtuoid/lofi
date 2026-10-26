@@ -30,12 +30,14 @@ jobs:
       - run: cargo package --locked
       # cargo 1.99.1's verify build passed a package whose example doesn't
       # compile (observed; cargo-package's docs name no target), so this is
-      # what catches a shipped one missing the files it includes
-      - name: the packaged examples build
+      # what catches a shipped one, or its tests, missing the files they include
+      - name: the packaged examples and their tests build
         run: |
           set -euo pipefail
           version=$(cargo metadata --format-version 1 --no-deps --locked | jq -r '.packages[0].version')
-          cargo build --locked --examples --manifest-path "target/package/pixtuoid-lofi-$version/Cargo.toml"
+          manifest="target/package/pixtuoid-lofi-$version/Cargo.toml"
+          cargo build --locked --examples --manifest-path "$manifest"
+          cargo test --locked --examples --no-run --manifest-path "$manifest"
       - name: no dependency, as Cargo.toml's description promises
         run: test "$(cargo metadata --format-version 1 --no-deps --locked | jq '.packages[0].dependencies | length')" = 0
       # .gitignore is the one list of audio extensions; `-c -i` lists "only

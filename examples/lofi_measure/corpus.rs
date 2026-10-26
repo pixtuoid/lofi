@@ -1,5 +1,6 @@
 //! The reference corpus a take's spectrum is read against, and the axes it
-//! was read on: moving one re-measures [`CORPUS`].
+//! was read on: moving one means reading [`CORPUS`] again, with
+//! `lofi_measure --corpus DIR`.
 
 /// The share bands' inner edges in Hz; the first is the sub band's.
 pub(crate) const BAND_EDGES_HZ: [f64; 8] =
@@ -9,6 +10,25 @@ pub(crate) const BAND_EDGES_HZ: [f64; 8] =
 /// fractional octave bands.
 pub(crate) const LTAS_SPAN_HZ: [f64; 2] = [250.0, 4000.0];
 pub(crate) const LTAS_BANDS_PER_OCTAVE: f64 = 3.0;
+
+/// The axes [`CORPUS`] was read on, which `lofi_measure --corpus` prints with
+/// it: a change to any of them leaves [`CORPUS`] stale until it is read again.
+#[cfg(test)]
+pub(crate) struct Axes {
+    pub(crate) band_edges_hz: [f64; BAND_EDGES_HZ.len()],
+    pub(crate) ltas_span_hz: [f64; 2],
+    pub(crate) ltas_bands_per_octave: f64,
+    pub(crate) sample_rate: u32,
+}
+
+/// What [`CORPUS`] was read on.
+#[cfg(test)]
+pub(crate) const MEASURED_ON: Axes = Axes {
+    band_edges_hz: [62.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 6500.0],
+    ltas_span_hz: [250.0, 4000.0],
+    ltas_bands_per_octave: 3.0,
+    sample_rate: 44_100,
+};
 
 /// The percentiles a [`Spread`] holds.
 pub(crate) const PERCENTILES: [u8; 5] = [10, 25, 50, 75, 90];
@@ -51,6 +71,18 @@ pub(crate) const CORPUS: Corpus = Corpus {
     centroid_hz: [206.3, 310.3, 445.3, 579.3, 763.2],
     ltas_db_per_oct: [-7.00, -6.15, -5.07, -3.89, -3.14],
 };
+
+/// `values`' [`PERCENTILES`], each linear between ranks, as numpy's
+/// `percentile` reads them.
+pub(crate) fn spread(mut values: Vec<f64>) -> Spread {
+    values.sort_by(f64::total_cmp);
+    let last = values.len() - 1;
+    PERCENTILES.map(|p| {
+        let at = f64::from(p) / 100.0 * last as f64;
+        let (lo, frac) = (at.floor() as usize, at.fract());
+        values[lo] + (values[(lo + 1).min(last)] - values[lo]) * frac
+    })
+}
 
 /// Which two of `spread`'s percentiles `value` falls between, as `p25-50`,
 /// or which end it falls past, as `<p10` or `>p90`.

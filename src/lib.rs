@@ -6,9 +6,6 @@ pub mod dsp;
 #[doc(hidden)]
 pub mod audition;
 mod compose;
-#[cfg(test)]
-#[path = "../examples/common/loudness.rs"]
-mod loudness;
 mod perform;
 #[cfg(test)]
 mod score;
