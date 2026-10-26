@@ -381,7 +381,6 @@ fn pluck_note(midi: u8, dur_s: f32, vel: f32, sr: u32) -> Vec<f32> {
             sig * attack * vel
         })
         .collect();
-    // the pick
     let pick = Strike {
         salt: 0,
         len_s: 0.006,
@@ -463,7 +462,6 @@ fn kalimba_note(midi: u8, dur_s: f32, vel: f32, sr: u32) -> Vec<f32> {
             sig * attack * vel
         })
         .collect();
-    // the resonator body's thump
     let thump = Strike {
         salt: 0x4B41_4C49,
         len_s: 0.010,
@@ -496,7 +494,6 @@ fn vibe_note(midi: u8, dur_s: f32, vel: f32, sr: u32) -> Vec<f32> {
             sig * attack * trem * vel
         })
         .collect();
-    // the mallet
     let mallet = Strike {
         salt: 0x5649_4245,
         len_s: 0.008,
@@ -620,7 +617,7 @@ fn chord(tone: ChordTone, chord: &[u8; 4], bar_s: f32, sr: u32) -> Vec<f32> {
 }
 
 /// A `mood` pad over `loop_bars` bars `bar_s` long, `bar` giving each bar's
-/// sound: a generated take's chord alone, its sub riding the bass lane.
+/// sound.
 fn pad_core(mood: Mood, bar_s: f32, loop_bars: usize, bar: impl Fn(usize) -> Vec<f32>) -> Vec<f32> {
     let mut buf = vec![0.0f32; n_samples(bar_s * loop_bars as f32)];
     for b in 0..loop_bars {
@@ -934,7 +931,7 @@ pub(crate) struct HitRecipe {
 }
 
 /// Each lane's recipe: the ONE authority [`render_lane`], the lane chains and
-/// the frozen takes read, so the takes' fingerprint pins guard what ships.
+/// the frozen takes read.
 pub(crate) const SPARKLE: ByMood<NoteRecipe> = ByMood {
     night: NoteRecipe {
         dur_s: 2.2,
@@ -1092,8 +1089,7 @@ impl Part<'_> {
 }
 
 /// Render one lane of `score`'s loop to mono f32 at [`SAMPLE_RATE`], peaking
-/// at most 1.0: lofi's tools audition the material, and the
-/// frozen fingerprint pins guard the voices through it. Every lane but the day
+/// at most 1.0, for lofi's tools to audition. Every lane but the day
 /// [`Lane::Texture`] is a whole number of the score's loops long, so a caller
 /// loops them in phase; the day texture runs free on its own length.
 pub fn render_lane(score: &Score, lane: Lane, rng: &mut NoiseStream) -> Vec<f32> {
