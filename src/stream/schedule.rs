@@ -5,22 +5,18 @@
 use std::collections::VecDeque;
 use std::ops::Range;
 
-use super::lanes::{Chain, Sweep};
+use super::lanes::{Automation, Chain, Sweep};
 use super::master::{lane_gain, resting_gain};
 use super::plate::{self, Plate};
 use super::rain::{self, RAIN_RAMP_BARS};
 use super::ramp::{Ramp, Shape};
+use super::{BLOCK, LANES, gain_of_db};
 use crate::Controls;
 use crate::compose::{
     Edge, Form, GEN_LOOP_BARS, HAT_JITTER_S, Layer, Mood, Score, arrange, compose,
 };
 use crate::dsp::{NoiseStream, SAMPLE_RATE, splitmix_draw};
 use crate::synth::{CRACKLE_POPS_PER_SEC, Lane, Part, bar_onset, crackle_pop, part, samples_at};
-
-pub(crate) const LANES: usize = Lane::ALL.len();
-
-/// The most frames one step plays; any size plays the same frames.
-pub(crate) const BLOCK: usize = 1024;
 
 /// How long before its bar line a bar latches the controls asked for: the
 /// composer's earliest anticipation, a downbeat hat's half of
@@ -368,8 +364,9 @@ struct Song {
     /// Each lane's gain into the mix, whose ramps all end within the song,
     /// so its tails ring on at the level it ended on.
     levels: [Ramp; LANES],
-    /// The rain latched, and how long it takes to arrive, in frames.
-    rain: Ramp,
+    /// The daylight, the rain and the sweep the chains play under, and how
+    /// long rain takes to arrive, in frames.
+    automation: Automation,
     rain_ramp: usize,
     /// The song's plate, which rings out with its tails, the send into it
     /// over a step, and its return.
@@ -400,7 +397,7 @@ fn fades(lane: Lane) -> bool {
 /// rises from [`FADE_FLOOR_DB`] across the intro, or falls to it across the
 /// outro, linear in dB.
 fn edges(form: &Form, window: &Window) -> [Ramp; 2] {
-    let floor = 10f64.powf(FADE_FLOOR_DB / 20.0);
+    let floor = gain_of_db(FADE_FLOOR_DB);
     let [intro, _, outro] = window.parts.clone();
     let mut entry = Ramp::held(1.0, Shape::Db);
     if form.entry() == Some(Edge::Fade) {
@@ -476,13 +473,17 @@ impl Song {
             .map(|(at, ..)| at)
             .collect();
         let level_ramp = samples_at(LEVEL_RAMP_BEATS * score.beat_s(), sr);
-        let sweep = sweep(&form, &window, level_ramp);
+        let automation = Automation::new(controls, sweep(&form, &window, level_ramp));
         let chains = Lane::ALL.map(|lane| {
-            let chain = Chain::new(mood, lane, &part(&score, lane), len, &kicks, controls, sr);
-            match &sweep {
-                Some(sweep) if fades(lane) => chain.swept(sweep),
-                _ => chain,
-            }
+            Chain::new(
+                mood,
+                lane,
+                &part(&score, lane),
+                len,
+                &kicks,
+                &automation,
+                sr,
+            )
         });
         let present = Lane::ALL.map(|lane| lane_gain(lane, controls.intensity) > 0.0);
         let levels = Lane::ALL
@@ -494,7 +495,7 @@ impl Song {
             latched: 1,
             level_ramp,
             grade_ramp: samples_at(GRADE_RAMP_BARS * score.bar_s(), sr),
-            rain: Ramp::held(f64::from(controls.rain), Shape::Linear),
+            automation,
             rain_ramp: samples_at(RAIN_RAMP_BARS * score.bar_s(), sr),
             plate: Plate::new(sr),
             send: Vec::with_capacity(BLOCK),
@@ -545,12 +546,7 @@ impl Song {
                 level.hold(at);
             }
         }
-        let rain = f64::from(controls.rain);
-        self.rain.toward(at, rain, self.rain_ramp);
-        for chain in &mut self.chains {
-            chain.grade(at, controls.daylight, self.grade_ramp);
-            chain.rain(at, rain, self.rain_ramp);
-        }
+        (self.automation).latch(at, controls, self.grade_ramp, self.rain_ramp);
         self.latched += 1;
     }
 
@@ -561,10 +557,7 @@ impl Song {
         for level in &mut self.levels {
             level.hold(at);
         }
-        self.rain.hold(at);
-        for chain in &mut self.chains {
-            chain.freeze(at);
-        }
+        self.automation.freeze(at);
     }
 
     /// The music lanes' edge gain over the `n` frames from `from`: held, or
@@ -587,7 +580,7 @@ impl Song {
     /// that order, once where all three hold.
     fn gain_over(&self, i: usize, from: usize, edge: Option<f64>, out: &mut [f64]) {
         let lane = Lane::ALL[i];
-        let (level, rain) = (&self.levels[i], self.rain);
+        let (level, rain) = (&self.levels[i], self.automation.rain());
         let wet = (rain.end() <= from).then(|| rain::level(lane, rain.to()));
         let edge = if fades(lane) { edge } else { Some(1.0) };
         match (level.end() <= from, wet, edge) {
@@ -627,7 +620,7 @@ impl Song {
         let end = self.played + n;
         self.send.clear();
         self.send.resize(n, 0.0);
-        let rain = self.rain;
+        let rain = *self.automation.rain();
         let hit = |at: usize| rain::hit(rain.at(at));
         let unity = |_: usize| 1.0;
         let edge = self.edge_over(self.played, n);
@@ -658,7 +651,7 @@ impl Song {
             }
             buf.resize(n, 0.0);
             ring.take(buf);
-            self.chains[i].process(buf, &mut cues.noise);
+            self.chains[i].process(buf, self.played, &self.automation, &mut cues.noise);
             // the lane at its gain, once: what both its sum and its send hear
             gains.resize(n, 0.0);
             self.gain_over(i, self.played, edge, &mut gains);
@@ -689,7 +682,7 @@ impl Song {
     fn at_rest(&self) -> bool {
         self.played >= self.window.len
             && self.rings.iter().all(|ring| ring.0.is_empty())
-            && self.chains.iter().all(Chain::at_rest)
+            && self.chains.iter().all(|chain| chain.at_rest(self.played))
             && self.plate.at_rest()
     }
 }
@@ -1082,11 +1075,10 @@ mod tests {
         let (run, _) = latched(seed, day, &[(bars[2], day.with_daylight(0.6))], latch + 1);
         let song = run.song.as_ref().expect("a song plays");
         let bar = samples_at(song.score.bar_s(), SAMPLE_RATE);
-        let ends: Vec<Option<usize>> = song.chains.iter().map(Chain::graded_until).collect();
-        let want: Vec<Option<usize>> = (Lane::ALL.iter())
-            .map(|lane| (![Lane::Pad, Lane::Texture].contains(lane)).then_some(latch + bar))
-            .collect();
-        assert_eq!(ends, want);
+        assert_eq!(song.automation.graded_until(), latch + bar);
+        let grading: Vec<bool> = song.chains.iter().map(Chain::grades).collect();
+        let want = Lane::ALL.map(|lane| ![Lane::Pad, Lane::Texture].contains(&lane));
+        assert_eq!(grading, want);
     }
 
     #[test]
@@ -1098,7 +1090,7 @@ mod tests {
                 let into = start.with_daylight(0.4).with_intensity(1.0);
                 let (run, _) = latched(seed, start, &[(last, into)], last + 1);
                 let song = run.song.as_ref().expect("a song plays");
-                let ends = song.chains.iter().filter_map(Chain::graded_until);
+                let ends = [song.automation.graded_until()].into_iter();
                 let ends = ends.chain(song.levels.iter().map(Ramp::end));
                 assert!(
                     ends.clone().all(|end| end <= song.window.len),
@@ -1161,13 +1153,12 @@ mod tests {
         let song = run.song.as_ref().expect("a song plays");
         let phrase = samples_at(RAIN_RAMP_BARS * song.score.bar_s(), SAMPLE_RATE);
         assert_eq!(
-            song.rain.end(),
+            song.automation.rain().end(),
             latch + phrase,
             "a later latch restarted rain"
         );
         for (lane, chain) in Lane::ALL.iter().zip(&song.chains) {
-            let want = rain::DARKENED.contains(lane).then_some(latch + phrase);
-            assert_eq!(chain.rained_until(), want, "{lane:?}");
+            assert_eq!(chain.darkens(), rain::DARKENED.contains(lane), "{lane:?}");
         }
     }
 
@@ -1229,10 +1220,11 @@ mod tests {
                 .iter()
                 .all(|&n| fading.gain(sparkle, n) == held)
         );
-        for (lane, chain) in Lane::ALL.iter().zip(&fading.chains) {
-            let want = rain::DARKENED.contains(lane).then_some(len);
-            assert_eq!(chain.rained_until(), want, "{lane:?}'s tilt kept ramping");
-        }
+        assert_eq!(
+            fading.automation.rain().end(),
+            len,
+            "the tilts' rain kept ramping"
+        );
     }
 
     /// Song 0's length under `c`.
@@ -1252,9 +1244,7 @@ mod tests {
             let (run, _) = latched(1, c, &[], latch + 1);
             let song = run.song.as_ref().expect("a song plays");
             let ends: Vec<usize> = (song.levels.iter().map(Ramp::end))
-                .chain([song.rain.end()])
-                .chain(song.chains.iter().filter_map(Chain::graded_until))
-                .chain(song.chains.iter().filter_map(Chain::rained_until))
+                .chain([song.automation.rain().end(), song.automation.graded_until()])
                 .collect();
             assert!(
                 ends.iter().all(|&end| end < latch),
@@ -1692,7 +1682,7 @@ mod tests {
     #[test]
     fn an_edge_fades_monotonically_between_its_ends() {
         let c = Controls::default();
-        let floor = 10f64.powf(FADE_FLOOR_DB / 20.0);
+        let floor = gain_of_db(FADE_FLOOR_DB);
         let seed = seed_where(|f| f.entry() == Some(Edge::Fade) && f.exit() == Some(Edge::Fade));
         let (song, form) = (Song::new(seed, 0, c, SAMPLE_RATE), song_form(seed, 0, c));
         let (body, outro) = (
@@ -1821,8 +1811,8 @@ mod tests {
                 .enumerate()
                 .filter(|(_, l)| **l != Lane::Texture)
             {
-                if asked != c && filtered.chains[i].graded_until().is_some() {
-                    let moved = filtered.chains[i].graded_until().is_some_and(|end| end > 0);
+                if asked != c && filtered.chains[i].grades() {
+                    let moved = filtered.automation.graded_until() > 0;
                     assert!(moved, "{lane:?}'s grade never moved");
                 }
                 for &(end, g) in &got {
@@ -1888,7 +1878,7 @@ mod tests {
     #[test]
     fn a_fade_out_leaves_its_tails_at_its_floor() {
         let c = Controls::default();
-        let floor = 10f64.powf(FADE_FLOOR_DB / 20.0);
+        let floor = gain_of_db(FADE_FLOOR_DB);
         let seed = seed_where(|f| f.exit() == Some(Edge::Fade));
         let form = song_form(seed, 0, c);
         let mut faded = Song::new(seed, 0, c, SAMPLE_RATE).at_levels(UNITY);

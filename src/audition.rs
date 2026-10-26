@@ -12,8 +12,8 @@ pub use crate::synth::{Lane, render_lane, samples_at};
 
 use crate::dsp::SAMPLE_RATE;
 use crate::perform::Probe;
+use crate::stream::LANES;
 use crate::stream::master::lookahead;
-use crate::stream::schedule::LANES;
 use crate::{Controls, Frame, Performance};
 
 /// Song `k` of `seed`'s run, from its first bar to the next song's, played

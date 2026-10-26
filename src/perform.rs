@@ -5,7 +5,8 @@ use std::fmt;
 
 use crate::dsp::SAMPLE_RATE;
 use crate::stream::master::{Ceiling, TIER_INTENSITIES};
-use crate::stream::schedule::{BLOCK, LANES, Schedule};
+use crate::stream::schedule::Schedule;
+use crate::stream::{BLOCK, LANES};
 
 /// One stereo frame, `[left, right]`, at [`SAMPLE_RATE`].
 pub type Frame = [f32; 2];

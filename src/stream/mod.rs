@@ -13,6 +13,19 @@ pub(crate) mod rain;
 pub(crate) mod ramp;
 pub(crate) mod schedule;
 
+use crate::compose::Lane;
+
+/// The most frames one step plays; any size plays the same frames.
+pub(crate) const BLOCK: usize = 1024;
+
+/// The lanes a song plays, one sum each.
+pub(crate) const LANES: usize = Lane::ALL.len();
+
+/// `db` decibels as an amplitude gain.
+fn gain_of_db(db: f64) -> f64 {
+    10f64.powf(db / 20.0)
+}
+
 /// Below this a feedback state is silence: "a number whose absolute value is
 /// below 10⁻²⁰ can be considered as 0" ([de Soras][denormal], §3).
 ///
