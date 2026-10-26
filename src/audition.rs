@@ -23,6 +23,17 @@ pub fn lane_noise(seed: u64) -> [crate::dsp::NoiseStream; Lane::ALL.len()] {
     Lane::ALL.map(|_| noise.fork())
 }
 
+/// [`render_lane`] with the gains its peak normalizations applied, `[in,
+/// out]`, which the stream's staging stands in for.
+pub fn staged_lane(
+    score: &Score,
+    lane: Lane,
+    rng: &mut crate::dsp::NoiseStream,
+) -> (Vec<f32>, [f32; 2]) {
+    let staged = crate::synth::staged_lane(score, lane, rng);
+    (staged.buf, staged.gains)
+}
+
 use crate::dsp::SAMPLE_RATE;
 use crate::perform::Probe;
 use crate::stream::LANES;
@@ -159,6 +170,11 @@ pub const TARGET_LUFS: f64 = -15.0;
 /// The seeds [`WHOLE_LANE_LUFS_SD`] and [`SONG_LUFS_SD`] were measured over,
 /// each seed's first song.
 pub const LUFS_SEEDS: Range<u64> = 0..24;
+
+/// The seeds `lofi_measure --staging` takes the stream's staging over, each
+/// seed's first song: a texture bed's peak, which its gain follows, is its
+/// loudest few pops, so fewer seeds' median wanders with them.
+pub const STAGING_SEEDS: Range<u64> = 0..256;
 
 /// How much the whole-lane mix's gated loudness varied across
 /// [`LUFS_SEEDS`], as [`lufs_sd`] reads it, at an intensity and a daylight:

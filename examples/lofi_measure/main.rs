@@ -14,10 +14,13 @@
 //!   cargo run --release --example lofi_measure -- [--corpus DIR]
 //!   reads every track in DIR/audio as a take is read, through ffmpeg's
 //!   decoder, and prints the `CORPUS` and `MEASURED_ON` they give.
+//!   cargo run --release --example lofi_measure -- [--staging]
+//!   prints the stream's staging and the whole-lane rows its level test holds.
 
 #[path = "../common/batch.rs"]
 mod batch;
 mod corpus;
+mod staging;
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -41,22 +44,28 @@ const BPM_RAIL: [f64; 2] = [68.0, 90.0];
 /// differences (opinion).
 const SEAM_QUANTILE: f64 = 0.999;
 
-/// What a run reads: a batch's takes, or the reference corpus's tracks.
+/// What a run reads: a batch's takes, the reference corpus's tracks, or the
+/// whole-lane renders the stream's staging stands in for.
 enum Mode {
     Takes(Batch),
     Corpus(PathBuf),
+    Staging,
 }
 
 /// The flags lofi_measure takes beyond the batch's.
-const OWN_FLAGS: [&str; 1] = ["--corpus"];
+const OWN_FLAGS: [&str; 2] = ["--corpus", "--staging"];
 
 /// What `args` ask to read.
 fn mode(mut args: impl Iterator<Item = String>) -> io::Result<Mode> {
     let args: Vec<String> = args.by_ref().collect();
     match args.as_slice() {
         [flag, dir] if flag == "--corpus" => Ok(Mode::Corpus(PathBuf::from(dir))),
+        [flag] if flag == "--staging" => Ok(Mode::Staging),
         _ if args.iter().any(|a| a == "--corpus") => Err(usage_error(
             "--corpus reads the corpus alone, so it takes one directory and no other flag".into(),
+        )),
+        _ if args.iter().any(|a| a == "--staging") => Err(usage_error(
+            "--staging measures the staging alone, so it takes no other flag".into(),
         )),
         _ => parse(args.into_iter()).map(Mode::Takes),
     }
@@ -97,6 +106,10 @@ fn run() -> io::Result<()> {
     let batch = match mode(std::env::args().skip(1))? {
         Mode::Takes(batch) => batch,
         Mode::Corpus(dir) => return read_corpus(&dir),
+        Mode::Staging => {
+            staging::print();
+            return Ok(());
+        }
     };
     let bands = bands();
     let cells = |cell: &dyn Fn(f64, f64) -> String| -> Vec<String> {

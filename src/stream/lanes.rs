@@ -62,22 +62,23 @@ fn phase(hz: f32, n: usize, sr: u32) -> f32 {
 /// Each lane's fixed gains `[in, out]`, standing in for the whole-lane render's
 /// peak normalizations: `in` for its first `normalize`, which sets the level
 /// into the drive (the texture's, into the duck), and `out` for the product of
-/// the rest. Each is the median of what those normalizations gave over a seed
-/// sweep, which the commit that set them records.
+/// the rest: `lofi_measure --staging`'s medians over `audition::STAGING_SEEDS`
+/// of each seed's first song's whole-lane render, which it prints as these
+/// rows.
 fn staging(mood: Mood, lane: Lane) -> [f64; 2] {
     match (mood, lane) {
-        (Mood::Day, Lane::Pad) => [0.1376, 0.7424],
-        (Mood::Day, Lane::Sparkle) => [1.1440, 0.5299],
-        (Mood::Day, Lane::Keys) => [0.5419, 0.7848],
-        (Mood::Day, Lane::Drums) => [0.6785, 0.6305],
-        (Mood::Day, Lane::Texture) => [3.1570, 0.5869],
-        (Mood::Day, Lane::Bass) => [0.8351, 0.6117],
-        (Mood::Night, Lane::Pad) => [0.2049, 0.7833],
-        (Mood::Night, Lane::Sparkle) => [1.2683, 0.5361],
-        (Mood::Night, Lane::Keys) => [1.0453, 0.6983],
-        (Mood::Night, Lane::Drums) => [1.0628, 0.7487],
-        (Mood::Night, Lane::Texture) => [3.0763, 0.6012],
-        (Mood::Night, Lane::Bass) => [1.3064, 0.6026],
+        (Mood::Day, Lane::Pad) => [0.1365, 0.7499],
+        (Mood::Day, Lane::Sparkle) => [1.1399, 0.5288],
+        (Mood::Day, Lane::Keys) => [0.5424, 0.7844],
+        (Mood::Day, Lane::Drums) => [0.6930, 0.6302],
+        (Mood::Day, Lane::Texture) => [3.3815, 0.5986],
+        (Mood::Day, Lane::Bass) => [0.8008, 0.6169],
+        (Mood::Night, Lane::Pad) => [0.2050, 0.7834],
+        (Mood::Night, Lane::Sparkle) => [1.2460, 0.5517],
+        (Mood::Night, Lane::Keys) => [1.0423, 0.6970],
+        (Mood::Night, Lane::Drums) => [1.0864, 0.7500],
+        (Mood::Night, Lane::Texture) => [3.0447, 0.5958],
+        (Mood::Night, Lane::Bass) => [1.3069, 0.6027],
     }
 }
 
@@ -1169,15 +1170,16 @@ mod tests {
 
     #[test]
     fn every_lane_plays_at_its_whole_lane_level() {
-        // each lane's median gated loudness over seeds 0..24 of `render_lane`,
-        // whose peak normalizations the staging stands in for; the tolerance
-        // is opinion, and a staging off by 2× misses it by 4.5 LU
+        // `lofi_measure --staging`'s rows: each lane's median gated loudness
+        // over the whole-lane renders whose peak normalizations the staging
+        // stands in for; the tolerance is opinion, and a staging off by 2×
+        // misses it by 4.5 LU
         const TOLERANCE_LU: f64 = 1.5;
         let whole_lane: [(Mood, [f64; Lane::ALL.len()]); 2] = [
-            (Mood::Day, [-12.92, -18.55, -16.84, -17.98, -35.41, -11.64]),
+            (Mood::Day, [-12.89, -18.63, -16.86, -17.87, -34.91, -11.83]),
             (
                 Mood::Night,
-                [-11.75, -19.75, -16.84, -16.75, -36.06, -10.17],
+                [-11.76, -19.97, -16.99, -17.20, -36.23, -10.22],
             ),
         ];
         let sr = SAMPLE_RATE;
