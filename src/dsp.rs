@@ -1,6 +1,6 @@
-//! Minimal DSP kernel for the procedural synth — a real-input FFT, brickwall
-//! band filters, spectral-envelope noise shaping, and a deterministic noise
-//! stream. The filters take a whole buffer — one voice's note, one foley
+//! Minimal DSP kernel for the procedural synth — brickwall band filters,
+//! spectral-envelope noise shaping, its spectral measures, and a deterministic
+//! noise stream. The filters take a whole buffer — one voice's note, one foley
 //! one-shot — never a stream, so none runs per audio frame.
 //! Dependency-free on purpose: a consumer's wasm ships this module, and an FFT
 //! crate is a download every visitor pays.
@@ -37,6 +37,7 @@ pub struct NoiseStream {
 
 impl NoiseStream {
     /// A stream seeded at `seed`; equal seeds draw equal sequences.
+    #[must_use]
     pub fn new(seed: u64) -> Self {
         Self { seed, counter: 0 }
     }
@@ -261,12 +262,21 @@ fn bin_freq(k: usize, n: usize, hz_per_bin: f32) -> f32 {
 /// `buf.len()`; `buf` is zero-padded to the next power of two, so a
 /// power-of-two buffer filters circularly (a seamless loop stays seamless) and
 /// any other length does not.
+///
+/// # Panics
+///
+/// If `lo_hz` is over `hi_hz`, or either is NaN.
+#[must_use]
 pub fn bandpass(buf: &[f32], lo_hz: f32, hi_hz: f32) -> Vec<f32> {
     bandpass_at(buf, lo_hz, hi_hz, SAMPLE_RATE)
 }
 
 /// [`bandpass`] of a buffer sampled at `sr`.
 pub(crate) fn bandpass_at(buf: &[f32], lo_hz: f32, hi_hz: f32, sr: u32) -> Vec<f32> {
+    assert!(
+        lo_hz <= hi_hz,
+        "a band-pass keeps the band from lo_hz up to hi_hz"
+    );
     let (mut re, mut im, tw, hz_per_bin) = forward_spectrum(buf, sr);
     let n = 2 * tw.len();
     for (k, (r, i)) in re.iter_mut().zip(&mut im).enumerate() {
@@ -282,6 +292,11 @@ pub(crate) fn bandpass_at(buf: &[f32], lo_hz: f32, hi_hz: f32, sr: u32) -> Vec<f
 }
 
 /// Brickwall low-pass at `cutoff_hz`.
+///
+/// # Panics
+///
+/// If `cutoff_hz` is negative or NaN.
+#[must_use]
 pub fn lowpass(buf: &[f32], cutoff_hz: f32) -> Vec<f32> {
     bandpass(buf, 0.0, cutoff_hz)
 }
@@ -320,20 +335,84 @@ pub(crate) fn warp_resample(buf: &[f32], warps: &[(f32, f32)]) -> Vec<f32> {
         .collect()
 }
 
-/// A power-of-two block of noise FFT-shaped to a measured octave-band
-/// envelope — CIRCULARLY seamless by construction (FFT-domain shaping is
-/// periodic in the block), so the returned block loops without a click.
-/// `bands` are `(lo_hz, hi_hz, energy_percent)` rows; the block is normalized
-/// to peak 1.0.
+/// One band of a spectral envelope: its share of the power, as
+/// [`band_energy_share`] measures it, from `lo_hz` up to `hi_hz`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Band {
+    lo_hz: f32,
+    hi_hz: f32,
+    share: f32,
+}
+
+impl Band {
+    /// The band from `lo_hz` up to `hi_hz` holding `share` of the power.
+    ///
+    /// # Panics
+    ///
+    /// If `lo_hz` is negative or not under `hi_hz`, or `share` is outside
+    /// `[0, 1]`, NaN included; in a `const`, when it compiles.
+    #[must_use]
+    pub const fn new(lo_hz: f32, hi_hz: f32, share: f32) -> Self {
+        assert!(
+            0.0 <= lo_hz && lo_hz < hi_hz,
+            "a band runs up from a frequency of at least 0"
+        );
+        assert!(
+            0.0 <= share && share <= 1.0,
+            "a band's share is a fraction of the power"
+        );
+        Self {
+            lo_hz,
+            hi_hz,
+            share,
+        }
+    }
+
+    /// Where the band starts, in Hz.
+    #[must_use]
+    pub const fn lo_hz(self) -> f32 {
+        self.lo_hz
+    }
+
+    /// Where the band ends, in Hz, outside it.
+    #[must_use]
+    pub const fn hi_hz(self) -> f32 {
+        self.hi_hz
+    }
+
+    /// The band's share of the power, a fraction.
+    #[must_use]
+    pub const fn share(self) -> f32 {
+        self.share
+    }
+}
+
+/// The span a [`shaped_noise_loop`]'s envelope is smoothed over, so the stairs
+/// between bands don't ring: the 201 bins pixtuoid's rain was ratified with,
+/// at its loop of 2^19 samples, in Hz, so a loop of any length smooths as much.
+const EDGE_SMOOTHING_HZ: f32 = 201.0 * SAMPLE_RATE as f32 / (1 << 19) as f32;
+
+/// A power-of-two block of noise FFT-shaped to a measured envelope —
+/// CIRCULARLY seamless by construction (FFT-domain shaping is periodic in the
+/// block), so the returned block loops without a click. The block is
+/// normalized to peak 1.0.
+///
+/// ```
+/// use pixtuoid_lofi::dsp::{Band, NoiseStream, band_energy_share, shaped_noise_loop};
+///
+/// let bands = [Band::new(100.0, 1000.0, 0.7), Band::new(1000.0, 8000.0, 0.3)];
+/// let wash = shaped_noise_loop(1 << 16, &bands, &mut NoiseStream::new(7));
+/// for band in bands {
+///     let share = band_energy_share(&wash, band.lo_hz(), band.hi_hz());
+///     assert!((share - band.share()).abs() < 0.05);
+/// }
+/// ```
 ///
 /// # Panics
 ///
 /// If `n_pow2` is not a power of two of at least 2.
-pub fn shaped_noise_loop(
-    n_pow2: usize,
-    bands: &[(f32, f32, f32)],
-    rng: &mut NoiseStream,
-) -> Vec<f32> {
+#[must_use]
+pub fn shaped_noise_loop(n_pow2: usize, bands: &[Band], rng: &mut NoiseStream) -> Vec<f32> {
     assert!(
         n_pow2 >= 2 && n_pow2.is_power_of_two(),
         "a noise loop is a power-of-two block of at least 2 samples"
@@ -344,18 +423,17 @@ pub fn shaped_noise_loop(
     let hz_per_bin = SAMPLE_RATE as f32 / n_pow2 as f32;
     // per-bin amplitude gain: sqrt(band power share / band bin count)
     let mut gain = vec![0.0f32; n_pow2];
-    for &(lo, hi, pct) in bands {
-        let bins = ((hi - lo) / hz_per_bin).max(1.0);
-        let g = (pct / 100.0 / bins).sqrt();
+    for band in bands {
+        let bins = ((band.hi_hz - band.lo_hz) / hz_per_bin).max(1.0);
+        let g = (band.share / bins).sqrt();
         for (k, gk) in gain.iter_mut().enumerate() {
             let f = bin_freq(k, n_pow2, hz_per_bin);
-            if f >= lo && f < hi {
+            if f >= band.lo_hz && f < band.hi_hz {
                 *gk = g;
             }
         }
     }
-    // smooth the band stairs so edges don't ring
-    let smoothed = moving_average(&gain, 201);
+    let smoothed = moving_average(&gain, (EDGE_SMOOTHING_HZ / hz_per_bin).round() as usize);
     for ((r, i), s) in re.iter_mut().zip(&mut im).zip(&smoothed) {
         *r *= s;
         *i *= s;
@@ -366,6 +444,7 @@ pub fn shaped_noise_loop(
     out
 }
 
+/// `x` averaged over `window / 2` neighbours on each side, fewer at its ends.
 fn moving_average(x: &[f32], window: usize) -> Vec<f32> {
     let half = window / 2;
     let n = x.len();
@@ -392,7 +471,9 @@ fn moving_average(x: &[f32], window: usize) -> Vec<f32> {
     out
 }
 
-/// Spectral centroid of `buf` in Hz.
+/// Spectral centroid of `buf` in Hz: its bins' frequencies weighted by their
+/// power, over the bins [`band_energy_share`] reads.
+#[must_use]
 pub fn centroid_hz(buf: &[f32]) -> f32 {
     let (re, im, _, hz_per_bin) = forward_spectrum(buf, SAMPLE_RATE);
     let (mut num, mut den) = (0.0f64, 0.0f64);
@@ -404,11 +485,13 @@ pub fn centroid_hz(buf: &[f32]) -> f32 {
     (num / den.max(1e-12)) as f32
 }
 
-/// Fraction of `buf`'s spectral power inside `[lo_hz, hi_hz)`.
+/// Fraction of `buf`'s spectral power inside `[lo_hz, hi_hz)`, over the bins
+/// from 0 Hz to Nyquist of `buf` zero-padded to the next power of two.
+#[must_use]
 pub fn band_energy_share(buf: &[f32], lo_hz: f32, hi_hz: f32) -> f32 {
     let (re, im, tw, hz_per_bin) = forward_spectrum(buf, SAMPLE_RATE);
     let (mut band, mut total) = (0.0f64, 0.0f64);
-    for k in 1..=tw.len() {
+    for k in 0..=tw.len() {
         let p = f64::from(re[k] * re[k] + im[k] * im[k]);
         let f = k as f32 * hz_per_bin;
         total += p;
@@ -423,10 +506,105 @@ pub fn band_energy_share(buf: &[f32], lo_hz: f32, hi_hz: f32) -> f32 {
 mod tests {
     use super::*;
 
+    /// The bands pixtuoid's rain plays
+    /// (crates/pixtuoid-scene/src/audio/foley.rs at a63f178).
+    const RAIN: [Band; 9] = [
+        Band::new(20.0, 60.0, 0.015),
+        Band::new(60.0, 125.0, 0.035),
+        Band::new(125.0, 250.0, 0.069),
+        Band::new(250.0, 500.0, 0.143),
+        Band::new(500.0, 1000.0, 0.244),
+        Band::new(1000.0, 2000.0, 0.253),
+        Band::new(2000.0, 4000.0, 0.102),
+        Band::new(4000.0, 8000.0, 0.089),
+        Band::new(8000.0, 16000.0, 0.04),
+    ];
+
     #[test]
     #[should_panic(expected = "a noise loop is a power-of-two block of at least 2 samples")]
     fn a_one_sample_noise_loop_is_refused_at_the_guard() {
-        shaped_noise_loop(1, &[(100.0, 200.0, 100.0)], &mut NoiseStream::new(1));
+        let _ = shaped_noise_loop(1, &[Band::new(100.0, 200.0, 1.0)], &mut NoiseStream::new(1));
+    }
+
+    #[test]
+    #[should_panic(expected = "a band runs up from a frequency of at least 0")]
+    fn a_band_that_ends_where_it_starts_is_refused() {
+        let _ = Band::new(200.0, 200.0, 0.5);
+    }
+
+    #[test]
+    #[should_panic(expected = "a band's share is a fraction of the power")]
+    fn a_band_s_share_in_percent_is_refused() {
+        let _ = Band::new(100.0, 200.0, 25.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "a band-pass keeps the band from lo_hz up to hi_hz")]
+    fn an_inverted_band_pass_is_refused() {
+        let _ = bandpass(&[0.0; 64], 800.0, 300.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "a band-pass keeps the band from lo_hz up to hi_hz")]
+    fn a_band_pass_from_nan_is_refused() {
+        let _ = bandpass(&[0.0; 64], f32::NAN, 100.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "a band-pass keeps the band from lo_hz up to hi_hz")]
+    fn a_negative_low_pass_is_refused() {
+        let _ = lowpass(&[0.0; 64], -1.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "a band runs up from a frequency of at least 0")]
+    fn a_band_from_under_0_hz_is_refused() {
+        let _ = Band::new(-1.0, 100.0, 0.5);
+    }
+
+    #[test]
+    #[should_panic(expected = "a band's share is a fraction of the power")]
+    fn a_band_with_a_nan_share_is_refused() {
+        let _ = Band::new(10.0, 100.0, f32::NAN);
+    }
+
+    #[test]
+    #[should_panic(expected = "a band's share is a fraction of the power")]
+    fn a_band_with_a_negative_share_is_refused() {
+        let _ = Band::new(100.0, 200.0, -0.1);
+    }
+
+    /// The shares a loop of each length plays on average over seeds: one
+    /// loop's share of a band of few bins is as random as their noise.
+    #[test]
+    fn shaped_noise_plays_its_envelope_on_average_at_every_loop_length() {
+        const SEEDS: u64 = 32;
+        // above the mean's spread across these seeds, and under the bias
+        // smoothing in bins left at the shortest loop (opinion)
+        const TOLERANCE: f32 = 0.02;
+        for n in [1 << 12, 1 << 14, 1 << 16] {
+            let loops: Vec<_> = (0..SEEDS)
+                .map(|seed| shaped_noise_loop(n, &RAIN, &mut NoiseStream::new(seed)))
+                .collect();
+            for band in RAIN {
+                let mean = loops
+                    .iter()
+                    .map(|buf| band_energy_share(buf, band.lo_hz(), band.hi_hz()))
+                    .sum::<f32>()
+                    / SEEDS as f32;
+                assert!(
+                    (mean - band.share()).abs() < TOLERANCE,
+                    "{n} samples, {band:?}: {mean}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_constant_s_power_is_all_at_0_hz() {
+        let dc = [0.5; 1024];
+        assert_eq!(band_energy_share(&dc, 0.0, 1.0), 1.0);
+        assert_eq!(centroid_hz(&dc), 0.0);
     }
 
     #[test]
@@ -515,17 +693,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn shaped_noise_matches_its_target_envelope() {
-        let mut rng = NoiseStream::new(7);
-        let bands = [(100.0, 1000.0, 70.0), (1000.0, 8000.0, 30.0)];
-        let buf = shaped_noise_loop(1 << 16, &bands, &mut rng);
-        let low = band_energy_share(&buf, 100.0, 1000.0);
-        let high = band_energy_share(&buf, 1000.0, 8000.0);
-        assert!((low - 0.70).abs() < 0.05, "low band {low}");
-        assert!((high - 0.30).abs() < 0.05, "high band {high}");
-    }
-
     /// The octave edges a fingerprint reads power shares between, in Hz.
     const OCTAVE_EDGES_HZ: [f32; 10] = [
         0.0,
@@ -560,21 +727,9 @@ mod tests {
         // a keystroke's length, not a power of two, so the padding shows
         let mut rng = NoiseStream::new(11);
         let noise: Vec<f32> = (0..2646).map(|_| rng.norm()).collect();
-        // the bands pixtuoid's rain plays
-        // (crates/pixtuoid-scene/src/audio/foley.rs at a63f178)
-        let rain = [
-            (20.0, 60.0, 1.5),
-            (60.0, 125.0, 3.5),
-            (125.0, 250.0, 6.9),
-            (250.0, 500.0, 14.3),
-            (500.0, 1000.0, 24.4),
-            (1000.0, 2000.0, 25.3),
-            (2000.0, 4000.0, 10.2),
-            (4000.0, 8000.0, 8.9),
-            (8000.0, 16000.0, 4.0),
-        ];
+        // at the length pixtuoid's rain loops at
         let mut drops = NoiseStream::new(5);
-        let wash = shaped_noise_loop(1 << 16, &rain, &mut drops);
+        let wash = shaped_noise_loop(1 << 19, &RAIN, &mut drops);
         // RMS, peak and centroid, then a share per octave
         type Fingerprint = [f32; 3 + OCTAVE_EDGES_HZ.len() - 1];
         let cases: [(&str, Vec<f32>, usize, Fingerprint); 3] = [
@@ -586,15 +741,15 @@ mod tests {
                     -10.244952,
                     1.0600876,
                     1877.087,
-                    0.0001621343,
-                    0.00019316099,
-                    0.00044842198,
-                    0.061360985,
-                    0.4954008,
-                    0.44222355,
-                    0.00014493968,
-                    4.7951376e-5,
-                    1.8008892e-5,
+                    0.00018664123,
+                    0.00019315626,
+                    0.00044841098,
+                    0.06135948,
+                    0.49538866,
+                    0.44221273,
+                    0.00014493613,
+                    4.79502e-5,
+                    1.800845e-5,
                 ],
             ),
             (
@@ -605,34 +760,34 @@ mod tests {
                     -7.590567,
                     1.2667441,
                     1829.902,
-                    0.021072902,
-                    0.047142792,
-                    0.057722352,
-                    0.15510617,
-                    0.27290294,
-                    0.4448293,
-                    0.0012147744,
-                    8.259414e-6,
-                    5.318578e-7,
+                    0.03587059,
+                    0.04643017,
+                    0.056849808,
+                    0.15276156,
+                    0.26877767,
+                    0.43810514,
+                    0.0011964117,
+                    8.134562e-6,
+                    5.2381813e-7,
                 ],
             ),
             (
                 "shaped_noise_loop",
                 wash,
-                1 << 16,
+                1 << 19,
                 [
-                    -12.900906,
+                    -13.252275,
                     1.0,
-                    1956.3048,
-                    0.048485186,
-                    0.06570255,
-                    0.14594305,
-                    0.24840866,
-                    0.2583636,
-                    0.10464047,
-                    0.088480085,
-                    0.039949004,
-                    2.7414626e-5,
+                    1975.7383,
+                    0.050717503,
+                    0.06665233,
+                    0.14755078,
+                    0.24297257,
+                    0.2585963,
+                    0.10297062,
+                    0.09013539,
+                    0.04040117,
+                    3.3380925e-6,
                 ],
             ),
         ];
@@ -646,7 +801,7 @@ mod tests {
         }
         // the draws it took, which every later draw of pixtuoid's stream follows
         let next = drops.unit();
-        if next != 0.789_408_7 {
+        if next != 0.172_583_52 {
             off.push(format!("shaped_noise_loop's stream draws {next} next"));
         }
         assert!(off.is_empty(), "off their fingerprints: {off:#?}");
