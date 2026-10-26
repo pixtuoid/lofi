@@ -10,7 +10,7 @@ readme       = "README.md"
 keywords     = ["lofi", "music", "procedural", "synthesis", "audio"]
 categories   = ["multimedia::audio"]
 # An allowlist, so a repo-only file added later doesn't ship. ci.yml builds the
-# packaged examples, which `cargo publish`'s verify build doesn't.
+# packaged examples, which cargo 1.99.1's verify build doesn't (observed).
 include      = ["/src", "/examples/lofi_audition.rs", "/examples/common", "/LICENSE", "/README.md"]
 
 # The synthesis tests render whole takes, so unoptimized code sets the suite's

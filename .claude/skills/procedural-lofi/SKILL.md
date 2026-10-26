@@ -199,7 +199,7 @@ constraint and re-batch), and every taste axis is a data table or named const wi
    or ship. A change to a shipped sound renders it at the merge-base (`git merge-base origin/main HEAD`) into `DIR/base` and at
    the branch into `DIR/cand`, DIR durable and outside the repo (`~/Desktop/lofi-listen/<change>`),
    each from a clean tree with its `git rev-parse HEAD` in `DIR/{base,cand}/COMMIT`, and
-   `ab_judge.py` gates them (its header holds the verdict rule and each measure's blind spots)
+   `ab_judge.py` gates them (its header holds each measure's blind spots; `verdict.judged` holds the verdict rule)
    against REFS, the private reference corpus (`audio/` and its `manifest.json` of sha256s, never
    committed), from a venv outside the repo, set up once; CI's `judge.yml` renders the same batch and
    judges it on Modal (`judge/modal_judge.py`) for every PR that changes the render:
