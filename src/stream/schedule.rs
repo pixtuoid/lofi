@@ -713,7 +713,15 @@ impl Song {
             }
             buf.resize(n, 0.0);
             ring.take(buf);
-            (self.chains[i]).process(buf, self.played, &self.automation, &mut cues.noise, work);
+            let drums_present = self.present[Lane::Drums as usize];
+            (self.chains[i]).process(
+                buf,
+                self.played,
+                &self.automation,
+                &mut cues.noise,
+                drums_present,
+                work,
+            );
             // the lane at its gain, once: what both its sum and its send hear
             gains.resize(n, 0.0);
             self.gain_over(i, self.played, (edge, edged), gains);
@@ -1530,7 +1538,7 @@ mod tests {
     /// platform.
     #[test]
     fn a_plain_form_plays_every_cue_where_it_did() {
-        const PLAIN_FRAMES_GOLDEN: u64 = 0x57bb_21a9_97c9_7df9;
+        const PLAIN_FRAMES_GOLDEN: u64 = 0xf96b_6294_238b_f97d;
         let mut words: Vec<u64> = Vec::new();
         for daylight in [1.0, 0.0] {
             for seed in 0..4 {
@@ -1719,6 +1727,26 @@ mod tests {
             energy(&got[start..end]) > energy(&want[start..end]),
             "the room ducked under kicks the break never struck"
         );
+    }
+
+    #[test]
+    fn an_absent_beat_does_not_duck_the_room() {
+        let (seed, empty) = (
+            4,
+            Controls::default().with_daylight(0.0).with_intensity(0.0),
+        );
+        assert_eq!(lane_gain(Lane::Drums, empty.intensity), 0.0);
+        let mut unbeaten = Form::plain();
+        for bar in 0..GEN_LOOP_BARS {
+            unbeaten.plays_mut(bar).set(Layer::Drums, false);
+        }
+        let mut songs = [Form::plain(), unbeaten]
+            .map(|form| Song::with_form(seed, 0, empty, form, SAMPLE_RATE));
+        let end = songs[0].window.bars[GEN_LOOP_BARS];
+        let [got, want] = songs
+            .each_mut()
+            .map(|song| play_to(song, end)[index(Lane::Texture)].clone());
+        assert!(got == want, "the room ducked under kicks no drum sounded");
     }
 
     /// The first seed whose song 0 under the default controls has a form

@@ -470,7 +470,10 @@ mod tests {
         let low = audition::BASS_LOW;
         let r7 = [
             format!("bass root **{low}–{}**", low + 11),
-            format!("no interval <P5 below {}", audition::LOW_INTERVAL_LIMIT),
+            format!(
+                "a chord voice under {} sits within a P5",
+                audition::BASS_CLASH_BELOW
+            ),
         ];
         for row in &r7 {
             assert!(bible.contains(row), "LOFI-BIBLE.md no longer reads {row:?}");
