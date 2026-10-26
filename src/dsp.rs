@@ -72,17 +72,48 @@ pub(crate) fn white_noise_gain(sr: u32) -> f32 {
     (sr as f32 / SAMPLE_RATE as f32).sqrt()
 }
 
+/// The float an [`fft`] runs in: `f32` on the render path, `f64` where a tool
+/// sums millions of bins.
+pub(crate) trait Real:
+    Copy
+    + std::ops::Add<Output = Self>
+    + std::ops::Sub<Output = Self>
+    + std::ops::Mul<Output = Self>
+    + std::ops::Neg<Output = Self>
+{
+    const ONE: Self;
+
+    /// `x`, rounded to this float.
+    fn of(x: f64) -> Self;
+}
+
+impl Real for f32 {
+    const ONE: Self = 1.0;
+
+    fn of(x: f64) -> Self {
+        x as f32
+    }
+}
+
+impl Real for f64 {
+    const ONE: Self = 1.0;
+
+    fn of(x: f64) -> Self {
+        x
+    }
+}
+
 /// `e^(−2πik/n)` for `k` in `0..n/2` as `(cos, sin)` rows, built per transform
 /// pair and dropped: a kept table for the longest beds pins megabytes.
-pub(crate) type Twiddles = Vec<(f32, f32)>;
+pub(crate) type Twiddles<T = f32> = Vec<(T, T)>;
 
 /// [`Twiddles`] for `n`, in f64: a recurrence across a stage drifts by its
 /// length.
-pub(crate) fn twiddles(n: usize) -> Twiddles {
+pub(crate) fn twiddles<T: Real>(n: usize) -> Twiddles<T> {
     (0..n / 2)
         .map(|k| {
             let a = -2.0 * std::f64::consts::PI * k as f64 / n as f64;
-            (a.cos() as f32, a.sin() as f32)
+            (T::of(a.cos()), T::of(a.sin()))
         })
         .collect()
 }
@@ -90,7 +121,7 @@ pub(crate) fn twiddles(n: usize) -> Twiddles {
 /// In-place iterative radix-2 FFT (Cooley–Tukey), unscaled. `re`/`im` len
 /// must be a power of two no longer than the table: `tw` is [`twiddles`] for
 /// a power of two at least `re.len()`.
-pub(crate) fn fft(re: &mut [f32], im: &mut [f32], tw: &[(f32, f32)], inverse: bool) {
+pub(crate) fn fft<T: Real>(re: &mut [T], im: &mut [T], tw: &[(T, T)], inverse: bool) {
     let n = re.len();
     debug_assert!(n.is_power_of_two() && im.len() == n && 2 * tw.len() >= n);
     let mut j = 0usize;
@@ -106,7 +137,7 @@ pub(crate) fn fft(re: &mut [f32], im: &mut [f32], tw: &[(f32, f32)], inverse: bo
             im.swap(i, j);
         }
     }
-    let sign = if inverse { -1.0f32 } else { 1.0 };
+    let sign = if inverse { -T::ONE } else { T::ONE };
     let mut len = 2;
     // Two radix-2 stages per pass where two remain (radix-2²): half the passes
     // over a buffer that outgrows the cache, and the second stage's odd

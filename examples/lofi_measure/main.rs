@@ -11,19 +11,25 @@
 //!     [--engine whole|stream] [--mood day|night] [--seeds N] [--start S] [--tier empty|moderate|busy] \
 //!     [--sweep intensity|twilight|rain] [--songs 1] [--batch judge]
 //!   A take plays one song, so a run of more is refused.
+//!   cargo run --release --example lofi_measure -- [--corpus DIR]
+//!   reads every track in DIR/audio as a take is read, through ffmpeg's
+//!   decoder, and prints the `CORPUS` and `MEASURED_ON` they give.
 
 #[path = "../common/batch.rs"]
 mod batch;
 mod corpus;
 
-use std::process::ExitCode;
+use std::io;
+use std::path::{Path, PathBuf};
+use std::process::{Command, ExitCode};
 use std::time::Instant;
 
+use pixtuoid_lofi::Frame;
 use pixtuoid_lofi::audition::{self, Lane, Stems};
 use pixtuoid_lofi::dsp::SAMPLE_RATE;
 
 use batch::{Batch, Engine, WholeSong, lane_gains, usage_error, valid_flags};
-use corpus::{BAND_EDGES_HZ, CORPUS, LTAS_BANDS_PER_OCTAVE, LTAS_SPAN_HZ, percentile};
+use corpus::{BAND_EDGES_HZ, CORPUS, LTAS_BANDS_PER_OCTAVE, LTAS_SPAN_HZ, percentile, spread};
 use pixtuoid_lofi::audition::{channels, fold, gated_lufs};
 
 const SR: f64 = SAMPLE_RATE as f64;
@@ -35,14 +41,35 @@ const BPM_RAIL: [f64; 2] = [68.0, 90.0];
 /// differences (opinion).
 const SEAM_QUANTILE: f64 = 0.999;
 
+/// What a run reads: a batch's takes, or the reference corpus's tracks.
+enum Mode {
+    Takes(Batch),
+    Corpus(PathBuf),
+}
+
+/// The flags lofi_measure takes beyond the batch's.
+const OWN_FLAGS: [&str; 1] = ["--corpus"];
+
+/// What `args` ask to read.
+fn mode(mut args: impl Iterator<Item = String>) -> io::Result<Mode> {
+    let args: Vec<String> = args.by_ref().collect();
+    match args.as_slice() {
+        [flag, dir] if flag == "--corpus" => Ok(Mode::Corpus(PathBuf::from(dir))),
+        _ if args.iter().any(|a| a == "--corpus") => Err(usage_error(
+            "--corpus reads the corpus alone, so it takes one directory and no other flag".into(),
+        )),
+        _ => parse(args.into_iter()).map(Mode::Takes),
+    }
+}
+
 /// The batch `args` select.
-fn parse(mut args: impl Iterator<Item = String>) -> std::io::Result<Batch> {
+fn parse(mut args: impl Iterator<Item = String>) -> io::Result<Batch> {
     let mut batch = Batch::default();
     while let Some(a) = args.next() {
         if !batch.parse_flag(&a, &mut args)? {
             return Err(usage_error(format!(
                 "unknown argument {a:?}; valid: {}",
-                valid_flags(&[])
+                valid_flags(&OWN_FLAGS)
             )));
         }
     }
@@ -66,8 +93,11 @@ fn main() -> ExitCode {
     }
 }
 
-fn run() -> std::io::Result<()> {
-    let batch = parse(std::env::args().skip(1))?;
+fn run() -> io::Result<()> {
+    let batch = match mode(std::env::args().skip(1))? {
+        Mode::Takes(batch) => batch,
+        Mode::Corpus(dir) => return read_corpus(&dir),
+    };
     let bands = bands();
     let cells = |cell: &dyn Fn(f64, f64) -> String| -> Vec<String> {
         bands.iter().map(|&(lo, hi)| cell(lo, hi)).collect()
@@ -178,6 +208,73 @@ fn run() -> std::io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Reads every track in `dir`'s `audio/` as a take's mix is read, and prints
+/// the [`CORPUS`] and `MEASURED_ON` they give, for `corpus.rs`.
+fn read_corpus(dir: &Path) -> io::Result<()> {
+    let mut files: Vec<PathBuf> = (std::fs::read_dir(dir.join("audio"))?)
+        .map(|entry| entry.map(|e| e.path()))
+        .collect::<io::Result<_>>()?;
+    files.sort();
+    let mut shares = vec![Vec::new(); bands().len()];
+    let (mut centroids, mut slopes) = (Vec::new(), Vec::new());
+    for file in &files {
+        let spectrum = Spectrum::of(&fold(&decode(file)?));
+        for (share, (lo, hi)) in shares.iter_mut().zip(bands()) {
+            share.push(100.0 * spectrum.share(lo, hi));
+        }
+        centroids.push(spectrum.centroid());
+        slopes.push(spectrum.ltas_slope());
+        eprintln!("read {}", file.display());
+    }
+    let row = |values: Vec<f64>, digits: usize| {
+        let cells: Vec<String> = spread(values)
+            .iter()
+            .map(|v| format!("{v:.digits$}"))
+            .collect();
+        format!("[{}]", cells.join(", "))
+    };
+    println!("// {} tracks", files.len());
+    println!("pub(crate) const CORPUS: Corpus = Corpus {{\n    shares_pct: [");
+    for share in shares {
+        println!("        {},", row(share, 2));
+    }
+    println!("    ],\n    centroid_hz: {},", row(centroids, 1));
+    println!("    ltas_db_per_oct: {},\n}};", row(slopes, 2));
+    println!(
+        "pub(crate) const MEASURED_ON: Axes = Axes {{\n    band_edges_hz: {BAND_EDGES_HZ:?},\n    ltas_span_hz: {LTAS_SPAN_HZ:?},\n    ltas_bands_per_octave: {LTAS_BANDS_PER_OCTAVE:?},\n    sample_rate: {SAMPLE_RATE},\n}};"
+    );
+    Ok(())
+}
+
+/// `path` decoded by ffmpeg to stereo f32 at [`SAMPLE_RATE`], piped rather
+/// than written, so no audio lands on disk.
+fn decode(path: &Path) -> io::Result<Vec<Frame>> {
+    let out = Command::new("ffmpeg")
+        .args(["-nostdin", "-v", "error", "-i"])
+        .arg(path)
+        .args([
+            "-f",
+            "f32le",
+            "-ac",
+            "2",
+            "-ar",
+            &SAMPLE_RATE.to_string(),
+            "-",
+        ])
+        .output()?;
+    if !out.status.success() {
+        return Err(io::Error::other(format!(
+            "ffmpeg can't decode {}: {}",
+            path.display(),
+            String::from_utf8_lossy(&out.stderr)
+        )));
+    }
+    let samples: Vec<f32> = (out.stdout.as_chunks::<4>().0.iter())
+        .map(|&bytes| f32::from_le_bytes(bytes))
+        .collect();
+    Ok(samples.as_chunks::<2>().0.to_vec())
 }
 
 /// One stem a take's mix sums, by name, as its row reads it: with the seam
@@ -301,11 +398,7 @@ struct Transform {
 
 impl Transform {
     fn of(buf: &[f32]) -> Self {
-        let n = buf.len().next_power_of_two();
-        let mut re: Vec<f64> = buf.iter().map(|&v| f64::from(v)).collect();
-        re.resize(n, 0.0);
-        let mut im = vec![0.0; n];
-        fft(&mut re, &mut im);
+        let (re, im) = audition::transform(buf);
         Self { re, im }
     }
 }
@@ -317,7 +410,6 @@ struct Spectrum {
 }
 
 impl Spectrum {
-    #[cfg(test)]
     fn of(buf: &[f32]) -> Self {
         let transform = Transform::of(buf);
         Self::cross(&transform, &transform)
@@ -397,43 +489,6 @@ impl Spectrum {
     }
 }
 
-/// In-place iterative radix-2 FFT; `re.len()` is a power of two.
-fn fft(re: &mut [f64], im: &mut [f64]) {
-    let n = re.len();
-    let mut j = 0usize;
-    for i in 1..n {
-        let mut bit = n >> 1;
-        while j & bit != 0 {
-            j ^= bit;
-            bit >>= 1;
-        }
-        j |= bit;
-        if i < j {
-            re.swap(i, j);
-            im.swap(i, j);
-        }
-    }
-    let mut len = 2;
-    while len <= n {
-        let angle = -std::f64::consts::TAU / len as f64;
-        let (wr0, wi0) = (angle.cos(), angle.sin());
-        for start in (0..n).step_by(len) {
-            let (mut wr, mut wi) = (1.0, 0.0);
-            for k in 0..len / 2 {
-                let (a, b) = (start + k, start + k + len / 2);
-                let tr = re[b] * wr - im[b] * wi;
-                let ti = re[b] * wi + im[b] * wr;
-                re[b] = re[a] - tr;
-                im[b] = im[a] - ti;
-                re[a] += tr;
-                im[a] += ti;
-                (wr, wi) = (wr * wr0 - wi * wi0, wr * wi0 + wi * wr0);
-            }
-        }
-        len <<= 1;
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use pixtuoid_lofi::dsp::NoiseStream;
@@ -473,7 +528,7 @@ mod tests {
         let usage: String = (include_str!("main.rs").lines())
             .take_while(|line| line.starts_with("//!"))
             .collect();
-        for flag in valid_flags(&[]).split(' ') {
+        for flag in valid_flags(&OWN_FLAGS).split(' ') {
             assert!(
                 usage.contains(&format!("[{flag}")) || usage.contains(&format!("| {flag}")),
                 "the usage leaves out {flag}"
@@ -483,6 +538,32 @@ mod tests {
         assert!(args(&["--sweep", "rain"]).is_ok());
         assert!(args(&["--sweep", "dusk"]).is_err());
         assert!(args(&["--songs", "2"]).is_err());
+    }
+
+    #[test]
+    fn the_corpus_was_read_on_the_axes_a_take_is_read_on() {
+        use corpus::MEASURED_ON;
+        assert_eq!(MEASURED_ON.band_edges_hz, BAND_EDGES_HZ);
+        assert_eq!(MEASURED_ON.ltas_span_hz, LTAS_SPAN_HZ);
+        assert_eq!(MEASURED_ON.ltas_bands_per_octave, LTAS_BANDS_PER_OCTAVE);
+        assert_eq!(MEASURED_ON.sample_rate, SAMPLE_RATE);
+    }
+
+    #[test]
+    fn a_spread_is_numpys_linear_percentile() {
+        // numpy.percentile([1, 2, 3, 4], [10, 25, 50, 75, 90])
+        let got = spread(vec![4.0, 1.0, 3.0, 2.0]);
+        for (g, w) in got.iter().zip([1.3, 1.75, 2.5, 3.25, 3.7]) {
+            assert!((g - w).abs() < 1e-12, "{got:?}");
+        }
+    }
+
+    #[test]
+    fn the_corpus_is_read_alone() {
+        let args = |args: &[&str]| mode(args.iter().map(|&a| a.to_owned()));
+        assert!(matches!(args(&["--corpus", "refs"]), Ok(Mode::Corpus(_))));
+        assert!(args(&["--corpus", "refs", "--tier", "busy"]).is_err());
+        assert!(matches!(args(&["--tier", "busy"]), Ok(Mode::Takes(_))));
     }
 
     #[test]

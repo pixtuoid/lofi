@@ -132,6 +132,18 @@ impl Probe for Stems {
     }
 }
 
+/// `buf` zero-padded to the next power of two through [`dsp`](crate::dsp)'s
+/// FFT in f64, `(re, im)`: a whole take's spectrum, whose millions of bins a
+/// tool sums past what f32 would keep.
+pub fn transform(buf: &[f32]) -> (Vec<f64>, Vec<f64>) {
+    let n = buf.len().next_power_of_two();
+    let mut re: Vec<f64> = buf.iter().map(|&v| f64::from(v)).collect();
+    re.resize(n, 0.0);
+    let mut im = vec![0.0; n];
+    crate::dsp::fft(&mut re, &mut im, &crate::dsp::twiddles(n), false);
+    (re, im)
+}
+
 /// The seeds [`WHOLE_LANE_LUFS_SD`] and [`SONG_LUFS_SD`] were measured over,
 /// each seed's first song.
 pub const LUFS_SEEDS: Range<u64> = 0..24;
