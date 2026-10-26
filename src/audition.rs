@@ -61,7 +61,7 @@ pub fn song_len(seed: u64, k: u64, controls: Controls) -> usize {
     crate::stream::schedule::song_len(seed, k, controls, SAMPLE_RATE)
 }
 
-/// A performance's mix as the sum it is, on the fold every reading hears:
+/// A performance's mix as the sum it is, on the fold a spectrum reads:
 /// each lane's dry sum and the plate's return, as the ceiling played them,
 /// so a frame's stems sum to its fold but for the rounding each takes.
 #[derive(Debug)]

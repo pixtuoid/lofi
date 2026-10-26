@@ -319,6 +319,10 @@ impl Batch {
         flag: &str,
         args: &mut impl Iterator<Item = String>,
     ) -> io::Result<bool> {
+        // the table gates the arms, so an arm it leaves out never parses
+        if !FLAGS.contains(&flag) {
+            return Ok(false);
+        }
         if matches!(flag, "--mood" | "--seeds" | "--start" | "--tier") {
             self.picked = true;
         }

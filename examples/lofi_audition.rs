@@ -31,7 +31,7 @@ use batch::{Batch, Engine, lane_gains, parse_choice, usage_error, valid_flags};
 use pixtuoid_lofi::audition::{channels, gated_lufs};
 
 /// Every take renders at ONE gated loudness, so a blind A/B compares takes, not
-/// gain: inside LOFI-BIBLE's -16 to -14 LUFS mix target.
+/// gain: inside LOFI-BIBLE.md §4's loudness target.
 const TARGET_LUFS: f64 = -15.0;
 
 /// What a solo take renders at instead, since a lane alone peaks past full
@@ -290,17 +290,22 @@ const HEADER_AFTER_SIZE: u32 = 4 + 8 + FMT_SIZE + 8;
 
 /// 16-bit stereo RIFF/WAVE; an error if `take` holds more data than a RIFF
 /// size can count.
+/// The data chunk's size for a take of `frames`, or `None` past what the
+/// header's RIFF size can count.
+fn data_len(frames: usize) -> Option<u32> {
+    (u32::try_from(frames).ok())
+        .and_then(|n| n.checked_mul(u32::from(CHANNELS * BITS / 8)))
+        .filter(|n| n.checked_add(HEADER_AFTER_SIZE).is_some())
+}
+
 fn write_wav(path: &Path, take: &[Frame]) -> io::Result<()> {
     let frame = CHANNELS * BITS / 8;
-    let data_len = (u32::try_from(take.len()).ok())
-        .and_then(|n| n.checked_mul(u32::from(frame)))
-        .filter(|n| n.checked_add(HEADER_AFTER_SIZE).is_some())
-        .ok_or_else(|| {
-            usage_error(format!(
-                "a take of {} frames is too long for a wav",
-                take.len()
-            ))
-        })?;
+    let data_len = data_len(take.len()).ok_or_else(|| {
+        usage_error(format!(
+            "a take of {} frames is too long for a wav",
+            take.len()
+        ))
+    })?;
     let mut w = BufWriter::new(File::create(path)?);
     w.write_all(b"RIFF")?;
     w.write_all(&(HEADER_AFTER_SIZE + data_len).to_le_bytes())?;
@@ -337,6 +342,37 @@ mod tests {
                 "the usage leaves out {flag}"
             );
         }
+    }
+
+    #[test]
+    fn takes_render_inside_lofi_bibles_loudness_target() {
+        let bible = include_str!("../.claude/skills/procedural-lofi/reference/LOFI-BIBLE.md");
+        let row = (bible.lines())
+            .find_map(|line| line.strip_prefix("- **Loudness**: **"))
+            .expect("LOFI-BIBLE.md has a loudness row");
+        let target = row
+            .split(" LUFS")
+            .next()
+            .unwrap_or_default()
+            .replace('−', "-");
+        let [lo, hi] = [0, 1].map(|i| {
+            (target.split(" to ").nth(i))
+                .and_then(|v| v.parse::<f64>().ok())
+                .unwrap_or_else(|| panic!("LOFI-BIBLE.md's loudness row reads {target:?}"))
+        });
+        assert!(
+            (lo..=hi).contains(&TARGET_LUFS),
+            "{TARGET_LUFS} LUFS outside {lo}..={hi}"
+        );
+    }
+
+    #[test]
+    fn a_wav_counts_every_take_its_riff_size_can_and_no_longer_one() {
+        let frame = u32::from(CHANNELS * BITS / 8);
+        let longest = ((u32::MAX - HEADER_AFTER_SIZE) / frame) as usize;
+        assert_eq!(data_len(0), Some(0));
+        assert_eq!(data_len(longest), Some(longest as u32 * frame));
+        assert_eq!(data_len(longest + 1), None);
     }
 
     #[test]

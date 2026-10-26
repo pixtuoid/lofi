@@ -217,6 +217,12 @@ fn read_corpus(dir: &Path) -> io::Result<()> {
         .map(|entry| entry.map(|e| e.path()))
         .collect::<io::Result<_>>()?;
     files.sort();
+    if files.is_empty() {
+        return Err(usage_error(format!(
+            "{} holds no tracks",
+            dir.join("audio").display()
+        )));
+    }
     let mut shares = vec![Vec::new(); bands().len()];
     let (mut centroids, mut slopes) = (Vec::new(), Vec::new());
     for file in &files {
@@ -521,6 +527,16 @@ mod tests {
             bible.contains(&rail),
             "LOFI-BIBLE.md no longer reads {rail:?}"
         );
+    }
+
+    #[test]
+    fn a_corpus_with_no_tracks_is_refused() {
+        let dir = std::env::temp_dir().join(format!("lofi-corpus-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("audio")).expect("the corpus dir");
+        let read = read_corpus(&dir);
+        std::fs::remove_dir_all(&dir).expect("the corpus dir goes");
+        let e = read.expect_err("an empty corpus is refused");
+        assert!(e.to_string().contains("holds no tracks"), "{e}");
     }
 
     #[test]
