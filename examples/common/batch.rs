@@ -14,10 +14,8 @@ use pixtuoid_lofi::{Controls, Frame, Performance};
 /// and the error message can't list different spellings.
 const MOODS: [(&str, f32); 2] = [("day", 1.0), ("night", 0.0)];
 
-/// The lanes in [`Lane::ALL`] order: the ONE spelling the tools print and
-/// `--solo` accepts.
-pub(crate) const LANE_NAMES: [&str; Lane::ALL.len()] =
-    ["pad", "sparkle", "keys", "drums", "texture", "bass"];
+/// The lanes in [`Lane::ALL`] order, as lofi names them.
+pub(crate) const LANE_NAMES: [&str; Lane::ALL.len()] = Lane::NAMES;
 
 /// How busy pixtuoid's office is, which picks the intensity a take plays at.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]

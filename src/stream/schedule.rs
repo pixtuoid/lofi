@@ -14,9 +14,7 @@ use crate::Controls;
 use crate::compose::Form;
 use crate::compose::{Edge, GEN_LOOP_BARS, HAT_JITTER_S, Mood, Score, compose};
 use crate::dsp::{NoiseStream, SAMPLE_RATE, splitmix_draw};
-use crate::synth::{
-    CRACKLE_POPS_PER_SEC, Lane, Part, bar_onset, crackle_pop, part, plays, samples_at,
-};
+use crate::synth::{CRACKLE_POPS_PER_SEC, Lane, Part, bar_onset, crackle_pop, part, samples_at};
 
 pub(crate) const LANES: usize = Lane::ALL.len();
 
@@ -340,6 +338,17 @@ struct Song {
     edged: Vec<f64>,
 }
 
+/// The music lanes' gain through `edges` on frame `n`.
+fn edge_at(edges: &[Ramp; 2], n: usize) -> f64 {
+    edges[0].at(n) * edges[1].at(n)
+}
+
+/// Whether `lane` plays through a form's edges: every lane but the texture,
+/// which links one song to the next.
+fn fades(lane: Lane) -> bool {
+    lane != Lane::Texture
+}
+
 /// The level of `score`'s music lanes through its form's edges in `window`:
 /// a fade rises from [`FADE_FLOOR_DB`] across the intro, or falls to it across
 /// the outro, linear in dB.
@@ -422,7 +431,7 @@ impl Song {
             .map(|&at| samples_at(at, sr))
             .collect();
         let kicks: Vec<usize> = (window.tile(&onsets).into_iter())
-            .filter(|&(_, bar, _)| plays(&score, Lane::Drums, bar))
+            .filter(|&(_, bar, _)| score.form().plays(bar).strikes(Lane::Drums))
             .map(|(at, ..)| at)
             .collect();
         let level_ramp = samples_at(LEVEL_RAMP_BEATS * score.beat_s(), sr);
@@ -523,12 +532,13 @@ impl Song {
     /// [`play`](Self::play) multiplies them.
     #[cfg(test)]
     fn gain(&self, i: usize, n: usize) -> f64 {
-        let edge = if Lane::ALL[i] == Lane::Texture {
-            1.0
+        let lane = Lane::ALL[i];
+        let edge = if fades(lane) {
+            edge_at(&self.edges, n)
         } else {
-            self.edges[0].at(n) * self.edges[1].at(n)
+            1.0
         };
-        self.levels[i].at(n) * rain::level(Lane::ALL[i], self.rain.at(n)) * edge
+        self.levels[i].at(n) * rain::level(lane, self.rain.at(n)) * edge
     }
 
     /// Strikes each note whose onset falls in the next `n` frames, then adds
@@ -548,13 +558,13 @@ impl Song {
         let hit = |at: usize| rain::hit(rain.at(at));
         let unity = |_: usize| 1.0;
         // the music lanes' edge gain over the step: held, or each frame's
-        let flat = (self.edges.iter())
+        let edges = self.edges;
+        let flat = (edges.iter())
             .all(|edge| edge.flat_over(self.played, end))
-            .then(|| self.edges[0].at(self.played) * self.edges[1].at(self.played));
+            .then(|| edge_at(&edges, self.played));
         self.edged.clear();
         if flat.is_none() {
-            let [entry, exit] = self.edges;
-            (self.edged).extend((self.played..end).map(|at| entry.at(at) * exit.at(at)));
+            (self.edged).extend((self.played..end).map(|at| edge_at(&edges, at)));
         }
         for (i, lane) in Lane::ALL.into_iter().enumerate() {
             let part = part(&self.score, lane);
@@ -581,12 +591,7 @@ impl Song {
             self.chains[i].process(buf, &mut cues.noise);
             let level = &self.levels[i];
             let wet = (rain.end() <= self.played).then(|| rain::level(lane, rain.to()));
-            // the texture links one song to the next, through no edge
-            let flat = if lane == Lane::Texture {
-                Some(1.0)
-            } else {
-                flat
-            };
+            let flat = if fades(lane) { flat } else { Some(1.0) };
             // the lane at its gain, once: what both its sum and its send hear,
             // each frame's level, rain and edge multiplied in that order
             match (level.end() <= self.played, wet, flat) {
@@ -647,7 +652,7 @@ struct Cues {
 impl Cues {
     fn new(score: &Score, lane: Lane, window: &Window, noise: NoiseStream, sr: u32) -> Self {
         let order = (window.tile(&part(score, lane).onsets(sr)).into_iter())
-            .map(|(at, bar, i)| (at, i, !plays(score, lane, bar)))
+            .map(|(at, bar, i)| (at, i, !score.form().plays(bar).strikes(lane)))
             .collect();
         Self {
             order,
@@ -1431,7 +1436,7 @@ mod tests {
     fn a_muted_note_strikes_nothing_and_its_tail_rings_on() {
         let (seed, c, bar) = (3, Controls::default(), 9);
         let mut form = plain();
-        form.plays_mut(bar).bass = false;
+        form.plays_mut(bar).set(Lane::Bass, false);
         let mut muted = Song::with_form(seed, 0, c, form, SAMPLE_RATE).at_levels(UNITY);
         let mut whole = plain_song(seed, 0, c, SAMPLE_RATE).at_levels(UNITY);
         let bass = index(Lane::Bass);
@@ -1468,7 +1473,7 @@ mod tests {
         let (seed, c) = (7, Controls::default());
         let mut form = plain();
         for bar in 4..8 {
-            form.plays_mut(bar).drums = false;
+            form.plays_mut(bar).set(Lane::Drums, false);
         }
         let mut muted = Song::with_form(seed, 0, c, form, SAMPLE_RATE).at_levels(UNITY);
         let mut whole = plain_song(seed, 0, c, SAMPLE_RATE).at_levels(UNITY);
@@ -1485,7 +1490,7 @@ mod tests {
         let moderate = empty.with_intensity(0.5);
         let mut form = plain();
         for bar in 0..4 {
-            form.plays_mut(bar).drums = false;
+            form.plays_mut(bar).set(Lane::Drums, false);
         }
         let bars = plain_bars(seed, 0, empty);
         let anticipation = samples_at(ANTICIPATION_S, SAMPLE_RATE);
@@ -1555,7 +1560,7 @@ mod tests {
         let mut form = plain();
         let (from, to) = (20, 24);
         for bar in from..to {
-            form.plays_mut(bar).drums = false;
+            form.plays_mut(bar).set(Lane::Drums, false);
         }
         let texture = index(Lane::Texture);
         let mut broken = Song::with_form(seed, 0, night, form, SAMPLE_RATE).at_levels(UNITY);
@@ -1743,6 +1748,32 @@ mod tests {
             own,
             "the dip never reopened"
         );
+    }
+
+    #[test]
+    fn every_lane_plays_through_the_edges_but_the_room() {
+        let c = Controls::default();
+        let seed = seed_where(c, |f| f.entry() == Edge::Fade && f.exit() == Edge::Fade);
+        let form = song_score(seed, 0, c).form().clone();
+        let mut faded = Song::new(seed, 0, c, SAMPLE_RATE).at_levels(UNITY);
+        let plain = form.with_edges(Edge::Plain, Edge::Plain);
+        let mut twin = Song::with_form(seed, 0, c, plain, SAMPLE_RATE).at_levels(UNITY);
+        let edges = faded.edges;
+        let len = faded.len;
+        let [got, want] = [&mut faded, &mut twin].map(|song| play_to(song, len));
+        for (i, lane) in Lane::ALL.iter().enumerate() {
+            // the room by name, not by `fades`, so a room that fades shows
+            let edge = |n: usize| {
+                if *lane == Lane::Texture {
+                    1.0
+                } else {
+                    edge_at(&edges, n)
+                }
+            };
+            let off = (got[i].iter().zip(&want[i]).enumerate())
+                .position(|(n, (g, w))| g.to_bits() != (w * edge(n)).to_bits());
+            assert_eq!(off, None, "{lane:?} plays off its edges' gain");
+        }
     }
 
     #[test]

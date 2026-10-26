@@ -5,49 +5,43 @@
 
 use std::fmt;
 
-use super::{GEN_LOOP_BARS, chance, pick};
+use super::{GEN_LOOP_BARS, Lane, chance, pick};
 use crate::dsp::{NoiseStream, splitmix64};
 
 /// Seeds the form's own stream, so a change to the loop's draws never moves a
 /// form's, nor the reverse.
 const FORM_SALT: u64 = 0xF0_4A_55_ED;
 
-/// Which lanes strike in one bar, named as the `Score` names their parts.
+/// Which lanes strike in one bar, each at its index in [`Lane::ALL`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Plays {
-    pub(crate) pad: bool,
-    pub(crate) sparkle: bool,
-    pub(crate) keys: bool,
-    pub(crate) drums: bool,
-    pub(crate) texture: bool,
-    pub(crate) bass: bool,
-}
+pub(crate) struct Plays([bool; Lane::ALL.len()]);
 
 impl Plays {
-    pub(crate) const ALL: Self = Self {
-        pad: true,
-        sparkle: true,
-        keys: true,
-        drums: true,
-        texture: true,
-        bass: true,
-    };
+    pub(crate) const ALL: Self = Self([true; Lane::ALL.len()]);
 
     /// The bed alone: the pad's chords over the room.
-    const BED: Self = Self {
-        pad: true,
-        texture: true,
-        sparkle: false,
-        keys: false,
-        drums: false,
-        bass: false,
-    };
+    const BED: Self = Self([false; Lane::ALL.len()])
+        .with(Lane::Pad, true)
+        .with(Lane::Texture, true);
 
     /// Every lane but the lead, which sings in the dense cores only.
-    const BAND: Self = Self {
-        sparkle: false,
-        ..Self::ALL
-    };
+    const BAND: Self = Self::ALL.with(Lane::Sparkle, false);
+
+    /// These lanes, with `lane` striking or not.
+    const fn with(mut self, lane: Lane, strikes: bool) -> Self {
+        self.0[lane as usize] = strikes;
+        self
+    }
+
+    /// Whether `lane` strikes.
+    pub(crate) const fn strikes(self, lane: Lane) -> bool {
+        self.0[lane as usize]
+    }
+
+    /// Sets whether `lane` strikes.
+    pub(crate) fn set(&mut self, lane: Lane, strikes: bool) {
+        self.0[lane as usize] = strikes;
+    }
 }
 
 /// How a song's intro or outro moves its music lanes' level or colour.
@@ -166,19 +160,6 @@ impl Form {
     }
 }
 
-/// A lane's name and whether a bar's [`Plays`] strikes it.
-type Named = (&'static str, fn(&Plays) -> bool);
-
-/// Every lane, as [`Form`]'s display names it.
-const LANE_NAMES: [Named; 6] = [
-    ("pad", |p| p.pad),
-    ("sparkle", |p| p.sparkle),
-    ("keys", |p| p.keys),
-    ("drums", |p| p.drums),
-    ("texture", |p| p.texture),
-    ("bass", |p| p.bass),
-];
-
 /// Each part's bar count, then each lane out in it as the bars it is out:
 /// `intro 4: drums 0-3 · body 40: sparkle 20-27 · outro 4 fade`.
 impl fmt::Display for Form {
@@ -200,14 +181,17 @@ impl fmt::Display for Form {
                 Edge::Filter => write!(f, " filter")?,
             }
             let mut sep = ":";
-            for (lane, plays) in LANE_NAMES {
-                let out: Vec<usize> = bars.clone().filter(|&b| !plays(&self.plays[b])).collect();
+            for lane in Lane::ALL {
+                let out: Vec<usize> = bars
+                    .clone()
+                    .filter(|&b| !self.plays[b].strikes(lane))
+                    .collect();
                 for run in out.chunk_by(|a, b| a + 1 == *b) {
                     let (first, last) = (run[0], run[run.len() - 1]);
                     if first == last {
-                        write!(f, "{sep} {lane} {first}")?;
+                        write!(f, "{sep} {} {first}", lane.name())?;
                     } else {
-                        write!(f, "{sep} {lane} {first}-{last}")?;
+                        write!(f, "{sep} {} {first}-{last}", lane.name())?;
                     }
                     sep = ",";
                 }
@@ -242,39 +226,22 @@ enum Closing {
     Cold,
 }
 
-/// The intros and their weights: the judge corpus's start types, counted
-/// (research-form-corpus.md). The lead sits out every intro.
+/// The intros and their weights: LOFI-BIBLE R11's start counts, the sparse
+/// ones split by the lanes out and its 10 unsplit ones left out. The lead
+/// sits out every intro.
 const INTRO_KINDS: [(Opening, u32); 8] = [
+    (Opening::Sparse(Plays::BED.with(Lane::Keys, true)), 27),
     (
-        Opening::Sparse(Plays {
-            keys: true,
-            ..Plays::BED
-        }),
-        27,
-    ),
-    (
-        Opening::Sparse(Plays {
-            keys: true,
-            bass: true,
-            ..Plays::BED
-        }),
+        Opening::Sparse(Plays::BED.with(Lane::Keys, true).with(Lane::Bass, true)),
         13,
     ),
     (
-        Opening::Sparse(Plays {
-            keys: true,
-            drums: true,
-            ..Plays::BED
-        }),
+        Opening::Sparse(Plays::BED.with(Lane::Keys, true).with(Lane::Drums, true)),
         10,
     ),
     (Opening::Sparse(Plays::BED), 7),
     (
-        Opening::Sparse(Plays {
-            drums: true,
-            bass: true,
-            ..Plays::BED
-        }),
+        Opening::Sparse(Plays::BED.with(Lane::Drums, true).with(Lane::Bass, true)),
         5,
     ),
     (Opening::Edged(Edge::Fade), 13),
@@ -282,30 +249,17 @@ const INTRO_KINDS: [(Opening, u32); 8] = [
     (Opening::Cold, 5),
 ];
 
-/// The outros and their weights: the corpus's end types, counted; the ring-out
-/// takes its ring-outs and its noise-only outros.
+/// The outros and their weights: R11's end counts, the sparse ones split by
+/// the lanes out, its 8 noise-only ones joining the ring-out and its 5 unsplit
+/// ones left out.
 const OUTRO_KINDS: [(Closing, u32); 7] = [
+    (Closing::Sparse(Plays::BED.with(Lane::Keys, true)), 14),
     (
-        Closing::Sparse(Plays {
-            keys: true,
-            ..Plays::BED
-        }),
-        14,
-    ),
-    (
-        Closing::Sparse(Plays {
-            keys: true,
-            drums: true,
-            ..Plays::BED
-        }),
+        Closing::Sparse(Plays::BED.with(Lane::Keys, true).with(Lane::Drums, true)),
         11,
     ),
     (
-        Closing::Sparse(Plays {
-            keys: true,
-            bass: true,
-            ..Plays::BED
-        }),
+        Closing::Sparse(Plays::BED.with(Lane::Keys, true).with(Lane::Bass, true)),
         10,
     ),
     (Closing::RingOut, 18),
@@ -434,20 +388,20 @@ pub(crate) fn arrange(seed: u64) -> Form {
     let phrase = |p: usize| p * GEN_LOOP_BARS..(p + 1) * GEN_LOOP_BARS;
     let half = |p: usize| p * GEN_LOOP_BARS + GEN_LOOP_BARS / 2..(p + 1) * GEN_LOOP_BARS;
     for bar in &mut body[phrase(thin)] {
-        bar.sparkle = false;
+        bar.set(Lane::Sparkle, false);
     }
     let span = if whole { phrase(thin) } else { half(thin) };
     let keeps_low = match thinning {
         Thinning::Break => {
             for bar in &mut body[span] {
-                bar.drums = false;
-                bar.bass &= !low_with_break;
+                bar.set(Lane::Drums, false);
+                bar.set(Lane::Bass, bar.strikes(Lane::Bass) && !low_with_break);
             }
             !low_with_break
         }
         Thinning::BassDrop => {
             for bar in &mut body[span] {
-                bar.bass = false;
+                bar.set(Lane::Bass, false);
             }
             false
         }
@@ -465,15 +419,15 @@ pub(crate) fn arrange(seed: u64) -> Form {
         {
             let end = (p + 1) * GEN_LOOP_BARS;
             for bar in &mut body[end - len..end] {
-                bar.drums = false;
-                bar.bass &= !low;
+                bar.set(Lane::Drums, false);
+                bar.set(Lane::Bass, bar.strikes(Lane::Bass) && !low);
             }
             phrase_1_cut |= p == 1;
         }
     }
     if bass_drop && phrases >= BASS_DROP_MIN_PHRASES && keeps_low {
         for bar in &mut body[half(thin + 1)] {
-            bar.bass = false;
+            bar.set(Lane::Bass, false);
         }
     }
     let dip = (dip && !phrase_1_cut).then_some(intro + 2 * GEN_LOOP_BARS - 1);
@@ -486,13 +440,7 @@ pub(crate) fn arrange(seed: u64) -> Form {
             (bars, Edge::Plain)
         }
         Closing::RingOut => {
-            plays.extend([
-                Plays::BED,
-                Plays {
-                    pad: false,
-                    ..Plays::BED
-                },
-            ]);
+            plays.extend([Plays::BED, Plays::BED.with(Lane::Pad, false)]);
             (RING_OUT_BARS, Edge::Plain)
         }
         Closing::Edged(edge) => {
@@ -555,6 +503,15 @@ mod tests {
     }
 
     #[test]
+    fn every_lane_sits_at_its_index_in_render_order() {
+        // `Plays` reads a lane at its discriminant, which must be its place
+        for (i, lane) in Lane::ALL.into_iter().enumerate() {
+            assert_eq!(lane as usize, i, "{lane:?}");
+            assert_eq!(lane.name(), Lane::NAMES[i]);
+        }
+    }
+
+    #[test]
     fn every_form_is_well_formed() {
         for (seed, form) in forms() {
             let at = |what: &str| format!("seed {seed}: {what}: {form}");
@@ -583,9 +540,13 @@ mod tests {
             let last = form.bars() - 1;
             for bar in 0..form.bars() {
                 let plays = form.plays(bar);
-                assert!(plays.texture, "{}", at(&format!("texture out at {bar}")));
                 assert!(
-                    plays.pad || (ring_out && bar == last),
+                    plays.strikes(Lane::Texture),
+                    "{}",
+                    at(&format!("texture out at {bar}"))
+                );
+                assert!(
+                    plays.strikes(Lane::Pad) || (ring_out && bar == last),
                     "{}",
                     at(&format!("pad out at {bar}"))
                 );
@@ -595,14 +556,14 @@ mod tests {
                 let phrase = bar.checked_sub(form.intro()).map(|b| b / GEN_LOOP_BARS);
                 let dense = body(&form).contains(&bar) && phrase != Some(t);
                 assert_eq!(
-                    form.plays(bar).sparkle,
+                    form.plays(bar).strikes(Lane::Sparkle),
                     dense,
                     "{}",
                     at(&format!("lead at {bar}"))
                 );
             }
             // a row changes on a 4-bar line, but for a cut or a ring-out
-            let cuts: Vec<(usize, usize)> = runs(&form, body(&form), |p| !p.drums)
+            let cuts: Vec<(usize, usize)> = runs(&form, body(&form), |p| !p.strikes(Lane::Drums))
                 .into_iter()
                 .filter(|&(_, len)| len <= CUT_BARS[CUT_BARS.len() - 1].0)
                 .collect();
@@ -613,7 +574,8 @@ mod tests {
                 let (mut a, b) = (*form.plays(bar - 1), *form.plays(bar));
                 // a cut may take the bass with the beat
                 if cuts.iter().any(|&(first, _)| first == bar) {
-                    (a.drums, a.bass) = (b.drums, b.bass);
+                    a.set(Lane::Drums, b.strikes(Lane::Drums));
+                    a.set(Lane::Bass, b.strikes(Lane::Bass));
                 }
                 if a != b {
                     assert_eq!(
@@ -631,8 +593,8 @@ mod tests {
                     "{}",
                     at("a cut before the outro")
                 );
-                let before = form.plays(first - 1).drums;
-                let after = form.plays(first + len).drums;
+                let before = form.plays(first - 1).strikes(Lane::Drums);
+                let after = form.plays(first + len).strikes(Lane::Drums);
                 assert!(
                     before && after,
                     "{}",
@@ -653,7 +615,7 @@ mod tests {
                     assert!(!part.is_empty(), "{}", at("an edge with no bars"));
                     for bar in part {
                         let mut band = *form.plays(bar);
-                        band.sparkle = true;
+                        band.set(Lane::Sparkle, true);
                         assert_eq!(
                             band,
                             Plays::ALL,
@@ -670,7 +632,11 @@ mod tests {
                     "{}",
                     at("the dip's bar")
                 );
-                assert!(form.plays(dip).drums, "{}", at("a dip on a cut"));
+                assert!(
+                    form.plays(dip).strikes(Lane::Drums),
+                    "{}",
+                    at("a dip on a cut")
+                );
             }
         }
     }
@@ -727,15 +693,15 @@ mod tests {
             }
             intros += usize::from(form.intro() > 0);
             eight += usize::from(form.intro() == 8);
-            let drops = runs(&form, body(&form), |p| !p.drums);
+            let drops = runs(&form, body(&form), |p| !p.strikes(Lane::Drums));
             drum += usize::from(!drops.is_empty());
             counts.push(drops.len() as f32);
             lengths.extend(drops.iter().map(|&(_, len)| len));
             long += usize::from(drops.iter().any(|&(_, len)| len >= 4));
-            let bass_drops = runs(&form, body(&form), |p| !p.bass);
+            let bass_drops = runs(&form, body(&form), |p| !p.strikes(Lane::Bass));
             bass += usize::from(!bass_drops.is_empty());
             for (at, len) in bass_drops {
-                let beat_kept = (at..at + len).all(|bar| form.plays(bar).drums);
+                let beat_kept = (at..at + len).all(|bar| form.plays(bar).strikes(Lane::Drums));
                 (alone, with) = (
                     alone + usize::from(beat_kept),
                     with + usize::from(!beat_kept),
@@ -807,7 +773,7 @@ mod tests {
             let form = arrange(seed);
             words.extend([form.intro(), form.body(), form.outro()].map(|n| n as u64));
             for p in &form.plays {
-                let bits = [p.pad, p.sparkle, p.keys, p.drums, p.texture, p.bass];
+                let bits = Lane::ALL.map(|lane| p.strikes(lane));
                 words.push(bits.iter().fold(0, |w, &b| w << 1 | u64::from(b)));
             }
             words.extend([form.entry() as u64, form.exit() as u64]);
@@ -823,7 +789,7 @@ mod tests {
     fn a_form_prints_its_parts() {
         assert_eq!(Form::plain(4).to_string(), "intro 0 · body 32 · outro 0");
         let mut cut = Form::plain(2);
-        cut.plays[7].drums = false;
+        cut.plays[7].set(Lane::Drums, false);
         assert_eq!(cut.to_string(), "intro 0 · body 16: drums 7 · outro 0");
     }
 }

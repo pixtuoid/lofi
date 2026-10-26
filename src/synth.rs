@@ -823,6 +823,7 @@ pub(super) fn day_take_drums(take: &score::DayTake, rng: &mut NoiseStream) -> Ve
     drums_core(take.loop_secs(), take.drums, cutoff, drive, peak, rng)
 }
 
+pub use super::compose::Lane;
 use super::compose::{GEN_LOOP_BARS, LeadVoice, Mood, Score};
 
 /// The bright master's one-pole tilt shelf: its corner, and how far above
@@ -851,36 +852,6 @@ fn lead_voice_fn(score: &Score) -> NoteVoice {
         LeadVoice::Kalimba => kalimba_note,
         LeadVoice::Vibraphone => vibe_note,
     }
-}
-
-/// One lane of a generated take. A take's lanes render in [`Lane::ALL`] order
-/// from one rng stream, so that order is part of the sound.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Lane {
-    /// Sustained chord bed.
-    Pad,
-    /// The lead voice's melody.
-    Sparkle,
-    /// The keys part under the melody.
-    Keys,
-    /// The drum kit.
-    Drums,
-    /// The ambient texture bed.
-    Texture,
-    /// Bass line.
-    Bass,
-}
-
-impl Lane {
-    /// Every lane, in render order.
-    pub const ALL: [Lane; 6] = [
-        Lane::Pad,
-        Lane::Sparkle,
-        Lane::Keys,
-        Lane::Drums,
-        Lane::Texture,
-        Lane::Bass,
-    ];
 }
 
 /// The per-`(mood, lane)` render recipe — the ONE authority the [`render_lane`]
@@ -952,20 +923,6 @@ pub(crate) fn part(score: &Score, lane: Lane) -> Part<'_> {
         },
         Lane::Drums => Part::Hits(&score.drums),
         Lane::Texture => Part::Bed,
-    }
-}
-
-/// Whether `lane` strikes in song bar `bar` of `score`'s form: the ONE
-/// mapping from a lane to its row in a bar, as [`part`] maps it to its events.
-pub(crate) fn plays(score: &Score, lane: Lane, bar: usize) -> bool {
-    let plays = score.form().plays(bar);
-    match lane {
-        Lane::Pad => plays.pad,
-        Lane::Sparkle => plays.sparkle,
-        Lane::Keys => plays.keys,
-        Lane::Drums => plays.drums,
-        Lane::Texture => plays.texture,
-        Lane::Bass => plays.bass,
     }
 }
 

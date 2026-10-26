@@ -316,7 +316,8 @@ impl Sweep {
 /// it in octaves: the lower of the lane's own corner and the sweep's, as FMOD
 /// combines a cutoff automated twice ("The lowest curve value is used",
 /// <https://fmod.com/docs/2.03/studio/advanced-topics.html#automation-curve-combination>).
-/// Its ends return without a `powf`, which C's Annex F doesn't make exact.
+/// Its ends return without a `powf`, whose precision "is non-deterministic"
+/// (<https://doc.rust-lang.org/std/primitive.f64.html#method.powf>).
 fn swept(own: f32, x: f64) -> f32 {
     if x >= 1.0 || FILTERED_HZ >= own {
         own
