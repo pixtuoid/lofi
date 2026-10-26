@@ -472,7 +472,7 @@ mod tests {
             format!("bass root **{low}–{}**", low + 11),
             format!(
                 "a chord voice under {} sits within a P5",
-                audition::LOW_INTERVAL_LIMIT
+                audition::BASS_CLASH_BELOW
             ),
         ];
         for row in &r7 {

@@ -447,15 +447,15 @@ const OCTAVE: u8 = 12;
 /// m2 E3 to M3 B♭2, P5 B♭1, the 6ths and 7ths F2, the 9ths and 10ths E2 to
 /// B♭1. The 9 semitones are its major 6th's: its diminished 7th sits a
 /// semitone higher.
-const INTERVAL_FLOORS: [u8; 17] = [
+const LOW_INTERVAL_LIMITS: [u8; 17] = [
     0, 52, 51, 48, 46, 46, 46, 34, 41, 41, 41, 41, 0, 40, 39, 36, 34,
 ];
 
 /// Whether two voices sound muddy together: the lower one under its
-/// interval's floor in [`INTERVAL_FLOORS`].
+/// interval's floor in [`LOW_INTERVAL_LIMITS`].
 fn muddy(a: u8, b: u8) -> bool {
     let (lo, hi) = (a.min(b), a.max(b));
-    (INTERVAL_FLOORS.get(usize::from(hi - lo))).is_some_and(|&floor| lo < floor)
+    (LOW_INTERVAL_LIMITS.get(usize::from(hi - lo))).is_some_and(|&floor| lo < floor)
 }
 
 /// The stages a song is composed in. Each draws from its own stream, keyed
@@ -757,7 +757,7 @@ const TRANSPOSE: RangeInclusive<i8> = -3..=2;
 
 /// Where the turnaround dominant's root sits: as low as its major 3rd sounds
 /// clear.
-const DOMINANT_ROOTS_FROM: u8 = INTERVAL_FLOORS[MAJOR_THIRD as usize];
+const DOMINANT_ROOTS_FROM: u8 = LOW_INTERVAL_LIMITS[MAJOR_THIRD as usize];
 
 fn pick(rng: &mut NoiseStream, n: usize) -> usize {
     ((rng.unit() * n as f32) as usize).min(n.saturating_sub(1))
@@ -1475,12 +1475,12 @@ pub const BASS_LOW: u8 = 31;
 /// The note a chord voice under which, within a fifth of the bass, drops the
 /// bass an octave: LOFI-BIBLE.md R7's rule for the bass against the chords,
 /// whose own voices keep R7's low interval limits.
-pub const LOW_INTERVAL_LIMIT: u8 = 48;
+pub const BASS_CLASH_BELOW: u8 = 48;
 
 /// Whether a `bass` note sounds within a fifth of `voice` under
-/// [`LOW_INTERVAL_LIMIT`].
+/// [`BASS_CLASH_BELOW`].
 fn clashes(bass: u8, voice: u8) -> bool {
-    voice < LOW_INTERVAL_LIMIT && voice.abs_diff(bass) < FIFTH
+    voice < BASS_CLASH_BELOW && voice.abs_diff(bass) < FIFTH
 }
 
 /// A chord's lowest voice.
