@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """The remote judge's local logic's tests: `python3 -I test_judge_local.py`, with no venv."""
 
+import contextlib
+import io
 import re
 import sys
 import tempfile
@@ -9,19 +11,21 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from judge_local import exit_code, published, redact, select
+from judge_local import NOT_A_SCORE, exit_code, published, redact, select
 from test_validate_batch import write_wav
-from validate_batch import Invalid, Takes
+from validate_batch import Takes, stage, validate
 
 # the takes `Selection` writes on both sides
-PAIRS = Takes(["gen_day_empty_000.wav", "gen_night_busy_001.wav"], [], [])
+PAIRS = ["gen_day_empty_000.wav", "gen_night_busy_001.wav"]
+BASE, CAND = "a" * 40, "b" * 40
+TAKES = Takes(PAIRS, [], [], PAIRS[1:], PAIRS[:1])
 
 
 class Selection(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.dir = Path(self.tmp.name)
-        for side, sha in (("base", "a" * 40), ("cand", "b" * 40)):
+        for side, sha in (("base", BASE), ("cand", CAND)):
             (self.dir / side).mkdir()
             (self.dir / side / "COMMIT").write_text(sha + "\n")
             write_wav(self.dir / side / "gen_day_empty_000.wav")
@@ -30,34 +34,49 @@ class Selection(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def assertRefused(self, base_sha, cand_sha, reason):
+        """`select` ends the run as no score at all, never as a verdict, and
+        says why on stderr."""
+        with self.assertRaises(SystemExit) as caught, contextlib.redirect_stderr(io.StringIO()) as err:
+            select(self.dir, base_sha, cand_sha, force_score=False)
+        self.assertEqual(caught.exception.code, NOT_A_SCORE)
+        self.assertIn(f"invalid batch: {reason}", err.getvalue())
+
     def test_only_the_pairs_that_differ_are_sent(self):
-        self.assertEqual(select(self.dir, force_score=False), (PAIRS, ["gen_night_busy_001.wav"]))
+        self.assertEqual(select(self.dir, BASE, CAND, force_score=False), (TAKES, PAIRS[1:]))
 
     def test_force_score_sends_every_pair(self):
-        self.assertEqual(select(self.dir, force_score=True), (PAIRS, ["gen_day_empty_000.wav", "gen_night_busy_001.wav"]))
+        self.assertEqual(select(self.dir, BASE, CAND, force_score=True), (TAKES, PAIRS))
+
+    def test_a_staged_batch_sends_only_the_pairs_it_holds(self):
+        up = self.dir / "up"
+        stage(self.dir, validate(self.dir, BASE, CAND), up)
+        for force_score in (False, True):
+            self.assertEqual(select(up, BASE, CAND, force_score), (TAKES, PAIRS[1:]))
+
+    def test_a_batch_of_other_commits_is_refused(self):
+        self.assertRefused(CAND, BASE, "base/COMMIT doesn't name")
 
     def test_a_batch_with_no_pair_is_refused(self):
         for side in ("base", "cand"):
             for p in (self.dir / side).glob("*.wav"):
                 p.unlink()
-        with self.assertRaises(Invalid):
-            select(self.dir, force_score=False)
+        self.assertRefused(BASE, CAND, "no take on both sides")
 
     def test_a_take_on_one_side_only_is_left_out_and_the_pairs_still_sent(self):
         (self.dir / "cand" / "gen_day_empty_000.wav").unlink()
         write_wav(self.dir / "cand" / "gen_dusk_moderate_000.wav")
-        self.assertEqual(select(self.dir, force_score=True), (Takes(["gen_night_busy_001.wav"], ["gen_dusk_moderate_000.wav"], ["gen_day_empty_000.wav"]), ["gen_night_busy_001.wav"]))
+        takes = Takes(PAIRS[1:], ["gen_dusk_moderate_000.wav"], ["gen_day_empty_000.wav"], PAIRS[1:], [])
+        self.assertEqual(select(self.dir, BASE, CAND, force_score=True), (takes, PAIRS[1:]))
 
     def test_a_batch_whose_takes_are_each_on_one_side_is_refused(self):
         (self.dir / "cand" / "gen_day_empty_000.wav").unlink()
         (self.dir / "base" / "gen_night_busy_001.wav").unlink()
-        with self.assertRaises(Invalid):
-            select(self.dir, force_score=False)
+        self.assertRefused(BASE, CAND, "no take on both sides")
 
     def test_a_missing_commit_is_refused(self):
         (self.dir / "cand" / "COMMIT").unlink()
-        with self.assertRaises(Invalid):
-            select(self.dir, force_score=False)
+        self.assertRefused(BASE, CAND, "cand/COMMIT doesn't name")
 
 
 class Outcomes(unittest.TestCase):

@@ -6,8 +6,9 @@ Usage, with modal-requirements.txt's client and a configured token:
   modal run modal_judge.py::provision     fetch the corpus, then build the caches
   modal run modal_judge.py::upload_missing --refs-dir REFS
                                           what archive.org didn't serve, from REFS
-  modal run modal_judge.py::judge --batch DIR [--out OUT] [--force-score]
-                                          judge DIR's base/ and cand/
+  modal run modal_judge.py::judge --batch DIR --base SHA --cand SHA [--out OUT] [--force-score]
+                                          judge DIR's base/ and cand/, rendered
+                                          at the commits their COMMIT files name
 
 REFS is the private corpus: its manifest's names and its audio never leave
 Modal in anything this prints or returns, which names a reference by its
@@ -29,7 +30,7 @@ from pathlib import Path
 import modal
 
 # where the image keeps ab_judge.py and the scripts it imports, and this
-# directory beside them, so judge_local's validate_batch finds ab_listen
+# directory beside them, where ab_judge finds validate_batch
 REMOTE_SCRIPTS, REMOTE_JUDGE = "/root/scripts", "/root/judge"
 HERE = Path(__file__).resolve().parent
 SCRIPTS = HERE.parent / "scripts" if modal.is_local() else Path(REMOTE_SCRIPTS)
@@ -37,11 +38,20 @@ JUDGE = HERE if modal.is_local() else Path(REMOTE_JUDGE)
 MODELS, REFS, BATCH = "/models", "/refs", "/batch"
 sys.path.insert(0, str(JUDGE))
 from judge_local import exit_code, published, redact, select
-from validate_batch import Invalid
+from validate_batch import IDENTICAL
 
-# the uv the image installs with, the release judge-requirements.txt was
-# compiled by
+# the uv the image and SKILL.md's install run, the release
+# judge-requirements.txt was compiled by
 UV_VERSION = "0.13.0"
+# the lock, baked in where uv reads it a second time as the build constraints:
+# encodec, wget and progressbar publish only an sdist
+# (https://pypi.org/pypi/encodec/0.1.1/json and wget's and progressbar's), and
+# uv's `--require-build-hashes`, a preview feature, "only applies to build
+# dependencies" (https://docs.astral.sh/uv/pip/compile/,
+# /uv/concepts/preview/): under `--require-hashes` alone, uv 0.13.0 built
+# them with the newest setuptools, unpinned
+LOCK = HERE / "judge-requirements.txt"
+REMOTE_LOCK = "/root/judge-requirements.txt"
 
 # what archive.org's bots guide asks of automated requests: "a descriptive
 # User-Agent header that identifies: The tool or bot name, Version number",
@@ -83,9 +93,10 @@ def muq_eval_commit():
 image = (
     modal.Image.debian_slim(python_version="3.12")
     .apt_install("git")
+    .add_local_file(LOCK, REMOTE_LOCK, copy=True)
     .uv_pip_install(
-        requirements=[str(Path(__file__).resolve().parent / "judge-requirements.txt")],
-        extra_options="--require-hashes",
+        requirements=[str(LOCK)],
+        extra_options=f"--require-hashes --build-constraints {REMOTE_LOCK} --require-build-hashes",
         uv_version=UV_VERSION,
     )
     # beside the venv, where ab_judge.py looks for it
@@ -108,6 +119,13 @@ def tracks():
 
 def sha256(data):
     return hashlib.sha256(data).hexdigest()
+
+
+def took(started):
+    """What the calling function's children have taken since `started`: wall
+    time, their CPU and their peak RSS."""
+    usage = resource.getrusage(resource.RUSAGE_CHILDREN)
+    return {"wall_s": time.time() - started, "cpu_s": usage.ru_utime + usage.ru_stime, "peak_rss_mib": usage.ru_maxrss / 1024}
 
 
 def fetch(url):
@@ -172,18 +190,12 @@ def build():
         capture_output=True,
         text=True,
     )
-    usage = resource.getrusage(resource.RUSAGE_CHILDREN)
     models.commit()
     refs.commit()
     built = (warm / "judge.json").is_file()
     if not built:
         print(redact(run.stdout + run.stderr, tracks()))
-    return {
-        "built": built,
-        "wall_s": time.time() - started,
-        "cpu_s": usage.ru_utime + usage.ru_stime,
-        "peak_rss_mib": usage.ru_maxrss / 1024,
-    }
+    return {"built": built, **took(started)}
 
 
 @app.function(gpu="T4", cpu=CPU, memory=MEMORY_MIB, timeout=JUDGE_TIMEOUT_S)
@@ -192,21 +204,28 @@ def score(score_identical=False):
     read-only caches, and returns what's safe to publish: the table, the
     record without the corpus's names, and what the run took."""
     started = time.time()
+    known = tracks()
+    offline = {**os.environ, "HF_HUB_OFFLINE": "1"}
+    # the tests that need this venv, which runs nowhere else: a broken floor
+    # or FAD cache still prints a verdict
+    tests = subprocess.run(
+        [sys.executable, "-I", f"{REMOTE_SCRIPTS}/test_ab_judge.py"], capture_output=True, text=True, env=offline
+    )
+    if tests.returncode:
+        print(redact(tests.stdout + tests.stderr, known))
+        return {"outcome": "infra failure", "message": "ab_judge.py's tests failed; their log, names masked, is Modal's", **took(started)}
     run = subprocess.run(
         [sys.executable, f"{REMOTE_SCRIPTS}/ab_judge.py", BATCH, "--refs", REFS, "--fad-cache", f"{REFS}/fad-cache"]
         + (["--score-identical"] if score_identical else []),
         capture_output=True,
         text=True,
-        env={**os.environ, "HF_HUB_OFFLINE": "1"},
+        env=offline,
     )
-    usage = resource.getrusage(resource.RUSAGE_CHILDREN)
-    took = {"wall_s": time.time() - started, "cpu_s": usage.ru_utime + usage.ru_stime, "peak_rss_mib": usage.ru_maxrss / 1024}
-    known = tracks()
     written = Path(BATCH) / "judge.json"
     if not written.is_file():
         print(redact(run.stdout + run.stderr, known))
-        return {"outcome": "infra failure", "message": "the judge stopped before a verdict; its log, names masked, is Modal's", **took}
-    return {**published(json.loads(written.read_text()), known), **took}
+        return {"outcome": "infra failure", "message": "the judge stopped before a verdict; its log, names masked, is Modal's", **took(started)}
+    return {**published(json.loads(written.read_text()), known), **took(started)}
 
 
 @app.local_entrypoint()
@@ -221,17 +240,15 @@ def provision():
 
 
 @app.local_entrypoint()
-def judge(batch: str, out: str = "", force_score: bool = False):
-    """Judges `batch`'s base/ and cand/ through a Volume that lives as long
-    as the run, prints the table, and writes the result to `out`. Only the
-    pairs `judge_local.select` picks go up, so a batch with none makes no
-    remote call; `force_score` sends and scores every pair, the proof that
-    identical ones tie."""
+def judge(batch: str, base: str, cand: str, out: str = "", force_score: bool = False):
+    """Judges `batch`'s base/ and cand/, rendered at commits `base` and
+    `cand`, through a Volume that lives as long as the run, prints the table,
+    and writes the result to `out`. Only the pairs `judge_local.select` picks
+    go up, with the IDENTICAL list the batch keeps, so a batch with none
+    makes no remote call; `force_score` sends and scores every pair, the
+    proof that identical ones tie."""
     root = Path(batch)
-    try:
-        takes, differ = select(root, force_score)
-    except Invalid as e:
-        raise SystemExit(f"invalid batch: {e}") from None
+    takes, differ = select(root, base, cand, force_score)
     if differ:
         with modal.Volume.ephemeral() as vol:
             with vol.batch_upload() as upload:
@@ -239,6 +256,8 @@ def judge(batch: str, out: str = "", force_score: bool = False):
                     upload.put_file(str(root / side / "COMMIT"), f"/{side}/COMMIT")
                     for n in differ:
                         upload.put_file(str(root / side / n), f"/{side}/{n}")
+                if (root / IDENTICAL).is_file():
+                    upload.put_file(str(root / IDENTICAL), f"/{IDENTICAL}")
             result = score.with_options(
                 volumes={
                     BATCH: vol,

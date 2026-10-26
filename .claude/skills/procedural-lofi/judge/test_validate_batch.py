@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from validate_batch import Invalid, Takes, validate
+from validate_batch import IDENTICAL, Invalid, Takes, scored, stage, validate
 
 BASE, CAND = "a" * 40, "b" * 40
 # the takes `Batches` writes on both sides
@@ -57,7 +57,43 @@ class Batches(unittest.TestCase):
         self.assertIn(why, str(caught.exception))
 
     def test_a_batch_of_named_pairs_and_its_commits_is_valid(self):
-        self.assertEqual(validate(self.dir, BASE, CAND), Takes(PAIRS, [], []))
+        self.assertEqual(validate(self.dir, BASE, CAND), Takes(PAIRS, [], [], [], PAIRS))
+
+    def test_a_pair_whose_sides_differ_is_told_from_an_identical_one(self):
+        write_wav(self.dir / "cand" / PAIRS[1], frames=9)
+        got = validate(self.dir, BASE, CAND)
+        self.assertEqual((got.differ, got.identical), ([PAIRS[1]], [PAIRS[0]]))
+
+    def test_a_local_batch_names_no_commit(self):
+        for side in ("base", "cand"):
+            (self.dir / side / "COMMIT").unlink()
+        self.assertEqual(validate(self.dir).paired, PAIRS)
+        self.assertInvalid("COMMIT")
+
+    def test_staging_sends_the_pairs_that_differ_and_lists_the_rest(self):
+        write_wav(self.dir / "cand" / PAIRS[1], frames=9)
+        up = self.dir / "up"
+        stage(self.dir, validate(self.dir, BASE, CAND), up)
+        self.assertEqual(sorted(p.name for p in (up / "cand").iterdir()), ["COMMIT", PAIRS[1]])
+        self.assertEqual((up / IDENTICAL).read_text(), PAIRS[0] + "\n")
+        # what went up reads back as the batch it came from
+        self.assertEqual(validate(up, BASE, CAND), Takes(PAIRS, [], [], [PAIRS[1]], [PAIRS[0]]))
+
+    def test_the_pairs_that_differ_are_scored_or_every_pair_still_held(self):
+        write_wav(self.dir / "cand" / PAIRS[1], frames=9)
+        takes = validate(self.dir, BASE, CAND)
+        self.assertEqual([scored(self.dir, takes), scored(self.dir, takes, every=True)], [[PAIRS[1]], PAIRS])
+        up = self.dir / "up"
+        stage(self.dir, takes, up)
+        # the IDENTICAL list's pairs went nowhere, so none is scored
+        staged = validate(up, BASE, CAND)
+        self.assertEqual([scored(up, staged), scored(up, staged, every=True)], [[PAIRS[1]], [PAIRS[1]]])
+
+    def test_an_identical_list_naming_a_take_still_there_or_none_is_invalid(self):
+        (self.dir / IDENTICAL).write_text(PAIRS[0] + "\n")
+        self.assertInvalid("still in the batch")
+        (self.dir / IDENTICAL).write_text("take_00.wav\n")
+        self.assertInvalid("not a lofi_audition take")
 
     def test_any_subset_of_takes_is_valid(self):
         for side in ("base", "cand"):
@@ -74,7 +110,9 @@ class Batches(unittest.TestCase):
         (self.dir / "cand" / "gen_night_busy_003.wav").unlink()
         write_wav(self.dir / "cand" / "gen_dusk_moderate_000.wav")
         got = validate(self.dir, BASE, CAND)
-        self.assertEqual(got, Takes(PAIRS[:1], ["gen_dusk_moderate_000.wav"], ["gen_night_busy_003.wav"]))
+        self.assertEqual(
+            got, Takes(PAIRS[:1], ["gen_dusk_moderate_000.wav"], ["gen_night_busy_003.wav"], [], PAIRS[:1])
+        )
 
     def test_a_batch_whose_takes_are_each_on_one_side_is_invalid(self):
         (self.dir / "cand" / "gen_night_busy_003.wav").unlink()
