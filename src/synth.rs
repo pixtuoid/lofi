@@ -930,8 +930,8 @@ pub(crate) struct HitRecipe {
     pub(crate) peak: f32,
 }
 
-/// Each lane's recipe: the ONE authority [`render_lane`], the lane chains and
-/// the frozen takes read.
+/// Each lane's recipe: the ONE authority [`render_lane`] and the lane chains
+/// read.
 pub(crate) const SPARKLE: ByMood<NoteRecipe> = ByMood {
     night: NoteRecipe {
         dur_s: 2.2,
@@ -1093,20 +1093,13 @@ impl Part<'_> {
 /// [`Lane::Texture`] is a whole number of the score's loops long, so a caller
 /// loops them in phase; the day texture runs free on its own length.
 pub fn render_lane(score: &Score, lane: Lane, rng: &mut NoiseStream) -> Vec<f32> {
-    let mut bed = whole_lane(score, lane, rng);
+    let mut bed = render_part(&part(score, lane), score.loop_secs(), rng);
     brighten(&mut bed);
     bed
 }
 
-/// One lane of `score`'s loop through its whole-lane core, before the bright
-/// master: what [`render_lane`] brightens, and what the frozen takes'
-/// fingerprints pin.
-fn whole_lane(score: &Score, lane: Lane, rng: &mut NoiseStream) -> Vec<f32> {
-    render_part(&part(score, lane), score.loop_secs(), rng)
-}
-
 /// `part` over a loop `loop_s` long through its whole-lane core: what
-/// [`whole_lane`] plays a score's lane through, and the frozen takes' parts.
+/// [`render_lane`] brightens, and the frozen takes' parts.
 fn render_part(part: &Part<'_>, loop_s: f32, rng: &mut NoiseStream) -> Vec<f32> {
     match *part {
         // the generated night pad renders NO baked sub — the bass lane owns that register
