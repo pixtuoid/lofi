@@ -9,14 +9,12 @@
 //! Usage:
 //!   cargo run --release --example lofi_measure -- \
 //!     [--engine whole|stream] [--mood day|night] [--seeds N] [--start S] [--tier empty|moderate|busy] \
-//!     [--batch judge]
+//!     [--sweep intensity|twilight|rain] [--songs 1] [--batch judge]
+//!   A take plays one song, so a run of more is refused.
 
-#[path = "common/batch.rs"]
+#[path = "../common/batch.rs"]
 mod batch;
-#[path = "common/corpus.rs"]
 mod corpus;
-#[path = "common/loudness.rs"]
-mod loudness;
 
 use std::process::ExitCode;
 use std::time::Instant;
@@ -24,9 +22,9 @@ use std::time::Instant;
 use pixtuoid_lofi::audition::{self, Lane, Stems};
 use pixtuoid_lofi::dsp::SAMPLE_RATE;
 
-use batch::{Batch, Engine, WholeSong, lane_gains, usage_error};
+use batch::{Batch, Engine, WholeSong, lane_gains, usage_error, valid_flags};
 use corpus::{BAND_EDGES_HZ, CORPUS, LTAS_BANDS_PER_OCTAVE, LTAS_SPAN_HZ, percentile};
-use loudness::{fold, gated_lufs};
+use pixtuoid_lofi::audition::{channels, fold, gated_lufs};
 
 const SR: f64 = SAMPLE_RATE as f64;
 
@@ -34,7 +32,7 @@ const SR: f64 = SAMPLE_RATE as f64;
 const BPM_RAIL: [f64; 2] = [68.0, 90.0];
 
 /// The seam ratio's reference: this quantile of the lane's own second
-/// differences.
+/// differences (opinion).
 const SEAM_QUANTILE: f64 = 0.999;
 
 /// The batch `args` select.
@@ -43,16 +41,17 @@ fn parse(mut args: impl Iterator<Item = String>) -> std::io::Result<Batch> {
     while let Some(a) = args.next() {
         if !batch.parse_flag(&a, &mut args)? {
             return Err(usage_error(format!(
-                "unknown argument {a:?}; valid: --engine --mood --seeds --start --tier --batch"
+                "unknown argument {a:?}; valid: {}",
+                valid_flags(&[])
             )));
         }
     }
-    // its whole-lane rows measure one song's lanes under fixed controls
-    if batch.sweep.is_some() || batch.songs.is_some() {
-        return Err(usage_error(
-            "lofi_measure measures one song under fixed controls, so it takes no --sweep or --songs"
-                .into(),
-        ));
+    // its rows, the whole-lane engine's included, read a take's one song
+    if let Some(run) = batch.runs().iter().find(|run| run.songs() > 1) {
+        return Err(usage_error(format!(
+            "lofi_measure reads a take's one song, so it takes no run of {} songs",
+            run.songs()
+        )));
     }
     Ok(batch)
 }
@@ -79,24 +78,30 @@ fn run() -> std::io::Result<()> {
         for seed in batch.seeds() {
             let score = batch.score(seed);
             // the whole-lane chain renders each lane's loop once, then plays it again
-            let (lanes, mix, took, rendered) = match batch.engine {
+            let (rows, mix, lufs, took, rendered) = match batch.engine {
                 Engine::WholeLane => {
-                    let songs = batch.whole(seed, lane_gains);
-                    let mix: Vec<f32> = songs.iter().flat_map(|(.., mix)| mix.clone()).collect();
-                    let took = songs.iter().flat_map(|&(_, took, _)| took).sum();
-                    let rendered = songs.iter().map(|(beds, ..)| beds[0].len()).sum();
-                    let first = songs.into_iter().next().expect("a take has a song");
-                    (Lanes::Whole(first), mix, took, rendered)
+                    let started = Instant::now();
+                    let song = batch.whole(seed, lane_gains).remove(0);
+                    let took = started.elapsed();
+                    let mix = song.mix();
+                    // a mono mix, heard from both speakers
+                    let lufs = gated_lufs(&[&mix, &mix], SAMPLE_RATE);
+                    // one loop of each lane, which the song plays again
+                    let rendered = audition::samples_at(score.loop_secs(), SAMPLE_RATE);
+                    (whole_rows(&song), mix, lufs, took, rendered)
                 }
                 Engine::Stream => {
                     let started = Instant::now();
-                    let mix = fold(&batch.perform(seed));
+                    let frames = batch.perform(seed);
                     let took = started.elapsed();
+                    let [left, right] = channels(&frames);
+                    let lufs = gated_lufs(&[&left, &right], SAMPLE_RATE);
+                    let mix = fold(&frames);
                     // rendered again, so the render's time is the shipped one's
                     let mut stems = Stems::default();
                     batch.perform_with(seed, |p, out| stems.render(p, out));
                     let rendered = mix.len();
-                    (Lanes::Stems(stems), mix, took, rendered)
+                    (stream_rows(&stems), mix, lufs, took, rendered)
                 }
             };
             let loop_len = audition::samples_at(score.loop_secs(), SAMPLE_RATE);
@@ -111,41 +116,23 @@ fn run() -> std::io::Result<()> {
             );
             let header = cells(&|lo, hi| band_label((lo, hi)));
             print_row("lane", "LUFS", &header, "centroid", "seam", "ms");
+            println!("  stems in shares of the mix's power, which they sum to");
             let transform = Transform::of(&mix);
             let spectrum = Spectrum::cross(&transform, &transform);
-            match &lanes {
-                Lanes::Whole((beds, took, _)) => {
-                    for ((name, bed), took) in Lane::NAMES.iter().zip(beds).zip(took) {
-                        let own = Spectrum::of(bed);
-                        print_row(
-                            name,
-                            &format!("{:.1}", gated_lufs(bed, SAMPLE_RATE)),
-                            &cells(&|lo, hi| pct(own.share(lo, hi))),
-                            &format!("{:.0}", own.centroid()),
-                            &format!("{:.2}", seam_ratio(bed)),
-                            &format!("{:.0}", took.as_secs_f64() * 1e3),
-                        );
-                    }
-                }
-                Lanes::Stems(stems) => {
-                    println!("  stems in shares of the mix's power, which they sum to");
-                    for (name, stem) in named(stems) {
-                        let stem_transform = Transform::of(stem);
-                        let own = Spectrum::cross(&stem_transform, &stem_transform);
-                        let row =
-                            shares_of(&Spectrum::cross(&stem_transform, &transform), &spectrum);
-                        print_row(
-                            name,
-                            &format!("{:.1}", gated_lufs(stem, SAMPLE_RATE)),
-                            &row.into_iter().map(pct).collect::<Vec<_>>(),
-                            &format!("{:.0}", own.centroid()),
-                            "-",
-                            "-",
-                        );
-                    }
-                }
+            for row in &rows {
+                let stem_transform = Transform::of(&row.stem);
+                let own = Spectrum::cross(&stem_transform, &stem_transform);
+                let shares = shares_of(&Spectrum::cross(&stem_transform, &transform), &spectrum);
+                print_row(
+                    row.name,
+                    // a mono stem, heard from both speakers
+                    &format!("{:.1}", gated_lufs(&[&row.stem, &row.stem], SAMPLE_RATE)),
+                    &shares.into_iter().map(pct).collect::<Vec<_>>(),
+                    &format!("{:.0}", own.centroid()),
+                    &row.seam.map_or("-".into(), |seam| format!("{seam:.2}")),
+                    "-",
+                );
             }
-            let lufs = gated_lufs(&mix, SAMPLE_RATE);
             mix_lufs.push(lufs);
             print_row(
                 "mix",
@@ -193,26 +180,42 @@ fn run() -> std::io::Result<()> {
     Ok(())
 }
 
-/// What a take's lane rows read: its first song's lanes rendered whole, or
-/// the stream's stems.
-enum Lanes {
-    Whole(WholeSong),
-    Stems(Stems),
+/// One stem a take's mix sums, by name, as its row reads it: with the seam
+/// of the bed it loops, where the whole-lane engine rendered one.
+struct Row {
+    name: &'static str,
+    stem: Vec<f32>,
+    seam: Option<f32>,
+}
+
+/// A whole-lane song's rows: each lane's stem and its bed's seam.
+fn whole_rows(song: &WholeSong) -> Vec<Row> {
+    (Lane::NAMES.into_iter().zip(song.stems()).zip(&song.beds))
+        .map(|((name, stem), bed)| Row {
+            name,
+            stem,
+            seam: Some(seam_ratio(bed)),
+        })
+        .collect()
+}
+
+/// A stream take's rows: its lanes' stems, then the plate's.
+fn stream_rows(stems: &Stems) -> Vec<Row> {
+    let lanes = stems.lanes().iter().map(Vec::as_slice);
+    (Lane::NAMES.into_iter().zip(lanes))
+        .chain([("plate", stems.plate())])
+        .map(|(name, stem)| Row {
+            name,
+            stem: stem.to_vec(),
+            seam: None,
+        })
+        .collect()
 }
 
 /// One row of the table: a cell per band between its LUFS and centroid.
 fn print_row(name: &str, lufs: &str, bands: &[String], centroid: &str, seam: &str, ms: &str) {
     let bands: String = bands.iter().map(|cell| format!(" {cell:>7}")).collect();
     println!("  {name:<8} {lufs:>6}{bands} {centroid:>8} {seam:>6} {ms:>6}");
-}
-
-/// Each stem with the name it prints under: the lanes', then the plate's.
-fn named(stems: &Stems) -> impl Iterator<Item = (&str, &[f32])> {
-    let lanes = stems.lanes().iter().map(Vec::as_slice);
-    Lane::NAMES
-        .into_iter()
-        .zip(lanes)
-        .chain([("plate", stems.plate())])
 }
 
 /// A stem's part of `mix`'s power in each band, its `cross` with the mix, as
@@ -314,6 +317,7 @@ struct Spectrum {
 }
 
 impl Spectrum {
+    #[cfg(test)]
     fn of(buf: &[f32]) -> Self {
         let transform = Transform::of(buf);
         Self::cross(&transform, &transform)
@@ -455,7 +459,7 @@ mod tests {
 
     #[test]
     fn the_tempo_rail_is_lofi_bibles_row() {
-        let bible = include_str!("../.claude/skills/procedural-lofi/reference/LOFI-BIBLE.md");
+        let bible = include_str!("../../.claude/skills/procedural-lofi/reference/LOFI-BIBLE.md");
         let [lo, hi] = BPM_RAIL;
         let rail = format!("BPM: {lo}–{hi} (MEASURED");
         assert!(
@@ -465,8 +469,25 @@ mod tests {
     }
 
     #[test]
+    fn the_usage_names_every_flag_and_a_run_of_songs_is_refused() {
+        let usage: String = (include_str!("main.rs").lines())
+            .take_while(|line| line.starts_with("//!"))
+            .collect();
+        for flag in valid_flags(&[]).split(' ') {
+            assert!(
+                usage.contains(&format!("[{flag}")) || usage.contains(&format!("| {flag}")),
+                "the usage leaves out {flag}"
+            );
+        }
+        let args = |args: &[&str]| parse(args.iter().map(|&a| a.to_owned()));
+        assert!(args(&["--sweep", "rain"]).is_ok());
+        assert!(args(&["--sweep", "dusk"]).is_err());
+        assert!(args(&["--songs", "2"]).is_err());
+    }
+
+    #[test]
     fn the_bass_window_and_its_limit_are_lofi_bibles_r7() {
-        let bible = include_str!("../.claude/skills/procedural-lofi/reference/LOFI-BIBLE.md");
+        let bible = include_str!("../../.claude/skills/procedural-lofi/reference/LOFI-BIBLE.md");
         let low = audition::BASS_LOW;
         let r7 = [
             format!("bass root **{low}–{}**", low + 11),
@@ -510,26 +531,32 @@ mod tests {
     }
 
     #[test]
-    fn a_takes_stem_rows_sum_to_its_mix_row() {
+    fn a_takes_stem_rows_sum_to_its_mix_row_through_either_engine() {
         // f32's rounding, of each stem and of the frame it sums to
         let rounding = 8.0 * f64::from(f32::EPSILON);
         let (batch, seed) = (Batch::default(), 0);
         let mut frames = vec![Frame::default(); 10 * SAMPLE_RATE as usize];
         let mut stems = audition::Stems::default();
         stems.render(&mut Performance::new(seed, batch.controls()), &mut frames);
-        let mix = Transform::of(&fold(&frames));
-        let spectrum = Spectrum::cross(&mix, &mix);
-        let rows: Vec<Vec<f64>> = (named(&stems))
-            .map(|(_, stem)| shares_of(&Spectrum::cross(&Transform::of(stem), &mix), &spectrum))
-            .collect();
-        for (k, (lo, hi)) in bands().into_iter().enumerate() {
-            let sum: f64 = rows.iter().map(|row| row[k]).sum();
-            let want = spectrum.share(lo, hi);
-            assert!(
-                (sum - want).abs() < rounding,
-                "{}: the stems sum to {sum}, the mix {want}",
-                band_label((lo, hi))
-            );
+        let song = batch.whole(seed, lane_gains).remove(0);
+        for (engine, mix, rows) in [
+            ("stream", fold(&frames), stream_rows(&stems)),
+            ("whole", song.mix(), whole_rows(&song)),
+        ] {
+            let mix = Transform::of(&mix);
+            let spectrum = Spectrum::cross(&mix, &mix);
+            let rows: Vec<Vec<f64>> = (rows.iter())
+                .map(|row| shares_of(&Spectrum::cross(&Transform::of(&row.stem), &mix), &spectrum))
+                .collect();
+            for (k, (lo, hi)) in bands().into_iter().enumerate() {
+                let sum: f64 = rows.iter().map(|row| row[k]).sum();
+                let want = spectrum.share(lo, hi);
+                assert!(
+                    (sum - want).abs() < rounding,
+                    "{engine} {}: the stems sum to {sum}, the mix {want}",
+                    band_label((lo, hi))
+                );
+            }
         }
     }
 
@@ -565,11 +592,14 @@ mod tests {
     #[test]
     fn the_whole_lane_mix_reads_at_the_stage_the_streams_does() {
         let (batch, seed) = (Batch::default(), 0);
-        let whole: Vec<f32> = (batch.whole(seed, lane_gains).into_iter())
-            .flat_map(|(.., mix)| mix)
+        let whole: Vec<f32> = batch
+            .whole(seed, lane_gains)
+            .iter()
+            .flat_map(WholeSong::mix)
             .collect();
-        let whole = gated_lufs(&whole, SAMPLE_RATE);
-        let stream = gated_lufs(&fold(&batch.perform(seed)), SAMPLE_RATE);
+        let whole = gated_lufs(&[&whole, &whole], SAMPLE_RATE);
+        let [left, right] = channels(&batch.perform(seed));
+        let stream = gated_lufs(&[&left, &right], SAMPLE_RATE);
         // half the staging in dB, which a mix staged once less or once more
         // reads past
         let bound = -10.0 * Performance::MASTER_GAIN.log10();

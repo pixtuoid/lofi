@@ -4,7 +4,6 @@
 
 use std::io;
 use std::ops::Range;
-use std::time::{Duration, Instant};
 
 use pixtuoid_lofi::audition::{self, Lane, Score, TIER_INTENSITIES, lane_gain, render_lane};
 use pixtuoid_lofi::dsp::NoiseStream;
@@ -184,11 +183,12 @@ impl Sweep {
     }
 }
 
-/// Whether bar `bar` of a take `bars` long starts its middle half (`true`) or
-/// ends it (`false`), if either.
+/// Whether the call in the middle of bar `bar` of a take `bars` long starts
+/// its middle half (`true`) or ends it (`false`), if either: each latches at
+/// the next bar line, so the half spans bars `bars / 4` to `bars - bars / 4`.
 fn middle_half(bar: usize, bars: usize) -> Option<bool> {
     let quarter = bars / 4;
-    match bar {
+    match bar + 1 {
         b if b == quarter => Some(true),
         b if b == bars - quarter => Some(false),
         _ => None,
@@ -273,11 +273,14 @@ pub(crate) struct Batch {
     controlled: bool,
 }
 
+/// A run's seeds when `--seeds` names none (opinion).
+const DEFAULT_SEEDS: u64 = 12;
+
 impl Default for Batch {
     fn default() -> Self {
         Self {
             mood: 0,
-            seeds: 12,
+            seeds: DEFAULT_SEEDS,
             start: 0,
             tier: None,
             engine: Engine::default(),
@@ -291,8 +294,25 @@ impl Default for Batch {
     }
 }
 
+/// Every flag [`Batch::parse_flag`] takes, in the order a tool's usage lists
+/// them.
+pub(crate) const FLAGS: [&str; 8] = [
+    "--engine", "--mood", "--seeds", "--start", "--tier", "--sweep", "--songs", "--batch",
+];
+
+/// The flags a tool takes, the batch's then its `own`, as its usage error lists
+/// them.
+pub(crate) fn valid_flags(own: &[&str]) -> String {
+    FLAGS
+        .iter()
+        .chain(own)
+        .copied()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 impl Batch {
-    /// Applies `flag` when it is one of the batch's, taking its value from
+    /// Applies `flag` when it is one of [`FLAGS`], taking its value from
     /// `args`; `Ok(false)` leaves `flag` to the caller.
     pub(crate) fn parse_flag(
         &mut self,
@@ -518,9 +538,19 @@ impl Batch {
     pub(crate) fn perform_with(
         &self,
         seed: u64,
+        render: impl FnMut(&mut Performance, &mut [Frame]),
+    ) -> Vec<Frame> {
+        self.play(seed, &self.timeline(seed), render)
+    }
+
+    /// `seed`'s `timeline` as a `Performance` plays it, each stretch between
+    /// its calls played by `render`.
+    fn play(
+        &self,
+        seed: u64,
+        timeline: &Timeline,
         mut render: impl FnMut(&mut Performance, &mut [Frame]),
     ) -> Vec<Frame> {
-        let timeline = self.timeline(seed);
         let mut frames = vec![Frame::default(); timeline.songs.iter().map(|&(_, len)| len).sum()];
         let mut performance = Performance::new(seed, self.controls());
         let mut done = 0;
@@ -544,22 +574,49 @@ impl Batch {
     ) -> Vec<WholeSong> {
         (0..)
             .zip(self.timeline(seed).songs)
-            .map(|(k, (controls, len))| {
-                let (beds, took) = render_take(&audition::song_score(seed, k, controls));
-                let mix = soak_mix(&beds, &gains(controls), len);
-                (beds, took, mix)
+            .map(|(k, (controls, len))| WholeSong {
+                beds: render_take(&audition::song_score(seed, k, controls)),
+                gains: gains(controls),
+                len,
             })
             .collect()
     }
 }
 
-/// One song of a whole-lane take: each lane rendered whole in [`Lane::ALL`]
-/// order, how long each took, and their mix, as long as the song.
-pub(crate) type WholeSong = (
-    [Vec<f32>; Lane::ALL.len()],
-    [Duration; Lane::ALL.len()],
-    Vec<f32>,
-);
+/// One song of a whole-lane take.
+pub(crate) struct WholeSong {
+    /// Each lane rendered whole, in [`Lane::ALL`] order.
+    pub(crate) beds: [Vec<f32>; Lane::ALL.len()],
+    /// Each lane's gain in the mix, and the song's length in frames.
+    gains: [f32; Lane::ALL.len()],
+    len: usize,
+}
+
+impl WholeSong {
+    /// Each bed looping on its own length over the song, at its gain and
+    /// [`Performance::MASTER_GAIN`]: the stage where the engine's own mix
+    /// meets its ceiling, and the stems the mix sums.
+    pub(crate) fn stems(&self) -> [Vec<f32>; Lane::ALL.len()] {
+        std::array::from_fn(|i| {
+            let (bed, gain) = (
+                &self.beds[i],
+                self.gains[i] * Performance::MASTER_GAIN as f32,
+            );
+            (0..self.len).map(|n| bed[n % bed.len()] * gain).collect()
+        })
+    }
+
+    /// The song's mix: its stems summed in [`Lane::ALL`] order.
+    pub(crate) fn mix(&self) -> Vec<f32> {
+        let mut mix = vec![0.0f32; self.len];
+        for stem in self.stems() {
+            for (slot, x) in mix.iter_mut().zip(stem) {
+                *slot += x;
+            }
+        }
+        mix
+    }
+}
 
 /// Each lane's gain under `controls`, in [`Lane::ALL`] order: lofi's, at the
 /// intensity a `Performance` mixes it at.
@@ -568,31 +625,10 @@ pub(crate) fn lane_gains(controls: Controls) -> [f32; Lane::ALL.len()] {
 }
 
 /// Every lane of `score` in [`Lane::ALL`] order, drawn from one rng stream as a
-/// take renders, and how long each took.
-fn render_take(score: &Score) -> ([Vec<f32>; Lane::ALL.len()], [Duration; Lane::ALL.len()]) {
+/// take renders.
+fn render_take(score: &Score) -> [Vec<f32>; Lane::ALL.len()] {
     let mut rng = NoiseStream::new(LANE_SEED);
-    let mut took = [Duration::ZERO; Lane::ALL.len()];
-    let beds = std::array::from_fn(|i| {
-        let started = Instant::now();
-        let bed = render_lane(score, Lane::ALL[i], &mut rng);
-        took[i] = started.elapsed();
-        bed
-    });
-    (beds, took)
-}
-
-/// `beds` at `gains`, each looping on its own length, summed over `frames`
-/// frames at [`Performance::MASTER_GAIN`]: the stage where the engine's own
-/// mix meets its ceiling.
-fn soak_mix(beds: &[Vec<f32>], gains: &[f32], frames: usize) -> Vec<f32> {
-    let mut mix = vec![0.0f32; frames];
-    for (bed, &gain) in beds.iter().zip(gains) {
-        let gain = gain * Performance::MASTER_GAIN as f32;
-        for (i, slot) in mix.iter_mut().enumerate() {
-            *slot += bed[i % bed.len()] * gain;
-        }
-    }
-    mix
+    Lane::ALL.map(|lane| render_lane(score, lane, &mut rng))
 }
 
 #[cfg(test)]
@@ -600,6 +636,25 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
+
+    #[test]
+    fn every_listed_flag_parses_and_no_other_does() {
+        let values = ["whole", "night", "3", "2", "busy", "rain", "1", "judge"];
+        for (flag, value) in FLAGS.into_iter().zip(values) {
+            let mut batch = Batch::default();
+            let applied = batch.parse_flag(flag, &mut std::iter::once(value.to_owned()));
+            assert!(
+                applied.expect("the flag parses"),
+                "{flag} isn't the batch's"
+            );
+        }
+        let mut batch = Batch::default();
+        assert!(
+            !batch
+                .parse_flag("--out", &mut std::iter::empty())
+                .expect("no value is read")
+        );
+    }
 
     /// A default batch after `flag value`.
     fn parsed(flag: &str, value: &str) -> io::Result<Batch> {
@@ -633,10 +688,15 @@ mod tests {
                 "the songs share a length: {counts:?}"
             );
             let quarter = bars.len() / 4;
-            let middle =
-                |bar: usize| bars[bar].midpoint(bars.get(bar + 1).copied().unwrap_or(start));
-            let calls: Vec<usize> = timeline.calls.iter().map(|&(at, _)| at).collect();
-            assert_eq!(calls, [middle(quarter), middle(bars.len() - quarter)]);
+            // each call latches at the first bar line after it
+            let latched: Vec<usize> = (timeline.calls.iter())
+                .map(|&(at, _)| {
+                    bars.iter()
+                        .position(|&line| line > at)
+                        .expect("a bar after the call")
+                })
+                .collect();
+            assert_eq!(latched, [quarter, bars.len() - quarter]);
         }
     }
 
@@ -646,12 +706,6 @@ mod tests {
         for (name, intensity) in [("empty", empty), ("moderate", moderate), ("busy", busy)] {
             let batch = parsed("--tier", name).expect("the tier parses");
             assert_eq!(batch.controls().intensity, intensity, "{name}");
-            let gains = Lane::ALL.map(|lane| lane_gain(lane, intensity));
-            assert_eq!(
-                lane_gains(batch.controls()),
-                gains,
-                "{name}'s whole-lane mix"
-            );
         }
         assert!(parsed("--tier", "loud").is_err());
         let [day, night] =
@@ -756,6 +810,42 @@ mod tests {
                     .flat_map(move |run| run.seeds().map(move |seed| (sweep, run, seed)))
             })
             .collect()
+    }
+
+    /// Where in its bar a call falls moves nothing, since it latches at the
+    /// bar line: a quarter of a bar earlier or later plays the same take.
+    #[test]
+    fn a_call_a_quarter_bar_either_way_plays_the_same_take() {
+        let run = parsed("--sweep", "intensity").expect("the sweep parses");
+        let seed = 0;
+        let timeline = run.timeline(seed);
+        let bars = audition::bar_frames(seed, 0, run.controls());
+        let render = |p: &mut Performance, out: &mut [Frame]| p.render(out);
+        let played = run.play(seed, &timeline, render);
+        for shift in [-1, 1] {
+            let calls = (timeline.calls.iter())
+                .map(|&(at, controls)| {
+                    let bar = bars
+                        .iter()
+                        .rposition(|&line| line <= at)
+                        .expect("a bar holds the call");
+                    let quarter = (bars[bar + 1] - bars[bar]) / 4;
+                    (
+                        at.checked_add_signed(shift * quarter as isize)
+                            .expect("inside the take"),
+                        controls,
+                    )
+                })
+                .collect();
+            let moved = Timeline {
+                songs: timeline.songs.clone(),
+                calls,
+            };
+            assert!(
+                run.play(seed, &moved, render) == played,
+                "a call moved {shift} quarter bar"
+            );
+        }
     }
 
     #[test]
@@ -864,8 +954,7 @@ mod tests {
 
     #[test]
     fn songs_plays_that_many_songs_of_the_run() {
-        let mut batch = parsed("--songs", "3").expect("--songs parses");
-        batch.engine = Engine::Stream;
+        let batch = parsed("--songs", "3").expect("--songs parses");
         let c = batch.controls();
         let lens: Vec<usize> = batch
             .timeline(1)

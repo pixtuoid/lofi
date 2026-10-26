@@ -5,6 +5,10 @@
 use std::collections::VecDeque;
 use std::ops::Range;
 
+mod loudness;
+
+pub use loudness::{channels, fold, gated_lufs};
+
 pub use crate::compose::Lane;
 pub use crate::compose::{BASS_LOW, Form, LOW_INTERVAL_LIMIT, Score, spans_a_form};
 pub use crate::stream::master::{TIER_INTENSITIES, lane_gain};
@@ -139,8 +143,8 @@ pub const LUFS_SEEDS: Range<u64> = 0..24;
 /// --engine whole` prints it over those seeds at the row's `--tier` and
 /// `--mood`. A non-regression, not a target.
 pub const WHOLE_LANE_LUFS_SD: [(f32, f32, f64); 2] = [
-    (TIER_INTENSITIES[1], 1.0, 0.3387),
-    (TIER_INTENSITIES[1], 0.0, 0.2321),
+    (TIER_INTENSITIES[1], 1.0, 0.3872),
+    (TIER_INTENSITIES[1], 0.0, 0.2765),
 ];
 
 /// How much a `Performance`'s songs' gated loudness varied across
@@ -150,8 +154,8 @@ pub const WHOLE_LANE_LUFS_SD: [(f32, f32, f64); 2] = [
 /// those seeds at the row's `--tier` and `--mood`. A non-regression, not a
 /// target.
 pub const SONG_LUFS_SD: [(f32, f32, f64); 2] = [
-    (TIER_INTENSITIES[0], 1.0, 0.3292),
-    (TIER_INTENSITIES[2], 1.0, 0.4178),
+    (TIER_INTENSITIES[0], 1.0, 0.2717),
+    (TIER_INTENSITIES[2], 1.0, 0.3895),
 ];
 
 /// The most `songs` songs' loudness may vary against `reference`, a row of
@@ -221,7 +225,7 @@ mod tests {
             (got.iter().zip(&want)).position(|(a, b)| a.map(f32::to_bits) != b.map(f32::to_bits));
         assert_eq!(first_diff, None, "the stems' render played other frames");
         assert!(stems.plate().iter().any(|&x| x != 0.0), "no plate plays");
-        let fold = crate::loudness::fold(&want);
+        let fold = fold(&want);
         let off = (0..frames).position(|i| {
             let sum = stems
                 .lanes()

@@ -1,9 +1,10 @@
 //! [BS.1770-5](https://www.itu.int/dms_pubrec/itu-r/rec/bs/R-REC-BS.1770-5-202311-I!!PDF-E.pdf)
-//! gated loudness of a buffer that plays on repeat: the K-filter and the gating
-//! blocks both wrap, so the reading is the endlessly looping buffer's. It names
-//! no crate, so lofi's own tests share it too.
+//! gated loudness of channels that play on repeat: the K-filter and the gating
+//! blocks both wrap, so the reading is the endlessly looping buffer's.
 
 use std::f64::consts::PI;
+
+use crate::Frame;
 
 /// A second-order section, `[b0, b1, b2, a1, a2]` over `a0 = 1`.
 type Biquad = [f64; 5];
@@ -78,34 +79,52 @@ fn run_circular(x: &[f64], filter: &[Biquad]) -> Vec<f64> {
     y
 }
 
-/// Stereo `frames` as the one mono every reading hears: (L + R) / 2, as
-/// `ab_judge.py`'s `mono` folds a take, so a centred frame reads its left
-/// channel exactly.
-pub(crate) fn fold(frames: &[[f32; 2]]) -> Vec<f32> {
+/// Stereo `frames` as the one mono a spectrum and the mono judges read:
+/// (L + R) / 2, as `ab_judge.py`'s `mono` folds a take, so a centred frame
+/// reads its left channel exactly.
+pub fn fold(frames: &[Frame]) -> Vec<f32> {
     frames
         .iter()
         .map(|&[left, right]| f32::midpoint(left, right))
         .collect()
 }
 
-/// `buf`'s gated loudness as a loop at `sr`, in LKFS: −∞ when no block passes
-/// the absolute gate.
-pub(crate) fn gated_lufs(buf: &[f32], sr: u32) -> f64 {
+/// Stereo `frames` as their left and right channels.
+pub fn channels(frames: &[Frame]) -> [Vec<f32>; 2] {
+    [0, 1].map(|side| frames.iter().map(|frame| frame[side]).collect())
+}
+
+/// The gated loudness of `channels`, played together as a loop at `sr`, in
+/// LKFS: each channel's K-weighted mean square summed in every block, with
+/// equation (4)'s weight of 1 for a left, right or centre channel. −∞ when no
+/// block passes the absolute gate. A mono lane heard from both speakers is
+/// `&[lane, lane]`.
+///
+/// # Panics
+///
+/// If the channels differ in length, which no loop of them plays.
+pub fn gated_lufs(channels: &[&[f32]], sr: u32) -> f64 {
+    assert!(
+        channels.windows(2).all(|w| w[0].len() == w[1].len()),
+        "channels of different lengths"
+    );
     let sr = f64::from(sr);
-    let x: Vec<f64> = buf.iter().map(|&v| f64::from(v)).collect();
-    let y = run_circular(&x, &k_filter(sr));
-    let n = y.len();
     let block = (BLOCK_S * sr).round() as usize;
     let step = (BLOCK_S * (1.0 - OVERLAP) * sr).round() as usize;
-    // equation (3), each block wrapping past the loop's end
-    let z: Vec<f64> = (0..n.div_ceil(step))
-        .map(|j| {
-            (0..block)
+    let mut z: Vec<f64> = Vec::new();
+    for channel in channels {
+        let x: Vec<f64> = channel.iter().map(|&v| f64::from(v)).collect();
+        let y = run_circular(&x, &k_filter(sr));
+        let n = y.len();
+        z.resize(n.div_ceil(step), 0.0);
+        // equation (3), each block wrapping past the loop's end
+        for (j, zj) in z.iter_mut().enumerate() {
+            *zj += (0..block)
                 .map(|i| y[(j * step + i) % n].powi(2))
                 .sum::<f64>()
-                / block as f64
-        })
-        .collect();
+                / block as f64;
+        }
+    }
     let loudness = |z: f64| OFFSET + 10.0 * z.log10();
     // equation (5) over the blocks louder than `gate`
     let gated = |gate: f64| {
@@ -157,10 +176,31 @@ mod tests {
     #[test]
     fn a_full_scale_997_hz_sine_reads_minus_3_01_lkfs() {
         let l = gated_lufs(
-            &sine_997_hz(SAMPLE_RATE as usize * 10, |_| 1.0),
+            &[&sine_997_hz(SAMPLE_RATE as usize * 10, |_| 1.0)],
             SAMPLE_RATE,
         );
         assert!((l - FULL_SCALE_LKFS).abs() <= 0.005, "{l}");
+    }
+
+    #[test]
+    fn two_channels_sum_their_power_as_the_standard_weighs_them() {
+        let sine = sine_997_hz(SAMPLE_RATE as usize * 10, |_| 0.5);
+        let silence = vec![0.0; sine.len()];
+        let one = gated_lufs(&[&sine], SAMPLE_RATE);
+        let both = gated_lufs(&[&sine, &sine], SAMPLE_RATE);
+        // twice the power, so 3.01 dB; a silent channel adds none
+        assert!(
+            (both - one - 10.0 * 2f64.log10()).abs() < 1e-9,
+            "{one} vs {both}"
+        );
+        let left = gated_lufs(&[&sine, &silence], SAMPLE_RATE);
+        assert!((left - one).abs() < 1e-9, "{one} vs {left}");
+    }
+
+    #[test]
+    fn a_frames_channels_are_its_left_and_right() {
+        let [left, right] = channels(&[[0.5, -0.25], [1.0, 0.0]]);
+        assert_eq!((left, right), (vec![0.5, 1.0], vec![-0.25, 0.0]));
     }
 
     #[test]
@@ -187,7 +227,7 @@ mod tests {
     fn a_quiet_half_falls_under_the_relative_gate() {
         let n = SAMPLE_RATE as usize * 10;
         let l = gated_lufs(
-            &sine_997_hz(n, |i| if i < n / 2 { 1.0 } else { 0.1 }),
+            &[&sine_997_hz(n, |i| if i < n / 2 { 1.0 } else { 0.1 })],
             SAMPLE_RATE,
         );
         // ungated, the half 20 dB down would pull it to about −6
@@ -203,7 +243,7 @@ mod tests {
             _ => -80.0,
         };
         let l = gated_lufs(
-            &sine_997_hz(40 * s, |i| amplitude_for(level(i))),
+            &[&sine_997_hz(40 * s, |i| amplitude_for(level(i)))],
             SAMPLE_RATE,
         );
         // the −80 blocks would sink the relative gate under the −38 ones, which
@@ -220,8 +260,8 @@ mod tests {
         let shift = SAMPLE_RATE as usize / 10 * 37;
         let mid: Vec<f32> = (0..n).map(|i| across[(i + shift) % n]).collect();
         let (a, b) = (
-            gated_lufs(&across, SAMPLE_RATE),
-            gated_lufs(&mid, SAMPLE_RATE),
+            gated_lufs(&[&across], SAMPLE_RATE),
+            gated_lufs(&[&mid], SAMPLE_RATE),
         );
         assert!((a - b).abs() < 1e-9, "{a} vs {b}");
     }
