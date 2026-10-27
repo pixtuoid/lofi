@@ -4,6 +4,8 @@ Volumes cache, for a batch this machine uploads.
 Usage, with modal-requirements.txt's client and a configured token:
   modal volume put lofi-judge-refs REFS/manifest.json /manifest.json
   modal run modal_judge.py::provision     fetch the corpus, then build the caches
+  modal run modal_judge.py::check         judge the warm-up pair in this lock's
+                                          image, offline, caching nothing
   modal run modal_judge.py::upload_missing --refs-dir REFS
                                           what archive.org didn't serve, from REFS
   modal run modal_judge.py::judge --batch DIR --base SHA --cand SHA [--out OUT] [--force-score]
@@ -39,9 +41,8 @@ sys.path.insert(0, str(JUDGE))
 from judge_local import exit_code, published, redact, select
 from validate_batch import IDENTICAL
 
-# the uv the image and SKILL.md's install run, the release
-# judge-requirements.txt was compiled by
-UV_VERSION = "0.13.0"
+# the uv the image and SKILL.md's install run
+UV_VERSION = "0.13.6"
 # the lock, baked in where uv reads it a second time as the build constraints:
 # encodec, wget and progressbar publish only an sdist
 # (https://pypi.org/pypi/encodec/0.1.1/json and wget's and progressbar's), and
@@ -155,11 +156,10 @@ def fetch_refs():
     return report
 
 
-@app.function(gpu="T4", cpu=CPU, memory=MEMORY_MIB, volumes={MODELS: models, REFS: refs}, timeout=JUDGE_TIMEOUT_S)
-def build():
-    """Caches every model, the corpus's FAD statistics and the panel's
-    screening by judging a warm-up pair as a batch would be judged, online,
-    then measures what it took."""
+def warm_up(cache, env=None):
+    """Judges a warm-up pair as a batch would be judged, over `cache`, which
+    builds what it lacks, and says whether a verdict came out; prints the
+    log, names masked, when none did."""
     import numpy as np
     import soundfile as sf
 
@@ -170,18 +170,45 @@ def build():
         (warm / side).mkdir(parents=True)
         sf.write(warm / side / "gen_day_empty_000.wav", take * gain, WARMUP_RATE, subtype="PCM_16")
         (warm / side / "COMMIT").write_text("0" * 40 + "\n")
-    started = time.time()
     run = subprocess.run(
-        [sys.executable, f"{REMOTE_SCRIPTS}/ab_judge.py", str(warm), "--refs", REFS, "--corpus-cache", f"{REFS}/corpus-cache"],
+        [sys.executable, f"{REMOTE_SCRIPTS}/ab_judge.py", str(warm), "--refs", REFS, "--corpus-cache", cache],
         capture_output=True,
         text=True,
+        env=env,
     )
-    models.commit()
-    refs.commit()
     built = (warm / "judge.json").is_file()
     if not built:
         print(redact(run.stdout + run.stderr, tracks()))
+    return built
+
+
+@app.function(gpu="T4", cpu=CPU, memory=MEMORY_MIB, volumes={MODELS: models, REFS: refs}, timeout=JUDGE_TIMEOUT_S)
+def build():
+    """Caches every model, the corpus's FAD statistics and the panel's
+    screening by judging the warm-up pair, online, then measures what it
+    took."""
+    started = time.time()
+    built = warm_up(f"{REFS}/corpus-cache")
+    models.commit()
+    refs.commit()
     return {"built": built, **took(started)}
+
+
+# offline, its network blocked and its Volumes read-only, so a lock not yet
+# merged writes no cache a judge reads and sends the corpus nowhere
+@app.function(gpu="T4", cpu=CPU, memory=MEMORY_MIB, timeout=JUDGE_TIMEOUT_S, block_network=True, restrict_modal_access=True)
+def rehearse():
+    """The judge as this image would run it: `ab_judge.py`'s tests, then the
+    warm-up pair over a cache this container builds and drops."""
+    started = time.time()
+    offline = {**os.environ, "HF_HUB_OFFLINE": "1"}
+    tests = subprocess.run(
+        [sys.executable, "-I", f"{REMOTE_SCRIPTS}/test_ab_judge.py"], capture_output=True, text=True, env=offline
+    )
+    if tests.returncode:
+        print(redact(tests.stdout + tests.stderr, tracks()))
+        return {"built": False, **took(started)}
+    return {"built": warm_up("/tmp/corpus-cache", offline), **took(started)}
 
 
 @app.function(gpu="T4", cpu=CPU, memory=MEMORY_MIB, timeout=JUDGE_TIMEOUT_S)
@@ -223,6 +250,22 @@ def provision():
           f" missing: {report['missing'] or 'none'}")
     if "caches" in report:
         print(f"caches: {report['caches']}")
+    if not report.get("caches", {}).get("built"):
+        raise SystemExit(1)
+
+
+@app.local_entrypoint()
+def check():
+    """Rehearses the judge in an image built from this checkout's lock, over
+    the cached models and corpus, read-only; exits non-zero when no verdict
+    came out."""
+    result = rehearse.with_options(
+        volumes={MODELS: models.with_mount_options(read_only=True), REFS: refs.with_mount_options(read_only=True)}
+    ).remote()
+    print(f"rehearsed: {'a verdict' if result['built'] else 'no verdict'}; wall {result['wall_s']:.0f} s,"
+          f" judge CPU {result['cpu_s']:.0f} s, peak RSS {result['peak_rss_mib']:.0f} MiB")
+    if not result["built"]:
+        raise SystemExit(1)
 
 
 @app.local_entrypoint()

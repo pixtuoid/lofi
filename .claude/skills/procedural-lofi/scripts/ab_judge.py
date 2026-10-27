@@ -62,7 +62,8 @@ import hashlib
 import json
 import sys
 import tempfile
-from importlib.metadata import version
+import platform
+from importlib.metadata import distributions, version
 from pathlib import Path
 
 import fadtk.model_loader
@@ -350,16 +351,26 @@ class TuneJury:
         return float((rewards * weights).sum() / weights.sum())
 
 
+def environment():
+    """The Python and every package this judge runs on, which compute each
+    cache's numbers as much as its models do: a lock bump keys new caches."""
+    return [platform.python_version(), *sorted(f"{d.metadata['Name'].lower()}=={d.version}" for d in distributions())]
+
+
+def key(*built):
+    return hashlib.sha256(json.dumps([*built, environment()]).encode()).hexdigest()[:16]
+
+
 def quietest_file(caches, manifest_sha):
-    # the corpus alone sets it, and measuring it decodes every track
-    return caches / f"{manifest_sha}-quietest.json"
+    # the corpus and the loudness meter set it, and measuring it decodes every
+    # track
+    return caches / f"{manifest_sha}-quietest-{key()}.json"
 
 
 def stats_file(caches, manifest_sha, lufs):
     # keyed by everything the statistics are built from; the level is one any
     # batch louder than the quietest reference shares
-    built = json.dumps([LAION_CLAP, EMBEDDING, HOLDOUT, RESAMPLE])
-    return caches / f"{manifest_sha}-{hashlib.sha256(built.encode()).hexdigest()[:16]}-{lufs:.2f}.npz"
+    return caches / f"{manifest_sha}-{key(LAION_CLAP, EMBEDDING, HOLDOUT, RESAMPLE)}-{lufs:.2f}.npz"
 
 
 def cached_quietest(caches, manifest_sha, takes_lufs):
@@ -389,8 +400,8 @@ def cached_quietest(caches, manifest_sha, takes_lufs):
 
 def screen_file(caches, manifest_sha):
     # keyed by everything a screening is built from
-    built = json.dumps([PANEL, AUDIOBOX, TUNEJURY, MERT, LAION_CLAP, HOLDOUT, WINDOW_S, ANCHORS_HZ, ANCHOR_RIPPLE_DB, ANCHOR_STOP_DB, ANCHOR_STOP_RATIO])
-    return caches / f"{manifest_sha}-screen-{hashlib.sha256(built.encode()).hexdigest()[:16]}.json"
+    built = (PANEL, AUDIOBOX, TUNEJURY, MERT, LAION_CLAP, HOLDOUT, WINDOW_S, ANCHORS_HZ, ANCHOR_RIPPLE_DB, ANCHOR_STOP_DB, ANCHOR_STOP_RATIO)
+    return caches / f"{manifest_sha}-screen-{key(*built)}.json"
 
 
 def cached_screen(caches, fad, panel):

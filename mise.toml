@@ -1,0 +1,14 @@
+# The tools the gate and the local loop run, each at its newest release; a CI
+# job installs only the ones its MISE_ENABLE_TOOLS names.
+[tools]
+actionlint = "latest"
+# "actionlint checks if `shellcheck` command exists in your system and uses it
+# when it is found" (https://github.com/rhysd/actionlint/blob/main/docs/checks.md)
+shellcheck = "latest"
+zizmor = "latest"
+"github:taiki-e/cargo-hack" = "latest"
+"aqua:taiki-e/cargo-llvm-cov" = "latest"
+# compiles the judge's locks, and installs SKILL.md's judge venv
+uv = "latest"
+# runs lofi_bench's wasm build (examples/lofi_bench.mjs)
+node = "latest"

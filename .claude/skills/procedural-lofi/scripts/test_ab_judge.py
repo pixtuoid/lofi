@@ -190,6 +190,19 @@ class CorpusCache(unittest.TestCase):
         self.assertIsNone(cached_quietest(caches, self.SHA, self.QUIETEST))
         self.assertEqual(list(caches.iterdir()), [])
 
+    def test_no_cache_built_under_other_packages_is_read(self):
+        def files():
+            return (
+                quietest_file(self.caches, self.SHA),
+                stats_file(self.caches, self.SHA, self.QUIETEST),
+                screen_file(self.caches, self.SHA),
+            )
+
+        here = files()
+        with mock.patch("ab_judge.environment", return_value=["torch==0"]):
+            elsewhere = files()
+        self.assertTrue(all(a != b for a, b in zip(here, elsewhere, strict=True)), elsewhere)
+
 
 if __name__ == "__main__":
     unittest.main()
