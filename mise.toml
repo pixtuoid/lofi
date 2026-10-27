@@ -7,6 +7,7 @@ actionlint = "latest"
 # when it is found" (https://github.com/rhysd/actionlint/blob/main/docs/checks.md)
 shellcheck = "latest"
 zizmor = "latest"
+yq = "latest"
 "github:taiki-e/cargo-hack" = "latest"
 "aqua:taiki-e/cargo-llvm-cov" = "latest"
 # compiles the judge's locks, and installs SKILL.md's judge venv

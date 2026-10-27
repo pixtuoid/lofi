@@ -8,8 +8,12 @@ on:
 permissions: {}
 
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # a main push in its own group, never cancelled: in a shared one, "any
+  # existing pending job or workflow in the same concurrency group will be
+  # canceled" (https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency),
+  # so back-to-back merges would cancel each other's ci-gate and coverage upload
+  group: ci-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   lint:
@@ -27,8 +31,9 @@ jobs:
       - run: cargo doc --no-deps
         env:
           RUSTDOCFLAGS: -D warnings
-      # a private item's broken link too, which the public build never renders
-      - run: cargo doc --no-deps --document-private-items
+      # a private item's broken link too, which the public build never
+      # renders, and an example's, which only `--examples` renders
+      - run: cargo doc --no-deps --document-private-items --lib --examples
         env:
           RUSTDOCFLAGS: -D warnings
       - run: cargo package --locked
@@ -74,7 +79,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: pixtuoid/.github/.github/actions/setup-rust@main
-      - run: cargo test --all-targets
+      # every failing test binary, not only the first
+      - run: cargo test --all-targets --no-fail-fast
       - run: cargo test --doc
 
   # Cargo.toml's rust-version, checked as the Cargo book's CI guide checks it
@@ -112,6 +118,11 @@ jobs:
           targets: wasm32-unknown-unknown
       - run: cargo build --lib --target wasm32-unknown-unknown
       - run: cargo build --example lofi_bench --target wasm32-unknown-unknown
+      # the wasm32-only items' lints and docs, which the host build compiles out
+      - run: cargo clippy --lib --example lofi_bench --target wasm32-unknown-unknown -- -D warnings
+      - run: cargo doc --no-deps --document-private-items --lib --example lofi_bench --target wasm32-unknown-unknown
+        env:
+          RUSTDOCFLAGS: -D warnings
 
   workflows:
     runs-on: ubuntu-latest
@@ -119,7 +130,7 @@ jobs:
     permissions:
       contents: read
     env:
-      MISE_ENABLE_TOOLS: zizmor,actionlint,shellcheck
+      MISE_ENABLE_TOOLS: zizmor,actionlint,shellcheck,yq
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -134,11 +145,23 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
       - run: actionlint
+      # a job blocks a merge only through ci-gate's needs; `coverage` is advisory
+      - name: ci-gate needs every other job
+        run: |
+          set -euo pipefail
+          jobs=$(yq '.jobs | keys | .[] | select(. != "ci-gate" and . != "coverage")' .github/workflows/ci.yml | sort)
+          needs=$(yq '.jobs["ci-gate"].needs[]' .github/workflows/ci.yml | sort)
+          if [ "$jobs" != "$needs" ]; then
+            echo "::error::ci-gate's needs differ from the gating jobs (< jobs, > needs)"
+            diff <(echo "$jobs") <(echo "$needs") || true
+            exit 1
+          fi
 
   # Advisory, so not in ci-gate: `test` already gates the same suite.
   coverage:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # twice the slowest run, which the commit that set it records
+    timeout-minutes: 60
     permissions:
       contents: read
       id-token: write

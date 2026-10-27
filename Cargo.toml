@@ -41,6 +41,11 @@ missing_errors_doc              = "warn"
 missing_panics_doc              = "warn"
 # A widening cast as `T::from`, which can't go silently lossy if a type changes.
 cast_lossless                   = "warn"
+# A dropped result of a method returning `Self`, which leaves a `Copy`
+# receiver, `Controls` among them, as it was.
+return_self_not_must_use        = "warn"
+# An `unsafe` block or impl without the reason its contract holds beside it.
+undocumented_unsafe_blocks      = "warn"
 
 [lints.rustdoc]
 broken_intra_doc_links  = "deny"

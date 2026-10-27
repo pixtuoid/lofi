@@ -243,7 +243,7 @@ fn pcm(x: f32) -> i16 {
 const CHANNELS: u16 = 2;
 const BITS: u16 = 16;
 /// The fmt chunk's size and its format code for PCM, "0x0001
-/// WAVE_FORMAT_PCM" (https://www.mmsp.ece.mcgill.ca/Documents/AudioFormats/WAVE/WAVE.html).
+/// WAVE_FORMAT_PCM" (<https://www.mmsp.ece.mcgill.ca/Documents/AudioFormats/WAVE/WAVE.html>).
 const FMT_SIZE: u32 = 16;
 const WAVE_FORMAT_PCM: u16 = 1;
 /// The header's bytes after the RIFF size: "WAVE", the fmt chunk and the data

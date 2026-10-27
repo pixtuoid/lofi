@@ -24,6 +24,8 @@ struct Counting;
     unsafe_code,
     reason = "a `GlobalAlloc` is an unsafe trait, and only one sees every allocation"
 )]
+// SAFETY: each method only counts, then hands `System` the caller's own
+// arguments, so `System`'s guarantees are this allocator's.
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let live = LIVE.fetch_add(layout.size(), Relaxed) + layout.size();
