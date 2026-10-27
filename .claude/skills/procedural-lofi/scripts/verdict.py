@@ -110,10 +110,10 @@ def judged(pairs, held, scales):
     guard's FAD gains past `margin`, a test of the median against it as the
     sign test takes one. Either one significant is a REGRESSION. A group with none is
     UNCHANGED. The pooled "all" group is tested alike but gates nothing,
-    since it repeats the groups' pairs. Each judge's own test is kept, and a
-    gating group where one significantly favours base yet the group's
-    verdict isn't REGRESSION is a `dissent`, which the verdict names but
-    doesn't fail on."""
+    since it repeats the groups' pairs. Each judge's own test is kept, and
+    the judges that significantly favour base on theirs in a gating group no
+    gate fails are its `dissent`, which the verdict names but doesn't fail
+    on."""
     groups = grouped(pairs)
     moods = [g for g in groups if g != "all"]
     tests = len(GATES) * sum(bool(groups[m]["changed"]) for m in moods)
@@ -126,10 +126,11 @@ def judged(pairs, held, scales):
             continue
         changed = group["changed"]
         group["judges"] = {j: sign_test([p["gains"][j] for p in changed], alpha) for j in JUDGES}
-        group["tests"] = {
-            "panel": sign_test([pooled(p["gains"], scales) for p in changed], alpha),
-            "guard": sign_test([p["gains"][GUARD] + within for p in changed], alpha),
+        gains = {
+            "panel": [pooled(p["gains"], scales) for p in changed],
+            "guard": [p["gains"][GUARD] + within for p in changed],
         }
+        group["tests"] = {g: sign_test(gains[g], alpha) for g in GATES}
         group["verdict"] = (
             "REGRESSION"
             if any(t["significant"] for t in group["tests"].values())
@@ -138,13 +139,12 @@ def judged(pairs, held, scales):
             else "PASS"
         )
     gating = {groups[m]["verdict"] for m in moods}
-    dissent = [
-        (m, j)
+    dissent = {
+        m: against
         for m in moods
         if groups[m]["verdict"] != "REGRESSION"
-        for j, t in groups[m].get("judges", {}).items()
-        if t["significant"]
-    ]
+        and (against := [j for j, t in groups[m].get("judges", {}).items() if t["significant"]])
+    }
     return {
         "alpha": alpha,
         "min_untied": min_untied(alpha),

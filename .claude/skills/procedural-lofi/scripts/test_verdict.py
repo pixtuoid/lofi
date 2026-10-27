@@ -177,12 +177,22 @@ class Panel(unittest.TestCase):
         gains = tuple(-0.5 if j == "tunejury" else 2.0 if j in PANEL else 0.0 for j in JUDGES)
         result = judged([judge_pair("day", gains) for _ in range(self.N)], HELD, SCALES)
         self.assertEqual(result["overall"], "PASS")
-        self.assertEqual(result["dissent"], [("day", "tunejury")])
+        self.assertEqual(result["dissent"], {"day": ["tunejury"]})
 
     def test_a_regression_names_no_dissent(self):
         result = judged(pairs("day", losses(self.N)), HELD, SCALES)
         self.assertEqual(result["overall"], "REGRESSION")
-        self.assertEqual(result["dissent"], [])
+        self.assertEqual(result["dissent"], {})
+
+    def test_a_group_names_every_judge_that_dissents(self):
+        gains = tuple(-0.5 if j == "tunejury" else -margin(HELD) / 2 if j == GUARD else 2.0 for j in JUDGES)
+        result = judged([judge_pair("day", gains) for _ in range(self.N)], HELD, SCALES)
+        self.assertEqual(result["overall"], "PASS")
+        self.assertEqual(result["dissent"], {"day": ["tunejury", GUARD]})
+
+    def test_a_group_runs_every_gate_its_alpha_counts(self):
+        result = judged(pairs("day", [1.0] * self.N), HELD, SCALES)
+        self.assertEqual(set(result["groups"]["day"]["tests"]), set(GATES))
 
 
 class Guard(unittest.TestCase):
@@ -199,7 +209,7 @@ class Guard(unittest.TestCase):
     def test_a_move_under_the_margin_passes_and_is_a_dissent(self):
         result = self.guarded(-margin(HELD) / 2)
         self.assertEqual(result["overall"], "PASS")
-        self.assertEqual(result["dissent"], [("day", GUARD)])
+        self.assertEqual(result["dissent"], {"day": [GUARD]})
 
     def test_a_move_past_the_margin_is_a_regression_however_the_panel_votes(self):
         self.assertEqual(self.guarded(-2 * margin(HELD))["overall"], "REGRESSION")
@@ -207,7 +217,7 @@ class Guard(unittest.TestCase):
     def test_a_move_toward_the_corpus_passes(self):
         result = self.guarded(margin(HELD))
         self.assertEqual(result["overall"], "PASS")
-        self.assertEqual(result["dissent"], [])
+        self.assertEqual(result["dissent"], {})
 
 
 class RustCopies(unittest.TestCase):

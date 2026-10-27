@@ -107,8 +107,12 @@ class Screening(unittest.TestCase):
         self.assertEqual(set(screen["bright"]["anchors"].values()), {0.0})
         self.assertEqual(screened_out(screen), ["deaf"])
 
-    def test_the_share_past_bs1534s_is_the_one_screened_out(self):
-        screen = {"at": {"anchors": {3500: SCREEN_SHARE, 7000: 0.0}}, "past": {"anchors": {3500: 0.0, 7000: 0.2}}}
+    def test_only_the_mid_range_anchor_past_bs1534s_share_screens_out(self):
+        screen = {
+            "at": {"anchors": {3500: 0.0, 7000: SCREEN_SHARE}},
+            "low": {"anchors": {3500: 0.5, 7000: 0.0}},
+            "past": {"anchors": {3500: 0.0, 7000: 0.2}},
+        }
         self.assertEqual(screened_out(screen), ["past"])
 
     def test_a_judges_scale_is_its_scores_spread_over_the_items(self):

@@ -144,7 +144,10 @@ ANCHOR_STOP_RATIO = 4000 / 3500
 # §4.1.2's post-screening: "an assessor should be excluded from the
 # aggregated responses if he or she rates the mid-range anchor for more than
 # 15% of the test items higher than a score of 90". A judge is an assessor,
-# and an anchor it scores at or over its reference is one it rates as unimpaired
+# and an anchor it scores at or over its reference is one it rates as
+# unimpaired, since a judge grades on no scale of 100 (opinion). The 3.5 kHz
+# anchor's share is kept beside it, screening nothing
+SCREEN_ANCHOR_HZ = ANCHORS_HZ[1]
 SCREEN_SHARE = 0.15
 
 # the TO-EXPLAIN threshold (opinion)
@@ -281,8 +284,9 @@ def screened(judges, items):
 
 
 def screened_out(screen):
-    """The judges BS.1534-3's post-screening excludes, by `screened`'s shares."""
-    return [name for name, judge in screen.items() if max(judge["anchors"].values()) > SCREEN_SHARE]
+    """The judges BS.1534-3's post-screening excludes, by `screened`'s shares
+    on its mid-range anchor."""
+    return [name for name, judge in screen.items() if judge["anchors"][SCREEN_ANCHOR_HZ] > SCREEN_SHARE]
 
 
 class Audiobox:
@@ -566,7 +570,7 @@ def main():
         record["screen"] = cached_screen(args.corpus_cache, fad, panel)
         if out := screened_out(record["screen"]):
             sys.exit(
-                f"{', '.join(out)} rated BS.1534-3's anchors of the held-out references unimpaired past"
+                f"{', '.join(out)} rated BS.1534-3's mid-range anchor of the held-out references unimpaired past"
                 f" §4.1.2's {SCREEN_SHARE:.0%} ({record['screen']}), so the panel can't seat it"
             )
         scales = {name: judge["scale"] for name, judge in record["screen"].items()}
@@ -659,10 +663,10 @@ def main():
             f"  {panel['wins']:>5}/{panel['losses']}/{panel['ties']:<3} {panel['p']:7.4f}"
             f"  {guard['wins']:>5}/{guard['losses']:<3} {guard['p']:7.4f}  {label}"
         )
-    for group, judge in result["dissent"]:
+    for group, against in result["dissent"].items():
         table.append(
-            f"DISSENT {group}: {judge} alone significantly favours base"
-            + (", under the guard's margin" if judge == GUARD else ", and the panel's pooled gain outweighs it")
+            f"DISSENT {group}: {', '.join(against)} significantly favour base on their own tests, and no gate fails"
+            + (f" ({GUARD} under the guard's margin)" if GUARD in against else "")
         )
     if changed:
         table.append(f"alpha {result['alpha']:.4g} a test, so one needs {result['min_untied']} untied pairs to ever reject")

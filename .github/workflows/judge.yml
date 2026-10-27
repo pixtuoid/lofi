@@ -217,7 +217,7 @@ jobs:
               PASS | REGRESSION | INSUFFICIENT | UNCHANGED)
                 outcome="$got"
                 table=$(jq -r '.table // ""' "$verdict" | tr -d '`')
-                dissent=$(jq -r '.record.dissent // [] | map(join(" ")) | join(", ")' "$verdict" | tr -cd 'a-z_, ')
+                dissent=$(jq -r '.record.dissent // {} | to_entries | map("\(.key): \(.value | join(", "))") | join("; ")' "$verdict" | tr -cd 'a-z_,:; ')
                 ;;
               *) outcome="infra failure" ;;
             esac
@@ -233,7 +233,7 @@ jobs:
             echo "**lofi judge: $outcome**"
             echo
             echo "head \`$HEAD_SHA\` · merge-base \`$MERGE_BASE\` · judge at \`$JUDGE_AT\`"
-            [ -z "$dissent" ] || printf "\n**DISSENT: %s.** One judge alone significantly favours base: the panel outvotes it, or it is the guard under its margin.\n" "$dissent"
+            [ -z "$dissent" ] || printf "\n**DISSENT: %s.** Each judge named significantly favours base on its own test, and no gate fails.\n" "$dissent"
             if [ -n "$table" ]; then
               echo
               echo "<details><summary>scores</summary>"
