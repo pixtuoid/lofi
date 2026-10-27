@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/pixtuoid/lofi/compare/v0.2.0...v0.3.0) - 2026-10-27
+
+### Added
+
+- *(stream)* the plate rings wetter, as deep as the judge took it ([#50](https://github.com/pixtuoid/lofi/pull/50))
+- *(tools)* lofi_measure --pins measures every pinned constant again, beside the source's value ([#46](https://github.com/pixtuoid/lofi/pull/46))
+- *(tools)* lofi_measure --staging prints each staging gain beside the whole-lane medians it stands in for ([#45](https://github.com/pixtuoid/lofi/pull/45))
+- *(synth)* hats sound, a metallic hash under the drums' chain ([#42](https://github.com/pixtuoid/lofi/pull/42))
+- the night ducks only under kicks that sound, its tempo sits inside MEASURED, and chords sound clear ([#40](https://github.com/pixtuoid/lofi/pull/40))
+- the bass window rises to G1-F#2, an octave under a chord voice it would crowd ([#37](https://github.com/pixtuoid/lofi/pull/37))
+- *(compose)* each stage draws from its own stream ([#36](https://github.com/pixtuoid/lofi/pull/36))
+- a song opens, breathes and closes, and its lead sings at every tier ([#30](https://github.com/pixtuoid/lofi/pull/30))
+- *(tools)* lofi_measure reads the stream's lanes and the corpus's percentiles ([#26](https://github.com/pixtuoid/lofi/pull/26))
+- a stereo plate rings under the pad, keys and lead ([#23](https://github.com/pixtuoid/lofi/pull/23))
+
+### Other
+
+- main runs never cancel, every failing test reports, and the examples' and wasm's items are linted and documented ([#53](https://github.com/pixtuoid/lofi/pull/53))
+- *(synth)* voices, the lane recipe and the whole-lane chain each get a file ([#48](https://github.com/pixtuoid/lofi/pull/48))
+- *(dsp)* [**breaking**] a noise envelope is `Band`s in fractions, smoothed in Hz at any loop length ([#44](https://github.com/pixtuoid/lofi/pull/44))
+  - Migrating: `shaped_noise_loop` takes `&[Band]`, so a `(lo_hz, hi_hz, energy_percent)` row becomes `Band::new(lo_hz, hi_hz, energy_percent / 100.0)`.
+- *(tools)* loudness reads both channels, the corpus reads again from the repo, and one FFT ([#39](https://github.com/pixtuoid/lofi/pull/39))
+- pin actions by commit, declare and check rust-version 1.88, and drop the foley tools ([#35](https://github.com/pixtuoid/lofi/pull/35))
+- one style per mood, stages that read only their own, and named events ([#34](https://github.com/pixtuoid/lofi/pull/34))
+- typed lane recipes, and frozen takes that play the shipped voices ([#33](https://github.com/pixtuoid/lofi/pull/33))
+- a song owns its automation, and the schedule its steps ([#32](https://github.com/pixtuoid/lofi/pull/32))
+- one exact newest toolchain from rust-toolchain.toml ([#28](https://github.com/pixtuoid/lofi/pull/28))
+
 ## [0.2.0](https://github.com/pixtuoid/lofi/compare/v0.1.0...v0.2.0) - 2026-10-19
 
 ### Added
