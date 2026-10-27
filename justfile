@@ -1,0 +1,67 @@
+# The commands the git hooks and ci.yml run, so each changes in one place;
+# ci.yml keeps inline only what runs nowhere else.
+
+# One dialect on every platform: GitHub's Windows runners ship Git with Bash
+# (https://github.com/actions/runner-images/blob/main/images/windows/Windows2025-Readme.md),
+# so the test job's recipe runs there as it does here.
+set shell := ["bash", "-euo", "pipefail", "-c"]
+
+# mise.toml's tools, found without a shell that activates mise
+_mise_paths := shell('command -v mise >/dev/null || exit 0; MISE_OFFLINE=1 mise env --paths')
+export PATH := (if _mise_paths == '' { '' } else { replace_regex(_mise_paths, '\r?\n', PATH_VAR_SEP) + PATH_VAR_SEP }) + env('PATH')
+
+# Turn on the hooks and install mise.toml's tools, once per clone
+setup:
+    git config core.hooksPath .githooks
+    mise install
+
+# What pre-push runs: quick over a warm build, so the render-heavy tests stay CI's
+preflight: fmt-check clippy doc
+
+fmt-check:
+    cargo fmt --all --check
+
+clippy:
+    cargo clippy --all-targets -- -D warnings
+
+# The public docs, then every item's and every example's: rustdoc resolves a
+# link only on an item it renders
+[doc('The public docs, then every item and example, warnings as errors')]
+doc:
+    RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
+    RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items --lib --examples
+
+# Every failing test binary, not only the first
+test:
+    cargo test --all-targets --no-fail-fast
+    cargo test --doc
+
+# Cargo.toml's rust-version, checked as the Cargo book's CI guide checks it
+# (https://doc.rust-lang.org/cargo/guide/continuous-integration.html#verifying-rust-version)
+[doc("Check the build at Cargo.toml's rust-version")]
+msrv:
+    cargo hack check --rust-version --all-targets --locked
+
+# The wasm32 build, and the lints and docs of the items the host build compiles out
+wasm:
+    cargo build --lib --target wasm32-unknown-unknown
+    cargo build --example lofi_bench --target wasm32-unknown-unknown
+    cargo clippy --lib --example lofi_bench --target wasm32-unknown-unknown -- -D warnings
+    RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items --lib --example lofi_bench --target wasm32-unknown-unknown
+
+# The repo root, not just workflows/, so dependabot.yml is audited too; then
+# whether ci-gate needs every job, since a job blocks a merge only through its
+# needs (`coverage` is advisory)
+[doc('Audit the workflows, and check ci-gate needs every job')]
+workflows:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    zizmor --config .github/zizmor.yml .
+    actionlint
+    jobs=$(yq '.jobs | keys | .[] | select(. != "ci-gate" and . != "coverage")' .github/workflows/ci.yml | sort)
+    needs=$(yq '.jobs["ci-gate"].needs[]' .github/workflows/ci.yml | sort)
+    if [ "$jobs" != "$needs" ]; then
+        echo "error: ci-gate's needs differ from the gating jobs (< jobs, > needs)" >&2
+        diff <(echo "$jobs") <(echo "$needs") >&2 || true
+        exit 1
+    fi

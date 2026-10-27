@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Formatting only: pre-push runs `just preflight`, and CI the rest. `just
+# setup` turns the hooks on.
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+# a hook runs before any justfile, so mise.toml's just may not be on PATH yet
+if command -v just >/dev/null; then just=(just); else just=(mise exec -- just); fi
+"${just[@]}" fmt-check || {
+    echo "[pre-commit] run 'cargo fmt --all' and commit again" >&2
+    exit 1
+}
