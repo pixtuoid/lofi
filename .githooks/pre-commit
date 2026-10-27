@@ -4,9 +4,10 @@
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
-# a hook runs before any justfile, so mise.toml's just may not be on PATH yet
-if command -v just >/dev/null; then just=(just); else just=(mise exec -- just); fi
+# mise.toml's just, which the justfile is written for, over any older one on
+# PATH; a bare just only where there is no mise
+if command -v mise >/dev/null; then just=(mise exec -- just); else just=(just); fi
 "${just[@]}" fmt-check || {
-    echo "[pre-commit] run 'cargo fmt --all' and commit again" >&2
+    echo "[pre-commit] 'just fmt-check' failed, above; 'cargo fmt --all' fixes a formatting diff" >&2
     exit 1
 }

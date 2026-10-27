@@ -61,7 +61,8 @@ workflows:
     jobs=$(yq '.jobs | keys | .[] | select(. != "ci-gate" and . != "coverage")' .github/workflows/ci.yml | sort)
     needs=$(yq '.jobs["ci-gate"].needs[]' .github/workflows/ci.yml | sort)
     if [ "$jobs" != "$needs" ]; then
-        echo "error: ci-gate's needs differ from the gating jobs (< jobs, > needs)" >&2
+        # a workflow command, on stdout, so CI annotates the run; plain text here
+        echo "::error::ci-gate's needs differ from the gating jobs (< jobs, > needs)"
         diff <(echo "$jobs") <(echo "$needs") >&2 || true
         exit 1
     fi
