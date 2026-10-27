@@ -2,15 +2,17 @@
 //! song of a seed's run, heard at one of pixtuoid's office tiers through either
 //! engine.
 
+use std::f64::consts::PI;
 use std::io;
 use std::ops::Range;
 
 use pixtuoid_lofi::audition::{self, Lane, Score, TIER_INTENSITIES, lane_gain, render_lane};
+use pixtuoid_lofi::dsp::SAMPLE_RATE;
 use pixtuoid_lofi::{Controls, Frame, Performance};
 
 /// The `--mood` vocabulary paired with the daylight it plays at, so the parse
 /// and the error message can't list different spellings.
-const MOODS: [(&str, f32); 2] = [("day", 1.0), ("night", 0.0)];
+pub(crate) const MOODS: [(&str, f32); 2] = [("day", 1.0), ("night", 0.0)];
 
 /// How busy pixtuoid's office is, which picks the intensity a take plays at.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -23,7 +25,7 @@ pub(crate) enum Tier {
 }
 
 impl Tier {
-    const ALL: [Tier; 3] = [Tier::Empty, Tier::Moderate, Tier::Busy];
+    pub(crate) const ALL: [Tier; 3] = [Tier::Empty, Tier::Moderate, Tier::Busy];
 
     /// The `--tier` spelling.
     pub(crate) fn name(self) -> &'static str {
@@ -224,6 +226,17 @@ const JUDGE_SWEEP_SEEDS: u64 = 12;
 /// The lanes' noise seed: any fixed value, so a take renders alike on every run
 /// and a base and a candidate render differ only by their change.
 const LANE_SEED: u64 = 9;
+
+/// The loudest gated level at which every lane's solo take, both moods and
+/// [`audition::LUFS_SEEDS`], keeps its peak under full scale, rounded down:
+/// `lofi_measure --pins` prints it beside this.
+pub(crate) const SOLO_SAFE_LUFS: f64 = -27.6;
+
+/// How long, in seconds, a take fades in and out under a raised cosine: cut
+/// from a stream or a loop, it starts and ends mid-waveform, and the click
+/// there differs by engine, so it could tell a blind A/B's sides apart. The
+/// length is opinion.
+const EDGE_FADE_S: f64 = 0.01;
 
 /// A usage error. These tools render what the A/B gate judges, so an unusable
 /// argument fails instead of rendering or measuring a DIFFERENT take than the
@@ -584,6 +597,27 @@ impl Batch {
             })
             .collect()
     }
+
+    /// `seed`'s take as `lofi_audition` writes it before it levels it, faded
+    /// at its edges: the mix, or with `solo` that lane alone, which only the
+    /// whole-lane engine renders.
+    pub(crate) fn take(&self, seed: u64, solo: Option<Lane>) -> Vec<Frame> {
+        let mut take = match self.engine {
+            Engine::WholeLane => {
+                let gains = |controls| match solo {
+                    Some(lane) => Lane::ALL.map(|l| f32::from(u8::from(l == lane))),
+                    None => lane_gains(controls),
+                };
+                (self.whole(seed, gains).into_iter())
+                    .flat_map(|song| song.mix())
+                    .map(|x| [x; 2])
+                    .collect()
+            }
+            Engine::Stream => self.perform(seed),
+        };
+        fade_edges(&mut take);
+        take
+    }
 }
 
 /// One song of a whole-lane take.
@@ -625,6 +659,18 @@ impl WholeSong {
 /// intensity a `Performance` mixes it at.
 pub(crate) fn lane_gains(controls: Controls) -> [f32; Lane::ALL.len()] {
     Lane::ALL.map(|lane| lane_gain(lane, controls.intensity))
+}
+
+/// `take` faded in from silence and out to it over [`EDGE_FADE_S`].
+fn fade_edges(take: &mut [Frame]) {
+    let n = (EDGE_FADE_S * f64::from(SAMPLE_RATE)) as usize;
+    let last = take.len() - 1;
+    for i in 0..n {
+        let w = (0.5 * (1.0 - (PI * i as f64 / n as f64).cos())) as f32;
+        for at in [i, last - i] {
+            take[at] = take[at].map(|v| v * w);
+        }
+    }
 }
 
 /// Every lane of `score` in [`Lane::ALL`] order, each drawing its own fork of
