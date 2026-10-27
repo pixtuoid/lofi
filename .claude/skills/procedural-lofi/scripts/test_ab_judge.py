@@ -100,7 +100,7 @@ class Bright:
 
 
 class Screening(unittest.TestCase):
-    def test_a_judge_that_ties_every_anchor_is_screened_out_and_one_that_hears_them_is_kept(self):
+    def test_a_judge_that_rates_every_anchor_unimpaired_is_screened_out_and_one_that_hears_them_is_kept(self):
         items = [(gain * take(1), SR) for gain in (1.0, 2.0, 4.0)]
         screen = screened({"dull": Dull(), "bright": Bright()}, items)
         self.assertEqual(set(screen["dull"]["anchors"].values()), {1.0})
