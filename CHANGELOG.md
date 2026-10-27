@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - main runs never cancel, every failing test reports, and the examples' and wasm's items are linted and documented ([#53](https://github.com/pixtuoid/lofi/pull/53))
 - *(synth)* voices, the lane recipe and the whole-lane chain each get a file ([#48](https://github.com/pixtuoid/lofi/pull/48))
 - *(dsp)* [**breaking**] a noise envelope is `Band`s in fractions, smoothed in Hz at any loop length ([#44](https://github.com/pixtuoid/lofi/pull/44))
+  - Migrating: `shaped_noise_loop` takes `&[Band]`, so a `(lo_hz, hi_hz, energy_percent)` row becomes `Band::new(lo_hz, hi_hz, energy_percent / 100.0)`.
 - *(tools)* loudness reads both channels, the corpus reads again from the repo, and one FFT ([#39](https://github.com/pixtuoid/lofi/pull/39))
 - pin actions by commit, declare and check rust-version 1.88, and drop the foley tools ([#35](https://github.com/pixtuoid/lofi/pull/35))
 - one style per mood, stages that read only their own, and named events ([#34](https://github.com/pixtuoid/lofi/pull/34))
