@@ -13,3 +13,7 @@ zizmor = "latest"
 uv = "latest"
 # runs lofi_bench's wasm build (examples/lofi_bench.mjs)
 node = "latest"
+
+[settings]
+# the cooldown dependabot.yml gives the actions and the locks, for `latest` too
+minimum_release_age = "7d"

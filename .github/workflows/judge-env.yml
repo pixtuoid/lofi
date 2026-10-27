@@ -2,15 +2,20 @@ name: judge-env
 
 # The judge's environment, as `judge.yml` never tries it: that workflow runs
 # the base branch's judge, so a lock bump would first run on the next render
-# PR. A PR rehearses its own lock's image before it merges; main provisions the
-# caches the new environment keys (`ab_judge.py`'s `environment`), which the
-# PRs' read-only judge can't build.
+# PR. A PR runs every model in its own lock's image before it merges, with no
+# corpus; main provisions the caches the new environment keys (`ab_judge.py`'s
+# `environment`), which the PRs' read-only judge can't build, and so first
+# judges with the corpus.
 on:
   pull_request:
     paths:
-      - .claude/skills/procedural-lofi/judge/judge-requirements.txt
-      - .claude/skills/procedural-lofi/judge/modal_judge.py
+      # what the rehearsal runs or builds the image from; the client's lock
+      # it doesn't read
+      - .claude/skills/procedural-lofi/judge/**
+      - "!.claude/skills/procedural-lofi/judge/modal-requirements.*"
       - .claude/skills/procedural-lofi/scripts/ab_judge.py
+      - .claude/skills/procedural-lofi/scripts/test_ab_judge.py
+      - .claude/skills/procedural-lofi/scripts/verdict.py
       - .github/workflows/judge-env.yml
   push:
     branches: [main]

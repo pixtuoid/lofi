@@ -423,6 +423,24 @@ def cached_screen(caches, fad, panel):
     return shares
 
 
+def clap():
+    """fadtk's LAION-CLAP music model, at the pinned checkpoint."""
+    # fadtk loads whatever sits at its checkpoint path and downloads a missing
+    # one from the repo's head
+    # (https://github.com/microsoft/fadtk/blob/6f815282007288a7165d037a95dacd6d783b6f32/fadtk/model_loader.py#L303-L310),
+    # so only a link to the pinned one may sit there
+    repo, rev, file = LAION_CLAP
+    pinned = Path(hf_hub_download(repo, file, revision=rev))
+    seeded = Path(fadtk.model_loader.__file__).parent / ".model-checkpoints" / file
+    if not (seeded.is_symlink() and seeded.resolve() == pinned.resolve()):
+        seeded.unlink(missing_ok=True)
+        seeded.parent.mkdir(parents=True, exist_ok=True)
+        seeded.symlink_to(pinned)
+    model = fadtk.model_loader.CLAPLaionModel(EMBEDDING)
+    model.load_model()
+    return model
+
+
 class Fad:
     """Per-song FAD from a take to the reference corpus, over fadtk's
     LAION-CLAP embedding: the Fréchet distance between the corpus's frame
@@ -440,19 +458,7 @@ class Fad:
                 sys.exit(f"reference {i} of the manifest is missing; refusing the corpus")
             if hashlib.sha256(path.read_bytes()).hexdigest() != t["sha256"]:
                 sys.exit(f"reference {i} doesn't match its manifest sha256; refusing the corpus")
-        # fadtk loads whatever sits at its checkpoint path and downloads a
-        # missing one from the repo's head
-        # (https://github.com/microsoft/fadtk/blob/6f815282007288a7165d037a95dacd6d783b6f32/fadtk/model_loader.py#L303-L310),
-        # so only a link to the pinned one may sit there
-        repo, rev, file = LAION_CLAP
-        pinned = Path(hf_hub_download(repo, file, revision=rev))
-        seeded = Path(fadtk.model_loader.__file__).parent / ".model-checkpoints" / file
-        if not (seeded.is_symlink() and seeded.resolve() == pinned.resolve()):
-            seeded.unlink(missing_ok=True)
-            seeded.parent.mkdir(parents=True, exist_ok=True)
-            seeded.symlink_to(pinned)
-        self.model = fadtk.model_loader.CLAPLaionModel(EMBEDDING)
-        self.model.load_model()
+        self.model = clap()
         self.refs, self.manifest_sha = refs, manifest_sha
         if quietest is None:
             quietest = min(mono_lufs(*self.read(refs, t)) for t in tracks)
@@ -505,6 +511,39 @@ class Fad:
         frames = [self.embed(*take) for take in (base, cand)]
         n = min(len(f) for f in frames)
         return [self.distance(f[np.linspace(0, len(f) - 1, n).round().astype(int)]) for f in frames]
+
+
+def judge_device():
+    """The device Audiobox's own `setup_model` picks, deterministic on CUDA."""
+    device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
+    if device.type == "cuda":
+        # cuDNN "can be a source of nondeterminism", and the algorithm it
+        # picks "may be nondeterministic, unless ... cudnn.deterministic =
+        # True" (https://docs.pytorch.org/docs/2.14/notes/randomness.html),
+        # which would let two identical takes' scores differ
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
+    return device
+
+
+def smoke(x, sr, quieter):
+    """Every model the judge runs, each once on `x`, and fadtk's distance from
+    `x` to `x` at the `quieter` gain, with no corpus to hand: what a new
+    environment must still do. Its scores, or a ValueError if one isn't
+    finite."""
+    device = judge_device()
+    model = clap()
+
+    def frames(take):
+        wav = torch.from_numpy(mono(take).astype(np.float32))[None]
+        return model.get_embedding(torchaudio.transforms.Resample(sr, model.sr, **RESAMPLE)(wav)[0].numpy())
+
+    near = calc_frechet_distance(*calc_embd_statistics(frames(x)), *calc_embd_statistics(frames(x * quieter)))
+    scores = dict(zip(PANEL, (Audiobox().score(x, sr), TuneJury(model, device).score(x, sr)), strict=True))
+    scores[GUARD] = float(near)
+    if not all(np.isfinite(v) for v in scores.values()):
+        raise ValueError(f"a judge scored the smoke take {scores}")
+    return scores
 
 
 def to_explain(pairs):
@@ -567,17 +606,7 @@ def main():
     held, scales = [], {}
 
     if changed:
-        # the device Audiobox's own `setup_model` picks
-        device = torch.device(
-            "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
-        )
-        if device.type == "cuda":
-            # cuDNN "can be a source of nondeterminism", and the algorithm it
-            # picks "may be nondeterministic, unless ... cudnn.deterministic =
-            # True" (https://docs.pytorch.org/docs/2.14/notes/randomness.html),
-            # which would let two identical takes' scores differ
-            torch.backends.cudnn.benchmark = False
-            torch.backends.cudnn.deterministic = True
+        device = judge_device()
         takes_lufs = float(
             np.median([mono_lufs(*sf.read(d / n, dtype="float32")) for n in changed for _, d in sides])
         )

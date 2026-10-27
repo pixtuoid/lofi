@@ -4,8 +4,8 @@ Volumes cache, for a batch this machine uploads.
 Usage, with modal-requirements.txt's client and a configured token:
   modal volume put lofi-judge-refs REFS/manifest.json /manifest.json
   modal run modal_judge.py::provision     fetch the corpus, then build the caches
-  modal run modal_judge.py::check         judge the warm-up pair in this lock's
-                                          image, offline, caching nothing
+  modal run modal_judge.py::check         run every model in this lock's image
+                                          on the warm-up take, offline
   modal run modal_judge.py::upload_missing --refs-dir REFS
                                           what archive.org didn't serve, from REFS
   modal run modal_judge.py::judge --batch DIR --base SHA --cand SHA [--out OUT] [--force-score]
@@ -156,59 +156,59 @@ def fetch_refs():
     return report
 
 
-def warm_up(cache, env=None):
-    """Judges a warm-up pair as a batch would be judged, over `cache`, which
-    builds what it lacks, and says whether a verdict came out; prints the
-    log, names masked, when none did."""
+def warm_take():
+    """The warm-up take, seeded noise, and its rate."""
     import numpy as np
-    import soundfile as sf
 
-    warm = Path("/tmp/warm")
-    rng = np.random.default_rng(0)
-    take = WARMUP_LEVEL * rng.standard_normal((WARMUP_S * WARMUP_RATE, 2))
-    for side, gain in (("base", 1.0), ("cand", WARMUP_CAND_GAIN)):
-        (warm / side).mkdir(parents=True)
-        sf.write(warm / side / "gen_day_empty_000.wav", take * gain, WARMUP_RATE, subtype="PCM_16")
-        (warm / side / "COMMIT").write_text("0" * 40 + "\n")
-    run = subprocess.run(
-        [sys.executable, f"{REMOTE_SCRIPTS}/ab_judge.py", str(warm), "--refs", REFS, "--corpus-cache", cache],
-        capture_output=True,
-        text=True,
-        env=env,
-    )
-    built = (warm / "judge.json").is_file()
-    if not built:
-        print(redact(run.stdout + run.stderr, tracks()))
-    return built
+    return WARMUP_LEVEL * np.random.default_rng(0).standard_normal((WARMUP_S * WARMUP_RATE, 2)), WARMUP_RATE
 
 
 @app.function(gpu="T4", cpu=CPU, memory=MEMORY_MIB, volumes={MODELS: models, REFS: refs}, timeout=JUDGE_TIMEOUT_S)
 def build():
     """Caches every model, the corpus's FAD statistics and the panel's
-    screening by judging the warm-up pair, online, then measures what it
-    took."""
+    screening by judging a warm-up pair as a batch would be judged, online,
+    then measures what it took."""
+    import soundfile as sf
+
+    warm = Path("/tmp/warm")
+    take, rate = warm_take()
+    for side, gain in (("base", 1.0), ("cand", WARMUP_CAND_GAIN)):
+        (warm / side).mkdir(parents=True)
+        sf.write(warm / side / "gen_day_empty_000.wav", take * gain, rate, subtype="PCM_16")
+        (warm / side / "COMMIT").write_text("0" * 40 + "\n")
     started = time.time()
-    built = warm_up(f"{REFS}/corpus-cache")
+    run = subprocess.run(
+        [sys.executable, f"{REMOTE_SCRIPTS}/ab_judge.py", str(warm), "--refs", REFS, "--corpus-cache", f"{REFS}/corpus-cache"],
+        capture_output=True,
+        text=True,
+    )
     models.commit()
     refs.commit()
+    built = (warm / "judge.json").is_file()
+    if not built:
+        print(redact(run.stdout + run.stderr, tracks()))
     return {"built": built, **took(started)}
 
 
-# offline, its network blocked and its Volumes read-only, so a lock not yet
-# merged writes no cache a judge reads and sends the corpus nowhere
+# offline, its network blocked, and mounting the models alone, read-only: a
+# lock not yet merged writes nothing a judge reads, and the corpus isn't there
+# for it to print into a public log
 @app.function(gpu="T4", cpu=CPU, memory=MEMORY_MIB, timeout=JUDGE_TIMEOUT_S, block_network=True, restrict_modal_access=True)
 def rehearse():
-    """The judge as this image would run it: `ab_judge.py`'s tests, then the
-    warm-up pair over a cache this container builds and drops."""
+    """The judge's environment as this image builds it: `ab_judge.py`'s
+    tests, then its `smoke`, every model on the warm-up take."""
     started = time.time()
-    offline = {**os.environ, "HF_HUB_OFFLINE": "1"}
-    tests = subprocess.run(
-        [sys.executable, "-I", f"{REMOTE_SCRIPTS}/test_ab_judge.py"], capture_output=True, text=True, env=offline
-    )
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    tests = subprocess.run([sys.executable, "-I", f"{REMOTE_SCRIPTS}/test_ab_judge.py"], capture_output=True, text=True)
     if tests.returncode:
-        print(redact(tests.stdout + tests.stderr, tracks()))
-        return {"built": False, **took(started)}
-    return {"built": warm_up("/tmp/corpus-cache", offline), **took(started)}
+        print(tests.stdout + tests.stderr)
+        return {"ran": False, **took(started)}
+    sys.path.insert(0, REMOTE_SCRIPTS)
+    import ab_judge
+
+    take, rate = warm_take()
+    print(f"smoke scores: {ab_judge.smoke(take.astype('float32'), rate, WARMUP_CAND_GAIN)}")
+    return {"ran": True, **took(started)}
 
 
 @app.function(gpu="T4", cpu=CPU, memory=MEMORY_MIB, timeout=JUDGE_TIMEOUT_S)
@@ -257,14 +257,12 @@ def provision():
 @app.local_entrypoint()
 def check():
     """Rehearses the judge in an image built from this checkout's lock, over
-    the cached models and corpus, read-only; exits non-zero when no verdict
-    came out."""
-    result = rehearse.with_options(
-        volumes={MODELS: models.with_mount_options(read_only=True), REFS: refs.with_mount_options(read_only=True)}
-    ).remote()
-    print(f"rehearsed: {'a verdict' if result['built'] else 'no verdict'}; wall {result['wall_s']:.0f} s,"
+    the cached models, read-only; exits non-zero when a test or a model
+    failed."""
+    result = rehearse.with_options(volumes={MODELS: models.with_mount_options(read_only=True)}).remote()
+    print(f"rehearsed: {'every model ran' if result['ran'] else 'a test failed'}; wall {result['wall_s']:.0f} s,"
           f" judge CPU {result['cpu_s']:.0f} s, peak RSS {result['peak_rss_mib']:.0f} MiB")
-    if not result["built"]:
+    if not result["ran"]:
         raise SystemExit(1)
 
 
