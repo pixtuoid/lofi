@@ -1,9 +1,9 @@
 //! The whole-lane chain behind `render_lane`.
 
-use super::recipe::{Part, part};
-use super::voices::{ChordTone, chord, drums_core, events_stem_voiced, pad_core};
-use super::{SR, n_samples, place, samples_at};
-use crate::compose::{GEN_LOOP_BARS, Lane, Mood, Score};
+use super::recipe::{PadTone, Part, part};
+use super::voices::{ChordTone, chord, drum_hit};
+use super::{NoteVoice, SR, n_samples, place, samples_at};
+use crate::compose::{GEN_LOOP_BARS, Hit, Lane, Mood, Note, Score};
 use crate::dsp::{NoiseStream, SAMPLE_RATE, bandpass, lowpass, white_noise_gain};
 
 /// Scales `buf` to peak at `peak`, and returns the gain it applied.
@@ -142,7 +142,7 @@ fn lofi_post(buf: &[f32], drive: f32) -> Vec<f32> {
 /// ONE site, so a stem can't silently skip the ratified post: `buf` to
 /// `peak`, which sets the level into the drive, then through the tape and
 /// back to `peak`.
-pub(super) fn master(mut buf: Vec<f32>, drive: f32, peak: f32) -> Staged {
+fn master(mut buf: Vec<f32>, drive: f32, peak: f32) -> Staged {
     let gain_in = normalize(&mut buf, peak);
     let mut out = lofi_post(&buf, drive);
     let gain = normalize(&mut out, peak);
@@ -221,6 +221,64 @@ fn brighten(buf: &mut [f32]) -> f32 {
         *s += TILT_LIFT * (*s - lp);
     }
     normalize(buf, pre_peak.max(1e-6))
+}
+
+/// A `mood` pad over `loop_bars` bars `bar_s` long, `bar` giving each bar's
+/// sound.
+pub(super) fn pad_core(
+    mood: Mood,
+    bar_s: f32,
+    loop_bars: usize,
+    bar: impl Fn(usize) -> Vec<f32>,
+) -> Staged {
+    let mut buf = vec![0.0f32; n_samples(bar_s * loop_bars as f32)];
+    for b in 0..loop_bars {
+        place(&mut buf, &bar(b), b as f32 * bar_s, 1.0);
+    }
+    let tone = PadTone::of(mood);
+    let mut buf = lowpass(&buf, tone.cutoff_hz);
+    for (i, v) in buf.iter_mut().enumerate() {
+        *v *= tone.bed_swell(i);
+    }
+    master(buf, DRIVE, tone.peak)
+}
+
+/// A note lane's stem over a loop `loop_secs` long: each of `events` through
+/// `note_fn`, then the stem's low-pass, its peak and the tape.
+pub(super) fn events_stem_voiced(
+    loop_secs: f32,
+    events: &[Note],
+    dur_s: f32,
+    cutoff_hz: f32,
+    peak: f32,
+    note_fn: NoteVoice,
+) -> Staged {
+    let mut buf = vec![0.0f32; n_samples(loop_secs)];
+    for n in events {
+        place(
+            &mut buf,
+            &note_fn(n.midi, dur_s, n.vel, SAMPLE_RATE),
+            n.at,
+            1.0,
+        );
+    }
+    master(lowpass(&buf, cutoff_hz), DRIVE, peak)
+}
+
+pub(super) fn drums_core(
+    loop_secs: f32,
+    table: &[Hit],
+    cutoff_hz: f32,
+    drive: f32,
+    peak: f32,
+    rng: &mut NoiseStream,
+) -> Staged {
+    let mut buf = vec![0.0f32; n_samples(loop_secs)];
+    for h in table {
+        let hit = drum_hit(rng, h.kind, SAMPLE_RATE);
+        place(&mut buf, &hit, h.at, h.gain);
+    }
+    master(lowpass(&buf, cutoff_hz), drive, peak)
 }
 
 /// Render one lane of `score`'s loop to mono f32 at [`SAMPLE_RATE`], peaking

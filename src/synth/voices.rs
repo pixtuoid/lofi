@@ -1,10 +1,8 @@
 //! The note and hit voices.
 
-use super::recipe::PadTone;
-use super::whole::{DRIVE, Staged, master};
-use super::{NoteVoice, env_ar, midi_freq, n_samples, place, samples_at};
-use crate::compose::{DrumKind, Hit, LeadVoice, Mood, Note};
-use crate::dsp::{NoiseStream, SAMPLE_RATE, bandpass_at, highpass, lowpass, white_noise_gain};
+use super::{NoteVoice, env_ar, midi_freq, samples_at};
+use crate::compose::{DrumKind, LeadVoice, Mood};
+use crate::dsp::{NoiseStream, bandpass_at, highpass, white_noise_gain};
 
 /// One soft electric-piano note; `h2` is the 2nd-harmonic weight — the one axis
 /// the day and night voices differ on.
@@ -337,48 +335,6 @@ pub(super) fn chord(tone: ChordTone, chord: &[u8; 4], bar_s: f32, sr: u32) -> Ve
     sig
 }
 
-/// A `mood` pad over `loop_bars` bars `bar_s` long, `bar` giving each bar's
-/// sound.
-pub(super) fn pad_core(
-    mood: Mood,
-    bar_s: f32,
-    loop_bars: usize,
-    bar: impl Fn(usize) -> Vec<f32>,
-) -> Staged {
-    let mut buf = vec![0.0f32; n_samples(bar_s * loop_bars as f32)];
-    for b in 0..loop_bars {
-        place(&mut buf, &bar(b), b as f32 * bar_s, 1.0);
-    }
-    let tone = PadTone::of(mood);
-    let mut buf = lowpass(&buf, tone.cutoff_hz);
-    for (i, v) in buf.iter_mut().enumerate() {
-        *v *= tone.bed_swell(i);
-    }
-    master(buf, DRIVE, tone.peak)
-}
-
-/// A note lane's stem over a loop `loop_secs` long: each of `events` through
-/// `note_fn`, then the stem's low-pass, its peak and the tape.
-pub(super) fn events_stem_voiced(
-    loop_secs: f32,
-    events: &[Note],
-    dur_s: f32,
-    cutoff_hz: f32,
-    peak: f32,
-    note_fn: NoteVoice,
-) -> Staged {
-    let mut buf = vec![0.0f32; n_samples(loop_secs)];
-    for n in events {
-        place(
-            &mut buf,
-            &note_fn(n.midi, dur_s, n.vel, SAMPLE_RATE),
-            n.at,
-            1.0,
-        );
-    }
-    master(lowpass(&buf, cutoff_hz), DRIVE, peak)
-}
-
 /// A kick's or snare's NOISE is fresh each call, drawn from `rng`; a hat
 /// draws nothing, its hash fixed.
 pub(super) fn drum_hit(rng: &mut NoiseStream, kind: DrumKind, sr: u32) -> Vec<f32> {
@@ -388,22 +344,6 @@ pub(super) fn drum_hit(rng: &mut NoiseStream, kind: DrumKind, sr: u32) -> Vec<f3
         DrumKind::Hat => hat(false, sr),
         DrumKind::OpenHat => hat(true, sr),
     }
-}
-
-pub(super) fn drums_core(
-    loop_secs: f32,
-    table: &[Hit],
-    cutoff_hz: f32,
-    drive: f32,
-    peak: f32,
-    rng: &mut NoiseStream,
-) -> Staged {
-    let mut buf = vec![0.0f32; n_samples(loop_secs)];
-    for h in table {
-        let hit = drum_hit(rng, h.kind, SAMPLE_RATE);
-        place(&mut buf, &hit, h.at, h.gain);
-    }
-    master(lowpass(&buf, cutoff_hz), drive, peak)
 }
 
 impl LeadVoice {
@@ -421,8 +361,8 @@ impl LeadVoice {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dsp::band_energy_share;
-    use crate::synth::{DRUMS, ROLLOFF_HZ};
+    use crate::dsp::{SAMPLE_RATE, band_energy_share};
+    use crate::synth::{DRUMS, ROLLOFF_HZ, n_samples};
 
     #[test]
     fn new_lead_voices_are_pure_finite_and_keep_their_decay_character() {

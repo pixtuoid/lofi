@@ -1,17 +1,14 @@
-//! The frozen takes and the fixtures that render them.
+//! The frozen takes and the fixtures that render them: fingerprint anchors,
+//! whose pins prove the voices and cores `render_lane` shares still render the
+//! ratified sound.
 
 use super::recipe::{DRUMS, KEYS, Part, SPARKLE};
-use super::voices::{
-    ChordTone, chord, drums_core, ep_pluck_h2, ep_pluck_vel, events_stem_voiced, pad_core,
-};
-use super::whole::render_part;
+use super::voices::{ChordTone, chord, ep_pluck_h2, ep_pluck_vel};
+use super::whole::{drums_core, events_stem_voiced, pad_core, render_part};
 use super::{SR, env_ar, midi_freq, n_samples, place};
 use crate::compose::{BEATS_PER_BAR, DrumKind, GEN_LOOP_BARS, Hit, Mood, Note};
 use crate::dsp::{NoiseStream, SAMPLE_RATE};
 use crate::score;
-
-// The `#[cfg(test)]` stems below are fingerprint ANCHORS, not dead code: their
-// pins prove the voices and cores `render_lane` shares still render the ratified sound.
 
 fn beat_s() -> f32 {
     score::beat_s()
