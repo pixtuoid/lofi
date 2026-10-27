@@ -8,8 +8,12 @@ updates:
     cooldown:
       default-days: 7
 
+  # `/` alone reads only the workflows, so the local composite actions take
+  # their own entry (https://github.com/dependabot/dependabot-core/issues/6704)
   - package-ecosystem: github-actions
-    directory: /
+    directories:
+      - /
+      - /.github/actions/*
     schedule:
       interval: weekly
     groups:

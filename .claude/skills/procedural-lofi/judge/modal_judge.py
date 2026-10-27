@@ -20,6 +20,7 @@ manifest index.
 import hashlib
 import json
 import os
+import re
 import resource
 import subprocess
 import sys
@@ -38,11 +39,12 @@ SCRIPTS = HERE.parent / "scripts" if modal.is_local() else Path(REMOTE_SCRIPTS)
 JUDGE = HERE if modal.is_local() else Path(REMOTE_JUDGE)
 MODELS, REFS, BATCH = "/models", "/refs", "/batch"
 sys.path.insert(0, str(JUDGE))
-from judge_local import exit_code, published, redact, run_steps, select
+from judge_local import exit_code, published, redact, select
 from validate_batch import IDENTICAL
 
-# the uv the image and SKILL.md's install run
-UV_VERSION = "0.13.6"
+# the uv the image and SKILL.md's install run, which modal-requirements.in
+# pins where Dependabot moves it
+UV_VERSION = re.search(r"^uv==(\S+)", (JUDGE / "modal-requirements.txt").read_text(), re.M)[1]
 # the lock, baked in where uv reads it a second time as the build constraints:
 # encodec, wget and progressbar publish only an sdist
 # (https://pypi.org/pypi/encodec/0.1.1/json and wget's and progressbar's), and
@@ -68,10 +70,10 @@ CPU = 2.0
 MEMORY_MIB = 12288
 JUDGE_TIMEOUT_S = 4500
 
-# a rehearsal step's limit, ten times the slower step's wall time on a T4,
-# which the commit that set it records, so a hung model fails its step, not
-# the function at JUDGE_TIMEOUT_S (opinion)
-REHEARSAL_STEP_S = 360
+# the rehearsal's limit, ten times its wall time on a T4, which the commit
+# that set it records, so a hung model ends it, not JUDGE_TIMEOUT_S later
+# (opinion)
+REHEARSAL_TIMEOUT_S = 650
 
 # the warm-up pair `build` judges: a take at lofi's own rate (`SAMPLE_RATE`
 # in src/dsp.rs), the one a batch's takes arrive at
@@ -197,11 +199,11 @@ def build():
 # offline, its network blocked, and mounting the models alone, read-only: a
 # lock not yet merged writes nothing a judge reads, and the corpus isn't there
 # for it to print into a public log
-@app.function(gpu="T4", cpu=CPU, memory=MEMORY_MIB, timeout=JUDGE_TIMEOUT_S, block_network=True, restrict_modal_access=True)
+@app.function(gpu="T4", cpu=CPU, memory=MEMORY_MIB, timeout=REHEARSAL_TIMEOUT_S, block_network=True, restrict_modal_access=True)
 def rehearse():
     """The judge's environment as this image builds it: `ab_judge.py`'s
     tests, then its `smoke`, every model on the warm-up take, each a child
-    process `took` counts."""
+    process `took` counts; a failure raises out of the call."""
     started = time.time()
     offline = {**os.environ, "HF_HUB_OFFLINE": "1"}
     take = Path("/tmp/smoke.wav")
@@ -210,11 +212,9 @@ def rehearse():
         "import sys; sys.path.insert(0, sys.argv[1]); import ab_judge, soundfile as sf;"
         " print('smoke scores:', ab_judge.smoke(*sf.read(sys.argv[2], dtype='float32'), float(sys.argv[3])))"
     )
-    steps = (
-        ("tests", [sys.executable, "-I", f"{REMOTE_SCRIPTS}/test_ab_judge.py"]),
-        ("smoke", [sys.executable, "-I", "-c", smoke, REMOTE_SCRIPTS, str(take), str(WARMUP_CAND_GAIN)]),
-    )
-    return {"failed": run_steps(steps, offline, REHEARSAL_STEP_S), **took(started)}
+    subprocess.run([sys.executable, "-I", f"{REMOTE_SCRIPTS}/test_ab_judge.py"], env=offline, check=True)
+    subprocess.run([sys.executable, "-I", "-c", smoke, REMOTE_SCRIPTS, str(take), str(WARMUP_CAND_GAIN)], env=offline, check=True)
+    return took(started)
 
 
 @app.function(gpu="T4", cpu=CPU, memory=MEMORY_MIB, timeout=JUDGE_TIMEOUT_S)
@@ -263,14 +263,11 @@ def provision():
 @app.local_entrypoint()
 def check():
     """Rehearses the judge in an image built from this checkout's lock, over
-    the cached models, read-only; exits non-zero when a test or a model
-    failed."""
+    the cached models, read-only; a failed test or model ends `modal run`
+    non-zero."""
     result = rehearse.with_options(volumes={MODELS: models.with_mount_options(read_only=True)}).remote()
-    failed = result["failed"]
-    print(f"rehearsed: {f'the {failed} failed' if failed else 'every model ran'}; wall {result['wall_s']:.0f} s,"
+    print(f"rehearsed: every model ran; wall {result['wall_s']:.0f} s,"
           f" judge CPU {result['cpu_s']:.0f} s, peak RSS {result['peak_rss_mib']:.0f} MiB")
-    if failed:
-        raise SystemExit(1)
 
 
 @app.local_entrypoint()

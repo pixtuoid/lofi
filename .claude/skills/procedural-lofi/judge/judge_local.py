@@ -1,9 +1,7 @@
 """What `modal_judge.py` decides, in the standard library alone so
 `test_judge_local.py` runs it without the Modal client."""
 
-import subprocess
 import sys
-import time
 from pathlib import Path
 
 sys.dont_write_bytecode = True
@@ -58,23 +56,3 @@ def published(record, tracks):
         record["fad_calibration"] = sorted(record["fad_calibration"].values())
     return {"outcome": record["overall"], "table": table, "record": record}
 
-
-def run_steps(steps, env, timeout_s):
-    """Runs each `(name, argv)` in turn under `env`, each within
-    `timeout_s`, and prints what it printed, its stderr too when it fails,
-    and how long it took. Returns the name of the first that failed or ran
-    past the limit, or None."""
-    for name, argv in steps:
-        started = time.monotonic()
-        try:
-            done = subprocess.run(argv, capture_output=True, text=True, env=env, timeout=timeout_s)
-        except subprocess.TimeoutExpired as late:
-            # bytes even under `text` (observed, Python 3.12)
-            heard = b"".join(o for o in (late.stdout, late.stderr) if o).decode(errors="replace")
-            print(f"{heard}the {name} ran past {timeout_s} s")
-            return name
-        print(done.stdout + done.stderr if done.returncode else done.stdout, end="")
-        print(f"the {name} took {time.monotonic() - started:.0f} s")
-        if done.returncode:
-            return name
-    return None

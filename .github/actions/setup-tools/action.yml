@@ -1,0 +1,21 @@
+name: 'Setup Tools'
+description: 'Installs the given mise.toml tools, and only those, through mise'
+
+inputs:
+  tools:
+    description: 'Comma-separated mise.toml [tools] keys'
+    required: true
+
+runs:
+  using: 'composite'
+  steps:
+    # the job's later steps too: mise "uses" only these (mise's `enable_tools`)
+    - shell: bash
+      env:
+        TOOLS: ${{ inputs.tools }}
+      run: echo "MISE_ENABLE_TOOLS=$TOOLS" >>"$GITHUB_ENV" # zizmor: ignore[github-env] the callers' `tools:` literals, never event data
+    - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+      with:
+        # opinion: `latest` resolves every run, so a cache saves little and
+        # could hand back an older match
+        cache: false

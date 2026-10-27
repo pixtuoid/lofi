@@ -1,0 +1,8 @@
+paths:
+  .github/workflows/*.yml:
+    ignore:
+      # GitHub's self-repository `uses: $/…`, "now the recommended way"
+      # (https://github.blog/changelog/2026-07-30-reference-same-repository-actions-with-self-repository-syntax/),
+      # which actionlint 1.7.12 doesn't know yet. Drop this when
+      # https://github.com/rhysd/actionlint/issues/711 ships.
+      - 'specifying action "\$/\.github/actions/setup-tools" in invalid format'

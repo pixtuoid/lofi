@@ -21,18 +21,14 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
-    env:
-      MISE_ENABLE_TOOLS: just,cargo-binstall,cargo:cargo-public-api
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: pixtuoid/.github/.github/actions/setup-rust@main
-      - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+      - uses: $/.github/actions/setup-tools
         with:
-          # opinion: `latest` resolves every run, so a cache saves little and
-          # could hand back an older match
-          cache: false
+          tools: just,cargo-binstall,cargo:cargo-public-api
       - run: just preflight
       - run: cargo package --locked
       # cargo 1.99.1's verify build passed a package whose example doesn't
@@ -72,18 +68,14 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
-    env:
-      MISE_ENABLE_TOOLS: just
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: pixtuoid/.github/.github/actions/setup-rust@main
-      - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+      - uses: $/.github/actions/setup-tools
         with:
-          # opinion: `latest` resolves every run, so a cache saves little and
-          # could hand back an older match
-          cache: false
+          tools: just
       - run: just test
 
   # so a toolchain bump can't raise the real floor under the declared one
@@ -92,17 +84,13 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
-    env:
-      MISE_ENABLE_TOOLS: just,github:taiki-e/cargo-hack
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+      - uses: $/.github/actions/setup-tools
         with:
-          # opinion: `latest` resolves every run, so a cache saves little and
-          # could hand back an older match
-          cache: false
+          tools: just,github:taiki-e/cargo-hack
       - run: just msrv
 
   wasm:
@@ -110,8 +98,6 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
-    env:
-      MISE_ENABLE_TOOLS: just
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -119,11 +105,9 @@ jobs:
       - uses: pixtuoid/.github/.github/actions/setup-rust@main
         with:
           targets: wasm32-unknown-unknown
-      - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+      - uses: $/.github/actions/setup-tools
         with:
-          # opinion: `latest` resolves every run, so a cache saves little and
-          # could hand back an older match
-          cache: false
+          tools: just
       - run: just wasm
 
   workflows:
@@ -131,20 +115,87 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
-    env:
-      MISE_ENABLE_TOOLS: just,zizmor,actionlint,shellcheck,yq
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+      - uses: $/.github/actions/setup-tools
         with:
-          # opinion: `latest` resolves every run, so a cache saves little and
-          # could hand back an older match
-          cache: false
+          tools: just,zizmor,actionlint,shellcheck,yq
       - run: just workflows
         env:
           GH_TOKEN: ${{ github.token }}
+
+  # The judge's environment, as judge.yml never tries it: that workflow runs the
+  # base branch's judge, so a lock bump would first run on the next render PR.
+  # A PR that touches the judge runs every model in its own image, with no
+  # corpus; main then provisions the caches the environment keys (`ab_judge.py`'s
+  # `environment`), which a PR's read-only judge can't build. A run that touches
+  # none of it passes, so ci-gate can need it.
+  judge-env:
+    runs-on: ubuntu-latest
+    # modal_judge.py's JUDGE_TIMEOUT_S, which bounds `provision`, with room for
+    # the image build
+    timeout-minutes: 85
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # the base the scope step diffs against
+          fetch-depth: 0
+          persist-credentials: false
+      - id: scope
+        name: Whether this run touches the judge's environment
+        env:
+          BASE: ${{ github.event_name == 'push' && github.event.before || github.event.pull_request.base.sha }}
+          # a fork's main runs no provision
+          OURS: ${{ github.event_name == 'pull_request' || github.repository_id == '1414749270' }}
+        run: |
+          set -euo pipefail
+          # what builds the image, runs in it, keys a cache, or runs this job
+          touched=false
+          if [ "$OURS" = true ] && ! git diff --quiet "$BASE" HEAD -- \
+            .claude/skills/procedural-lofi/judge \
+            .claude/skills/procedural-lofi/scripts/ab_judge.py \
+            .claude/skills/procedural-lofi/scripts/test_ab_judge.py \
+            .claude/skills/procedural-lofi/scripts/verdict.py \
+            .github/workflows/ci.yml; then
+            touched=true
+          fi
+          echo "touched=$touched" >>"$GITHUB_OUTPUT"
+      # a PR's client comes from its base, so its locks reach only the image
+      # Modal builds, never the process that holds the token
+      - if: steps.scope.outputs.touched == 'true' && github.event_name == 'pull_request'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+          persist-credentials: false
+          sparse-checkout: .claude/skills/procedural-lofi/judge
+      - if: steps.scope.outputs.touched == 'true'
+        name: Install the hash-pinned Modal client
+        env:
+          LOCK: ${{ github.event_name == 'pull_request' && 'base/' || '' }}.claude/skills/procedural-lofi/judge/modal-requirements.txt
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/modal"
+          "$RUNNER_TEMP/modal/bin/pip" install --quiet --require-hashes --only-binary :all: -r "$LOCK"
+      - if: steps.scope.outputs.touched == 'true'
+        name: Rehearse a PR's image, or provision main's caches
+        env:
+          ENTRY: ${{ github.event_name == 'pull_request' && 'check' || 'provision' }}
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: |
+          set -euo pipefail
+          # Dependabot's PRs read Dependabot's secrets, not the Actions ones
+          # (https://docs.github.com/en/code-security/dependabot/troubleshooting-dependabot/troubleshooting-dependabot-on-github-actions#accessing-secrets)
+          if [ -z "$MODAL_TOKEN_ID" ]; then
+            echo "::error::no MODAL_TOKEN_ID: a fork's PR gets no secret, and a Dependabot PR reads the org's Dependabot secrets open to lofi"
+            exit 1
+          fi
+          "$RUNNER_TEMP/modal/bin/modal" run ".claude/skills/procedural-lofi/judge/modal_judge.py::$ENTRY"
 
   # Advisory, so not in ci-gate: `test` already gates the same suite.
   coverage:
@@ -154,8 +205,6 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    env:
-      MISE_ENABLE_TOOLS: aqua:taiki-e/cargo-llvm-cov
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -163,11 +212,9 @@ jobs:
       - uses: pixtuoid/.github/.github/actions/setup-rust@main
         with:
           components: llvm-tools-preview
-      - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+      - uses: $/.github/actions/setup-tools
         with:
-          # opinion: `latest` resolves every run, so a cache saves little and
-          # could hand back an older match
-          cache: false
+          tools: aqua:taiki-e/cargo-llvm-cov
       - run: cargo llvm-cov --all-targets --codecov --output-path codecov.json
       - uses: pixtuoid/.github/.github/actions/upload-codecov@main
         with:
@@ -179,7 +226,7 @@ jobs:
   # 'Success'" (docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-jobs-with-conditions).
   ci-gate:
     if: ${{ always() }}
-    needs: [lint, test, msrv, wasm, workflows]
+    needs: [lint, test, msrv, wasm, workflows, judge-env]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}
