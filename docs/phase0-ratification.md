@@ -1,6 +1,6 @@
 # Ambient sound Phase 0 — audition prototype (pixtuoid/pixtuoid#633)
 
-The Phase 0 record: the taste anchor and the one-texture-stem noise floor the lanes keep; the foley it ratifies (typing, rain, chime, printer) stayed in pixtuoid. The music takes' fingerprints are pinned in `src/synth.rs`'s tests.
+The Phase 0 record: the taste anchor and the one-texture-stem noise floor the lanes keep; the foley it ratifies (typing, rain, chime, printer) stayed in pixtuoid. The music takes' fingerprints are pinned in `src/synth/frozen.rs`'s tests.
 
 Owner-ratified 2026-07-16. Tracks issue pixtuoid/pixtuoid#633 (locked decisions in the issue body;
 Phase 0 results in the comments). Everything here is deterministic numpy — run:
