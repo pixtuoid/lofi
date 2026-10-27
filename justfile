@@ -10,13 +10,21 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 _mise_paths := shell('command -v mise >/dev/null || exit 0; MISE_OFFLINE=1 mise env --paths')
 export PATH := (if _mise_paths == '' { '' } else { replace_regex(_mise_paths, '\r?\n', PATH_VAR_SEP) + PATH_VAR_SEP }) + env('PATH')
 
+# The nightly api/pixtuoid-lofi.txt is built on: rustdoc JSON is nightly-only,
+# and cargo-public-api 0.52 reads nightly-2025-11-22 or later
+# (https://github.com/cargo-public-api/cargo-public-api/blob/v0.52.0/README.md)
+API_NIGHTLY := "nightly-2026-10-22"
+# the listing: `-s` is "--omit blanket-impls", in cargo-public-api's "shorthand
+# for omitting noisy items" (`cargo public-api --help`)
+API_LIST := "RUSTUP_TOOLCHAIN=" + API_NIGHTLY + " cargo public-api -s"
+
 # Turn on the hooks and install mise.toml's tools, once per clone
 setup:
     git config core.hooksPath .githooks
     mise install
 
 # What pre-push runs: quick over a warm build, so the render-heavy tests stay CI's
-preflight: fmt-check clippy doc
+preflight: fmt-check clippy doc api-check
 
 fmt-check:
     cargo fmt --all --check
@@ -30,6 +38,30 @@ clippy:
 doc:
     RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
     RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items --lib --examples
+
+# The public API, `#[doc(hidden)]` items aside (AGENTS.md), as a listing a PR's
+# diff shows at review time; release-plz's semver check reports "in the release
+# Pull Request and in the output of the `release-plz update` command"
+# (https://release-plz.dev/docs/semver-check)
+[doc('Rewrite api/pixtuoid-lofi.txt, the public API cargo-public-api lists')]
+api: _api-nightly
+    {{ API_LIST }} > api/pixtuoid-lofi.txt
+
+# Fail when the public API moved off api/pixtuoid-lofi.txt
+api-check: _api-nightly
+    #!/usr/bin/env bash
+    set -euo pipefail
+    listed=$(mktemp)
+    trap 'rm -f "$listed"' EXIT
+    {{ API_LIST }} > "$listed"
+    diff -u api/pixtuoid-lofi.txt "$listed" || {
+        # a workflow command, as `workflows` prints its own
+        echo "::error::the public API moved off api/pixtuoid-lofi.txt: run 'just api' and commit it"
+        exit 1
+    }
+
+_api-nightly:
+    rustup toolchain install {{ API_NIGHTLY }} --profile minimal --no-self-update
 
 # Every failing test binary, not only the first
 test:

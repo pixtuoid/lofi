@@ -1,0 +1,86 @@
+pub mod pixtuoid_lofi
+pub mod pixtuoid_lofi::dsp
+pub struct pixtuoid_lofi::dsp::Band
+impl pixtuoid_lofi::dsp::Band
+pub const fn pixtuoid_lofi::dsp::Band::hi_hz(self) -> f32
+pub const fn pixtuoid_lofi::dsp::Band::lo_hz(self) -> f32
+pub const fn pixtuoid_lofi::dsp::Band::new(f32, f32, f32) -> Self
+pub const fn pixtuoid_lofi::dsp::Band::share(self) -> f32
+impl core::clone::Clone for pixtuoid_lofi::dsp::Band
+pub fn pixtuoid_lofi::dsp::Band::clone(&self) -> Self
+impl core::cmp::PartialEq for pixtuoid_lofi::dsp::Band
+pub fn pixtuoid_lofi::dsp::Band::eq(&self, &Self) -> bool
+impl core::fmt::Debug for pixtuoid_lofi::dsp::Band
+pub fn pixtuoid_lofi::dsp::Band::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for pixtuoid_lofi::dsp::Band
+impl core::marker::StructuralPartialEq for pixtuoid_lofi::dsp::Band
+impl core::marker::Freeze for pixtuoid_lofi::dsp::Band
+impl core::marker::Send for pixtuoid_lofi::dsp::Band
+impl core::marker::Sync for pixtuoid_lofi::dsp::Band
+impl core::marker::Unpin for pixtuoid_lofi::dsp::Band
+impl core::marker::UnsafeUnpin for pixtuoid_lofi::dsp::Band
+impl core::panic::unwind_safe::RefUnwindSafe for pixtuoid_lofi::dsp::Band
+impl core::panic::unwind_safe::UnwindSafe for pixtuoid_lofi::dsp::Band
+pub struct pixtuoid_lofi::dsp::NoiseStream
+impl pixtuoid_lofi::dsp::NoiseStream
+pub fn pixtuoid_lofi::dsp::NoiseStream::new(u64) -> Self
+pub fn pixtuoid_lofi::dsp::NoiseStream::norm(&mut self) -> f32
+pub fn pixtuoid_lofi::dsp::NoiseStream::unit(&mut self) -> f32
+impl core::fmt::Debug for pixtuoid_lofi::dsp::NoiseStream
+pub fn pixtuoid_lofi::dsp::NoiseStream::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for pixtuoid_lofi::dsp::NoiseStream
+impl core::marker::Send for pixtuoid_lofi::dsp::NoiseStream
+impl core::marker::Sync for pixtuoid_lofi::dsp::NoiseStream
+impl core::marker::Unpin for pixtuoid_lofi::dsp::NoiseStream
+impl core::marker::UnsafeUnpin for pixtuoid_lofi::dsp::NoiseStream
+impl core::panic::unwind_safe::RefUnwindSafe for pixtuoid_lofi::dsp::NoiseStream
+impl core::panic::unwind_safe::UnwindSafe for pixtuoid_lofi::dsp::NoiseStream
+pub const pixtuoid_lofi::dsp::SAMPLE_RATE: u32
+pub fn pixtuoid_lofi::dsp::band_energy_share(&[f32], f32, f32) -> f32
+pub fn pixtuoid_lofi::dsp::bandpass(&[f32], f32, f32) -> alloc::vec::Vec<f32>
+pub fn pixtuoid_lofi::dsp::centroid_hz(&[f32]) -> f32
+pub fn pixtuoid_lofi::dsp::lowpass(&[f32], f32) -> alloc::vec::Vec<f32>
+pub fn pixtuoid_lofi::dsp::shaped_noise_loop(usize, &[pixtuoid_lofi::dsp::Band], &mut pixtuoid_lofi::dsp::NoiseStream) -> alloc::vec::Vec<f32>
+#[non_exhaustive] pub struct pixtuoid_lofi::Controls
+pub pixtuoid_lofi::Controls::daylight: f32
+pub pixtuoid_lofi::Controls::intensity: f32
+pub pixtuoid_lofi::Controls::rain: f32
+impl pixtuoid_lofi::Controls
+pub const pixtuoid_lofi::Controls::DUSK: f32
+pub const fn pixtuoid_lofi::Controls::with_daylight(self, f32) -> Self
+pub const fn pixtuoid_lofi::Controls::with_intensity(self, f32) -> Self
+pub const fn pixtuoid_lofi::Controls::with_rain(self, f32) -> Self
+impl core::clone::Clone for pixtuoid_lofi::Controls
+pub fn pixtuoid_lofi::Controls::clone(&self) -> Self
+impl core::cmp::PartialEq for pixtuoid_lofi::Controls
+pub fn pixtuoid_lofi::Controls::eq(&self, &Self) -> bool
+impl core::default::Default for pixtuoid_lofi::Controls
+pub fn pixtuoid_lofi::Controls::default() -> Self
+impl core::fmt::Debug for pixtuoid_lofi::Controls
+pub fn pixtuoid_lofi::Controls::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for pixtuoid_lofi::Controls
+impl core::marker::StructuralPartialEq for pixtuoid_lofi::Controls
+impl core::marker::Freeze for pixtuoid_lofi::Controls
+impl core::marker::Send for pixtuoid_lofi::Controls
+impl core::marker::Sync for pixtuoid_lofi::Controls
+impl core::marker::Unpin for pixtuoid_lofi::Controls
+impl core::marker::UnsafeUnpin for pixtuoid_lofi::Controls
+impl core::panic::unwind_safe::RefUnwindSafe for pixtuoid_lofi::Controls
+impl core::panic::unwind_safe::UnwindSafe for pixtuoid_lofi::Controls
+pub struct pixtuoid_lofi::Performance
+impl pixtuoid_lofi::Performance
+pub const pixtuoid_lofi::Performance::MASTER_GAIN: f64
+pub fn pixtuoid_lofi::Performance::new(u64, pixtuoid_lofi::Controls) -> Self
+pub fn pixtuoid_lofi::Performance::position(&self) -> u64
+pub fn pixtuoid_lofi::Performance::render(&mut self, &mut [pixtuoid_lofi::Frame])
+pub fn pixtuoid_lofi::Performance::set_controls(&mut self, pixtuoid_lofi::Controls)
+impl core::fmt::Debug for pixtuoid_lofi::Performance
+pub fn pixtuoid_lofi::Performance::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for pixtuoid_lofi::Performance
+impl core::marker::Send for pixtuoid_lofi::Performance
+impl core::marker::Sync for pixtuoid_lofi::Performance
+impl core::marker::Unpin for pixtuoid_lofi::Performance
+impl core::marker::UnsafeUnpin for pixtuoid_lofi::Performance
+impl core::panic::unwind_safe::RefUnwindSafe for pixtuoid_lofi::Performance
+impl core::panic::unwind_safe::UnwindSafe for pixtuoid_lofi::Performance
+pub type pixtuoid_lofi::Frame = [f32; 2]

@@ -15,6 +15,10 @@ zizmor = "latest"
 yq = "latest"
 "github:taiki-e/cargo-hack" = "latest"
 "aqua:taiki-e/cargo-llvm-cov" = "latest"
+cargo-binstall = "latest"
+# tool-exact, as api/pixtuoid-lofi.txt is: "a different version rewrites them
+# all", as pixtuoid's justfile says of its own listings
+"cargo:cargo-public-api" = "0.52.0"
 # compiles the judge's locks, and installs SKILL.md's judge venv
 uv = "latest"
 # runs lofi_bench's wasm build (examples/lofi_bench.mjs)

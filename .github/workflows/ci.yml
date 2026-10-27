@@ -22,7 +22,7 @@ jobs:
     permissions:
       contents: read
     env:
-      MISE_ENABLE_TOOLS: just
+      MISE_ENABLE_TOOLS: just,cargo-binstall,cargo:cargo-public-api
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
