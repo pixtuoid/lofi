@@ -15,7 +15,6 @@ Modal in anything this prints or returns, which names a reference by its
 manifest index.
 """
 
-import ast
 import hashlib
 import json
 import os
@@ -66,7 +65,7 @@ FETCH_TIMEOUT_S = 120
 # commit that set them records; the timeout is twice the slowest batch
 CPU = 2.0
 MEMORY_MIB = 12288
-JUDGE_TIMEOUT_S = 2700
+JUDGE_TIMEOUT_S = 4500
 
 # the warm-up pair `build` judges: a take at lofi's own rate (`SAMPLE_RATE`
 # in src/dsp.rs), the one a batch's takes arrive at
@@ -82,27 +81,13 @@ WARMUP_LEVEL = 0.25
 WARMUP_CAND_GAIN = 0.5
 
 
-def muq_eval_commit():
-    """`ab_judge.py`'s `MUQ_EVAL_COMMIT`, the one authority for the clone."""
-    for node in ast.parse((SCRIPTS / "ab_judge.py").read_text()).body:
-        if isinstance(node, ast.Assign) and any(getattr(t, "id", None) == "MUQ_EVAL_COMMIT" for t in node.targets):
-            return ast.literal_eval(node.value)
-    raise SystemExit("ab_judge.py names no MUQ_EVAL_COMMIT")
-
-
 image = (
     modal.Image.debian_slim(python_version="3.12")
-    .apt_install("git")
     .add_local_file(LOCK, REMOTE_LOCK, copy=True)
     .uv_pip_install(
         requirements=[str(LOCK)],
         extra_options=f"--require-hashes --build-constraints {REMOTE_LOCK} --require-build-hashes",
         uv_version=UV_VERSION,
-    )
-    # beside the venv, where ab_judge.py looks for it
-    .run_commands(
-        'git clone https://github.com/dgtql/MuQ-Eval "$(python -c "import sys; print(sys.prefix)")/MuQ-Eval"',
-        f'git -C "$(python -c "import sys; print(sys.prefix)")/MuQ-Eval" checkout --detach {muq_eval_commit()}',
     )
     .env({"HF_HOME": MODELS})
     .add_local_dir(SCRIPTS, REMOTE_SCRIPTS, ignore=["**/__pycache__"])
@@ -172,8 +157,9 @@ def fetch_refs():
 
 @app.function(gpu="T4", cpu=CPU, memory=MEMORY_MIB, volumes={MODELS: models, REFS: refs}, timeout=JUDGE_TIMEOUT_S)
 def build():
-    """Caches every model and the corpus's FAD statistics by judging a warm-up
-    pair as a batch would be judged, online, then measures what it took."""
+    """Caches every model, the corpus's FAD statistics and the panel's
+    screening by judging a warm-up pair as a batch would be judged, online,
+    then measures what it took."""
     import numpy as np
     import soundfile as sf
 
@@ -186,7 +172,7 @@ def build():
         (warm / side / "COMMIT").write_text("0" * 40 + "\n")
     started = time.time()
     run = subprocess.run(
-        [sys.executable, f"{REMOTE_SCRIPTS}/ab_judge.py", str(warm), "--refs", REFS, "--fad-cache", f"{REFS}/fad-cache"],
+        [sys.executable, f"{REMOTE_SCRIPTS}/ab_judge.py", str(warm), "--refs", REFS, "--corpus-cache", f"{REFS}/corpus-cache"],
         capture_output=True,
         text=True,
     )
@@ -207,7 +193,7 @@ def score(score_identical=False):
     known = tracks()
     offline = {**os.environ, "HF_HUB_OFFLINE": "1"}
     # the tests that need this venv, which runs nowhere else: a broken floor
-    # or FAD cache still prints a verdict
+    # or corpus cache still prints a verdict
     tests = subprocess.run(
         [sys.executable, "-I", f"{REMOTE_SCRIPTS}/test_ab_judge.py"], capture_output=True, text=True, env=offline
     )
@@ -215,7 +201,7 @@ def score(score_identical=False):
         print(redact(tests.stdout + tests.stderr, known))
         return {"outcome": "infra failure", "message": "ab_judge.py's tests failed; their log, names masked, is Modal's", **took(started)}
     run = subprocess.run(
-        [sys.executable, f"{REMOTE_SCRIPTS}/ab_judge.py", BATCH, "--refs", REFS, "--fad-cache", f"{REFS}/fad-cache"]
+        [sys.executable, f"{REMOTE_SCRIPTS}/ab_judge.py", BATCH, "--refs", REFS, "--corpus-cache", f"{REFS}/corpus-cache"]
         + (["--score-identical"] if score_identical else []),
         capture_output=True,
         text=True,
