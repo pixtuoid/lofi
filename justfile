@@ -61,7 +61,9 @@ workflows:
     jobs=$(yq '.jobs | keys | .[] | select(. != "ci-gate" and . != "coverage")' .github/workflows/ci.yml | sort)
     needs=$(yq '.jobs["ci-gate"].needs[]' .github/workflows/ci.yml | sort)
     if [ "$jobs" != "$needs" ]; then
-        # a workflow command, on stdout, so CI annotates the run; plain text here
+        # a workflow command, which runs "sent to the runner over `stdout`" and which
+        # "will create an annotation" (https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands);
+        # run locally, it prints as plain text
         echo "::error::ci-gate's needs differ from the gating jobs (< jobs, > needs)"
         diff <(echo "$jobs") <(echo "$needs") >&2 || true
         exit 1
