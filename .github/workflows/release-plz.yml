@@ -33,11 +33,27 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: pixtuoid/.github/.github/actions/setup-rust@main
-      - uses: release-plz/action@f67a7e724bdad4a0f6875f186060a0ca2770d76c # v0.5.147
+      - id: release-plz
+        uses: release-plz/action@f67a7e724bdad4a0f6875f186060a0ca2770d76c # v0.5.147
         with:
           command: release-pr
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+      # release-plz/action exits green with `prs` empty (its action.yml at
+      # v0.5.147), which it is "If release-plz didn't open or update a release
+      # PR" (https://release-plz.dev/docs/usage/release-pr#json-output), and the
+      # owner who dispatched it is owed an answer either way.
+      - name: A release PR must have been opened
+        env:
+          PR: ${{ steps.release-plz.outputs.pr }}
+          PRS_CREATED: ${{ steps.release-plz.outputs.prs_created }}
+        run: |
+          set -euo pipefail
+          if [ "$PRS_CREATED" != "true" ]; then
+            echo "::error::release-plz opened or updated no release PR: its log above says why"
+            exit 1
+          fi
+          echo "::notice::release PR: $(jq -r .html_url <<<"$PR")"
 
   # release-plz's own test with `release_always = false`: the pushed commit's
   # associated PRs include one whose head branch carries `pr_branch_prefix`
@@ -105,3 +121,33 @@ jobs:
           command: release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # release-plz releases "only when you merge the release PR"
+  # (https://release-plz.dev/docs/config, `release_always`), and it exits green
+  # when it declines (pixtuoid's release-plz.yml observed it); `release-merge`
+  # refuses a stale one. Either leaves main at a version crates.io never got.
+  # Main at rest sits at a released version, so every push checks that its
+  # version is tagged.
+  version-tagged:
+    name: the crate's version is tagged
+    needs: [release-merge, release]
+    if: ${{ !cancelled() && needs.release-merge.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pixtuoid/.github/.github/actions/setup-rust@main
+      - name: The crate's version must be tagged
+        run: |
+          set -euo pipefail
+          version=$(cargo metadata --format-version 1 --no-deps --locked | jq -r '.packages[0].version')
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null; then
+            echo "v$version is tagged"
+          else
+            echo "::error::main@${GITHUB_SHA::7} is at v$version, which no tag names, so crates.io never got it. release-plz tags only a merged release PR (release-plz.toml's release_always). If release-merge refused a stale one, revert its merge; otherwise re-run this workflow"
+            exit 1
+          fi
