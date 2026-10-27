@@ -9,12 +9,38 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from verdict import ALPHA, FAILING, GROUPS, JUDGES, MIN_UNTIED, RANKS, exit_message, grouped, judged, min_untied, sign_test
+from statistics import stdev
+
+from verdict import (
+    ALPHA,
+    FAILING,
+    GATES,
+    GROUPS,
+    GUARD,
+    JUDGES,
+    MIN_UNTIED,
+    PANEL,
+    RANKS,
+    SMALL_EFFECT,
+    exit_message,
+    grouped,
+    judged,
+    margin,
+    min_untied,
+    sign_test,
+    pooled,
+)
 
 # where the judge batch's matrix and its groups are spelled in Rust
 BATCH_RS = HERE.parents[3] / "examples" / "common" / "batch.rs"
 # where the PR comment reads the verdicts back
 JUDGE_YML = HERE.parents[3] / ".github" / "workflows" / "judge.yml"
+
+
+# held-out FADs whose spread sets a margin far under a unit gain
+HELD = [0.5, 0.6]
+# each panel judge in its own unit
+SCALES = dict.fromkeys(PANEL, 1.0)
 
 
 def losses(n):
@@ -30,6 +56,11 @@ def pair(mood, gain=None):
 
 def pairs(mood, gains):
     return [pair(mood, g) for g in gains]
+
+
+def judge_pair(mood, gains):
+    """A pair each judge scores its own gain on, in `JUDGES`' order."""
+    return {"mood": mood, "identical": False, "gains": dict(zip(JUDGES, gains, strict=True))}
 
 
 class SignTest(unittest.TestCase):
@@ -77,79 +108,106 @@ class Grouping(unittest.TestCase):
 class Verdicts(unittest.TestCase):
     def test_a_group_of_only_identical_pairs_is_unchanged_and_ranks_below_pass(self):
         batch = [pair("day")] * 12 + pairs("night", [1.0] * MIN_UNTIED)
-        result = judged(batch)
+        result = judged(batch, HELD, SCALES)
         self.assertEqual(result["groups"]["day"]["verdict"], "UNCHANGED")
         self.assertEqual(result["groups"]["night"]["verdict"], "PASS")
         self.assertEqual(result["overall"], "PASS")
 
     def test_a_batch_of_only_identical_pairs_is_unchanged_and_exits_zero(self):
-        result = judged([pair("day")] * 3 + [pair("night")] * 3)
+        result = judged([pair("day")] * 3 + [pair("night")] * 3, HELD, SCALES)
         self.assertEqual(result["overall"], "UNCHANGED")
         self.assertIsNone(exit_message(result))
 
     def test_alpha_splits_over_the_moods_that_changed(self):
-        # one changed mood tests 3 judges, so its fewest is the 3-way split's
-        one = min_untied(ALPHA / len(JUDGES))
-        self.assertEqual(judged(pairs("day", losses(one)))["overall"], "REGRESSION")
-        self.assertEqual(judged(pairs("day", losses(one - 1)))["overall"], "INSUFFICIENT")
-        # two changed moods test 6, which a mood's one-fewer losses can't reach
+        # one changed mood tests its 2 gates, so its fewest is the 2-way split's
+        one = min_untied(ALPHA / len(GATES))
+        self.assertEqual(judged(pairs("day", losses(one)), HELD, SCALES)["overall"], "REGRESSION")
+        self.assertEqual(judged(pairs("day", losses(one - 1)), HELD, SCALES)["overall"], "INSUFFICIENT")
+        # two changed moods test 4, which a mood's one-fewer losses can't reach
         both = pairs("day", losses(one)) + pairs("night", [1.0] * MIN_UNTIED)
-        self.assertEqual(judged(both)["groups"]["day"]["verdict"], "INSUFFICIENT")
+        self.assertEqual(judged(both, HELD, SCALES)["groups"]["day"]["verdict"], "INSUFFICIENT")
         both = pairs("day", losses(MIN_UNTIED)) + pairs("night", [1.0] * MIN_UNTIED)
-        self.assertEqual(judged(both)["overall"], "REGRESSION")
+        self.assertEqual(judged(both, HELD, SCALES)["overall"], "REGRESSION")
 
     def test_the_pooled_group_is_reported_but_never_gates(self):
         # six losses of seven in each mood: not enough for either mood, enough
         # pooled
         mood = losses(6) + [1.0]
-        result = judged(pairs("day", mood) + pairs("night", mood))
+        result = judged(pairs("day", mood) + pairs("night", mood), HELD, SCALES)
         self.assertEqual(result["groups"]["all"]["verdict"], "REGRESSION")
         self.assertEqual(result["overall"], "PASS")
 
     def test_too_few_untied_pairs_is_insufficient_never_pass(self):
-        self.assertEqual(judged(pairs("day", [0.0] * 12))["overall"], "INSUFFICIENT")
+        self.assertEqual(judged(pairs("day", [0.0] * 12), HELD, SCALES)["overall"], "INSUFFICIENT")
 
     def test_a_detected_regression_outranks_too_few_pairs(self):
-        # two changed groups test six
-        two = min_untied(ALPHA / (2 * len(JUDGES)))
+        # two changed groups test four
+        two = min_untied(ALPHA / (2 * len(GATES)))
         batch = pairs("day", losses(two)) + pairs("night", [1.0] * (two - 1))
-        result = judged(batch)
+        result = judged(batch, HELD, SCALES)
         self.assertEqual(result["groups"]["night"]["verdict"], "INSUFFICIENT")
         self.assertEqual(result["overall"], "REGRESSION")
 
     def test_only_regression_and_insufficient_exit_non_zero(self):
-        self.assertIsNotNone(exit_message(judged(pairs("day", losses(MIN_UNTIED)))))
-        self.assertIsNotNone(exit_message(judged(pairs("day", [1.0]))))
-        self.assertIsNone(exit_message(judged(pairs("day", [1.0] * MIN_UNTIED))))
+        self.assertIsNotNone(exit_message(judged(pairs("day", losses(MIN_UNTIED)), HELD, SCALES)))
+        self.assertIsNotNone(exit_message(judged(pairs("day", [1.0]), HELD, SCALES)))
+        self.assertIsNone(exit_message(judged(pairs("day", [1.0] * MIN_UNTIED), HELD, SCALES)))
 
 
-def split_pair(mood, gains):
-    """A pair each judge scores its own gain on."""
-    return {"mood": mood, "identical": False, "gains": dict(zip(JUDGES, gains))}
+class Panel(unittest.TestCase):
+    N = MIN_UNTIED * 2
+
+    def test_judges_far_for_outweigh_one_near_against(self):
+        for against in PANEL:
+            gains = tuple(-0.5 if j == against else 2.0 if j in PANEL else 0.0 for j in JUDGES)
+            result = judged([judge_pair("day", gains) for _ in range(self.N)], HELD, SCALES)
+            self.assertEqual(result["groups"]["day"]["tests"]["panel"]["wins"], self.N, against)
+            self.assertEqual(result["groups"]["day"]["verdict"], "PASS", against)
+
+    def test_of_three_judges_one_far_against_moves_no_majority(self):
+        self.assertGreater(pooled({"a": 1.0, "b": 1.0, "c": -5.0}, dict.fromkeys("abc", 1.0)), 0)
+
+    def test_two_judges_weigh_each_in_its_own_spread(self):
+        gains = {"a": 1.0, "b": -2.0}
+        self.assertLess(pooled(gains, {"a": 1.0, "b": 1.0}), 0)
+        # b's scores spread four times wider, so its -2 is a half
+        self.assertGreater(pooled(gains, {"a": 1.0, "b": 4.0}), 0)
+
+    def test_a_judge_outweighed_on_every_pair_is_a_dissent_that_passes(self):
+        gains = tuple(-0.5 if j == "tunejury" else 2.0 if j in PANEL else 0.0 for j in JUDGES)
+        result = judged([judge_pair("day", gains) for _ in range(self.N)], HELD, SCALES)
+        self.assertEqual(result["overall"], "PASS")
+        self.assertEqual(result["dissent"], [("day", "tunejury")])
+
+    def test_a_regression_names_no_dissent(self):
+        result = judged(pairs("day", losses(self.N)), HELD, SCALES)
+        self.assertEqual(result["overall"], "REGRESSION")
+        self.assertEqual(result["dissent"], [])
 
 
-class Splits(unittest.TestCase):
-    def test_a_group_one_judge_favours_and_another_disfavours_is_split(self):
-        n = MIN_UNTIED * 2
-        batch = [split_pair("day", (1.0, -1.0, 1.0)) for _ in range(n)]
-        result = judged(batch)
-        self.assertEqual(result["split"], ["day"])
-        self.assertEqual(result["groups"]["day"]["verdict"], "REGRESSION", "a split keeps its verdict")
+class Guard(unittest.TestCase):
+    N = MIN_UNTIED * 2
 
-    def test_a_group_every_judge_disfavours_is_not_split(self):
-        result = judged(pairs("day", losses(MIN_UNTIED * 2)))
-        self.assertEqual(result["split"], [])
-        result = judged(pairs("night", [1.0] * MIN_UNTIED * 2))
-        self.assertEqual(result["split"], [])
+    def guarded(self, fad_gain):
+        """The verdict on a group the panel favours on every pair, its FAD
+        gain `fad_gain` on each."""
+        return judged([judge_pair("day", (*[1.0] * len(PANEL), fad_gain)) for _ in range(self.N)], HELD, SCALES)
 
-    def test_two_judges_for_and_one_against_under_four_groups_alpha_is_split(self):
-        # two judges sweep for cand while the other is against it on most
-        # pairs but not all, the shape a real plate change scored
-        day = [split_pair("day", (1.0, 1.0 if i < 7 else -1.0, 1.0)) for i in range(37)]
-        even = [split_pair(g, (1.0, -1.0, 1.0) if i % 2 else (-1.0, 1.0, -1.0)) for g in ("night", "rain", "twilight") for i in range(12)]
-        result = judged(day + even)
-        self.assertEqual(result["alpha"], ALPHA / (len(JUDGES) * 4))
-        self.assertEqual(result["split"], ["day"])
+    def test_the_margin_is_a_small_effect_in_the_held_out_spread(self):
+        self.assertAlmostEqual(margin(HELD), SMALL_EFFECT * stdev(HELD), places=12)
+
+    def test_a_move_under_the_margin_passes_and_is_a_dissent(self):
+        result = self.guarded(-margin(HELD) / 2)
+        self.assertEqual(result["overall"], "PASS")
+        self.assertEqual(result["dissent"], [("day", GUARD)])
+
+    def test_a_move_past_the_margin_is_a_regression_however_the_panel_votes(self):
+        self.assertEqual(self.guarded(-2 * margin(HELD))["overall"], "REGRESSION")
+
+    def test_a_move_toward_the_corpus_passes(self):
+        result = self.guarded(margin(HELD))
+        self.assertEqual(result["overall"], "PASS")
+        self.assertEqual(result["dissent"], [])
 
 
 class RustCopies(unittest.TestCase):
