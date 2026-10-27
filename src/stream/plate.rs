@@ -12,20 +12,21 @@ use super::onepole::OnePole;
 use crate::compose::Lane;
 use crate::synth::samples_at;
 
-/// How far under its dry lane each wet lane's return reads on the fold.
-/// Opinion: the pad wettest, then the keys, then the lead, which stays
-/// nearest.
-const PAD_RETURN_UNDER_LU: f64 = 12.0;
-const KEYS_RETURN_UNDER_LU: f64 = 14.0;
-const SPARKLE_RETURN_UNDER_LU: f64 = 16.0;
+/// How far under its dry lane each wet lane's return reads on the fold. The
+/// order is opinion: the pad wettest, then the keys, then the lead, which
+/// stays nearest. The depth is the judge's: the three moved wetter together,
+/// a step at a time, until the genre guard dissented from the next.
+const PAD_RETURN_UNDER_LU: f64 = 4.0;
+const KEYS_RETURN_UNDER_LU: f64 = 6.0;
+const SPARKLE_RETURN_UNDER_LU: f64 = 9.6;
 
 /// Each wet lane's send into the plate, in dB on its mix level, set to put
 /// its return as far under its dry lane as its `*_RETURN_UNDER_LU`. A send
 /// sets its lane's wetness, so it moves as a sound change the judge scores;
 /// `lofi_measure --pins` prints each beside the send a run gives now.
-const PAD_SEND_DB: f64 = -6.2;
-const KEYS_SEND_DB: f64 = -7.3;
-const SPARKLE_SEND_DB: f64 = -13.4;
+const PAD_SEND_DB: f64 = 0.8;
+const KEYS_SEND_DB: f64 = -0.3;
+const SPARKLE_SEND_DB: f64 = -6.4;
 
 /// `lane`'s send into the plate in dB on its mix level, and how far under
 /// its dry lane that puts its return; none for a lane lofi keeps dry: the

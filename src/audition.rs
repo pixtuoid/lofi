@@ -217,8 +217,8 @@ pub const WHOLE_LANE_LUFS_SD: [(f32, f32, f64); 2] = [
 /// no more than these, songs that played alone: `lofi_measure --pins` prints
 /// it beside this. A non-regression, not a target.
 pub const SONG_LUFS_SD: [(f32, f32, f64); 2] = [
-    (TIER_INTENSITIES[0], 1.0, 0.2847),
-    (TIER_INTENSITIES[2], 1.0, 0.3755),
+    (TIER_INTENSITIES[0], 1.0, 0.4720),
+    (TIER_INTENSITIES[2], 1.0, 0.5025),
 ];
 
 /// The most `songs` songs' loudness may vary against `reference`, a row of
