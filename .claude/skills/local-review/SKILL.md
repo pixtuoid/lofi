@@ -34,8 +34,8 @@ here first folds them into one commit.
    refuted finding produces a test, a CI gate, or nothing).
 4. **Fold** the accepted findings into one commit.
 5. **Run each [must-run](../../../REVIEW.md#must-run) item** the change
-   touches on that final head, and report each exit code as observed, never
-   through a pipe.
+   touches on that final head, and write its result into the PR body as the
+   item asks, its exit code as observed, never through a pipe.
 6. **Disposition** each thread CI's review opens once the PR is open: reply
    with the fix or the refutation, then resolve it:
 
