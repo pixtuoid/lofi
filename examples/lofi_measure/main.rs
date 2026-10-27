@@ -14,12 +14,13 @@
 //!   cargo run --release --example lofi_measure -- [--corpus DIR]
 //!   reads every track in DIR/audio as a take is read, through ffmpeg's
 //!   decoder, and prints the `CORPUS` and `MEASURED_ON` they give.
-//!   cargo run --release --example lofi_measure -- [--staging]
-//!   prints the stream's staging and the whole-lane rows its level test holds.
+//!   cargo run --release --example lofi_measure -- [--pins]
+//!   prints every constant the source pins to a measurement, measured again.
 
 #[path = "../common/batch.rs"]
 mod batch;
 mod corpus;
+mod pins;
 mod staging;
 
 use std::io;
@@ -45,27 +46,27 @@ const BPM_RAIL: [f64; 2] = [68.0, 90.0];
 const SEAM_QUANTILE: f64 = 0.999;
 
 /// What a run reads: a batch's takes, the reference corpus's tracks, or the
-/// whole-lane renders the stream's staging stands in for.
+/// renders the source's pinned constants were measured on.
 enum Mode {
     Takes(Batch),
     Corpus(PathBuf),
-    Staging,
+    Pins,
 }
 
 /// The flags lofi_measure takes beyond the batch's.
-const OWN_FLAGS: [&str; 2] = ["--corpus", "--staging"];
+const OWN_FLAGS: [&str; 2] = ["--corpus", "--pins"];
 
 /// What `args` ask to read.
 fn mode(mut args: impl Iterator<Item = String>) -> io::Result<Mode> {
     let args: Vec<String> = args.by_ref().collect();
     match args.as_slice() {
         [flag, dir] if flag == "--corpus" => Ok(Mode::Corpus(PathBuf::from(dir))),
-        [flag] if flag == "--staging" => Ok(Mode::Staging),
+        [flag] if flag == "--pins" => Ok(Mode::Pins),
         _ if args.iter().any(|a| a == "--corpus") => Err(usage_error(
             "--corpus reads the corpus alone, so it takes one directory and no other flag".into(),
         )),
-        _ if args.iter().any(|a| a == "--staging") => Err(usage_error(
-            "--staging measures the staging alone, so it takes no other flag".into(),
+        _ if args.iter().any(|a| a == "--pins") => Err(usage_error(
+            "--pins measures its own renders, so it takes no other flag".into(),
         )),
         _ => parse(args.into_iter()).map(Mode::Takes),
     }
@@ -106,8 +107,8 @@ fn run() -> io::Result<()> {
     let batch = match mode(std::env::args().skip(1))? {
         Mode::Takes(batch) => batch,
         Mode::Corpus(dir) => return read_corpus(&dir),
-        Mode::Staging => {
-            staging::print();
+        Mode::Pins => {
+            pins::print();
             return Ok(());
         }
     };
@@ -127,8 +128,7 @@ fn run() -> io::Result<()> {
                     let song = batch.whole(seed, lane_gains).remove(0);
                     let took = started.elapsed();
                     let mix = song.mix();
-                    // a mono mix, heard from both speakers
-                    let lufs = gated_lufs(&[&mix, &mix], SAMPLE_RATE);
+                    let lufs = mono_lufs(&mix);
                     // one loop of each lane, which the song plays again
                     let rendered = audition::samples_at(score.loop_secs(), SAMPLE_RATE);
                     (whole_rows(&song), mix, lufs, took, rendered)
@@ -137,8 +137,7 @@ fn run() -> io::Result<()> {
                     let started = Instant::now();
                     let frames = batch.perform(seed);
                     let took = started.elapsed();
-                    let [left, right] = channels(&frames);
-                    let lufs = gated_lufs(&[&left, &right], SAMPLE_RATE);
+                    let lufs = frames_lufs(&frames);
                     let mix = fold(&frames);
                     // rendered again, so the render's time is the shipped one's
                     let mut stems = Stems::default();
@@ -168,8 +167,7 @@ fn run() -> io::Result<()> {
                 let shares = shares_of(&Spectrum::cross(&stem_transform, &transform), &spectrum);
                 print_row(
                     row.name,
-                    // a mono stem, heard from both speakers
-                    &format!("{:.1}", gated_lufs(&[&row.stem, &row.stem], SAMPLE_RATE)),
+                    &format!("{:.1}", mono_lufs(&row.stem)),
                     &shares.into_iter().map(pct).collect::<Vec<_>>(),
                     &format!("{:.0}", own.centroid()),
                     &row.seam.map_or("-".into(), |seam| format!("{seam:.2}")),
@@ -221,6 +219,17 @@ fn run() -> io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// A mono signal's gated loudness, heard from both speakers.
+fn mono_lufs(mono: &[f32]) -> f64 {
+    gated_lufs(&[mono, mono], SAMPLE_RATE)
+}
+
+/// Frames' gated loudness, on their two channels.
+fn frames_lufs(frames: &[Frame]) -> f64 {
+    let [left, right] = channels(frames);
+    gated_lufs(&[&left, &right], SAMPLE_RATE)
 }
 
 /// Reads every track in `dir`'s `audio/` as a take's mix is read, and prints
@@ -619,16 +628,13 @@ mod tests {
     }
 
     #[test]
-    fn the_staging_is_measured_alone() {
+    fn the_pins_are_measured_alone() {
         let args = |args: &[&str]| mode(args.iter().map(|&a| a.to_owned()));
         let refusal = |with: &[&str]| args(with).err().expect("refused").to_string();
-        assert!(matches!(args(&["--staging"]), Ok(Mode::Staging)));
+        assert!(matches!(args(&["--pins"]), Ok(Mode::Pins)));
+        assert!(refusal(&["--pins", "--tier", "busy"]).contains("--pins measures its own renders"));
         assert!(
-            refusal(&["--staging", "--tier", "busy"])
-                .contains("--staging measures the staging alone")
-        );
-        assert!(
-            refusal(&["--staging", "--corpus", "refs"]).contains("--corpus reads the corpus alone")
+            refusal(&["--pins", "--corpus", "refs"]).contains("--corpus reads the corpus alone")
         );
     }
 

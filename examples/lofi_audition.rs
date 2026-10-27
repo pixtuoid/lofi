@@ -16,7 +16,6 @@
 #[path = "common/batch.rs"]
 mod batch;
 
-use std::f64::consts::PI;
 use std::fs::File;
 use std::hash::{BuildHasher as _, RandomState};
 use std::io::{self, BufWriter, Write as _};
@@ -27,23 +26,15 @@ use pixtuoid_lofi::Frame;
 use pixtuoid_lofi::audition::Lane;
 use pixtuoid_lofi::dsp::{NoiseStream, SAMPLE_RATE};
 
-use batch::{Batch, Engine, lane_gains, parse_choice, usage_error, valid_flags};
+use batch::{Batch, Engine, SOLO_SAFE_LUFS, parse_choice, usage_error, valid_flags};
 use pixtuoid_lofi::audition::{TARGET_LUFS, channels, gated_lufs};
 
-/// What a solo take renders at instead, since a lane alone peaks past full
-/// scale at [`TARGET_LUFS`]: the loudest level at which every lane's solo,
-/// both moods and seeds 0–23, kept its peak under full scale, as the commit
-/// that set it records, less [`SOLO_MARGIN_DB`].
-const SOLO_TARGET_LUFS: f64 = -27.6 - SOLO_MARGIN_DB;
+/// What a solo take renders at instead of [`TARGET_LUFS`], at which a lane
+/// alone peaks past full scale.
+const SOLO_TARGET_LUFS: f64 = SOLO_SAFE_LUFS - SOLO_MARGIN_DB;
 
-/// Room for a seed past that sweep to peak higher (opinion).
+/// Room for a seed past [`SOLO_SAFE_LUFS`]'s sweep to peak higher (opinion).
 const SOLO_MARGIN_DB: f64 = 1.0;
-
-/// How long, in seconds, a take fades in and out under a raised cosine: cut
-/// from a stream or a loop, it starts and ends mid-waveform, and the click
-/// there differs by engine, so it could tell a blind A/B's sides apart. The
-/// length is opinion.
-const EDGE_FADE_S: f64 = 0.01;
 
 fn main() -> ExitCode {
     match run() {
@@ -199,20 +190,7 @@ impl Args {
     /// `seed`'s take in `run` at its target loudness; an error if that clips
     /// it, which would write a different take.
     fn render(&self, run: &Batch, seed: u64) -> io::Result<Vec<Frame>> {
-        let mut take = match run.engine {
-            Engine::WholeLane => {
-                let gains = |controls| match self.solo {
-                    Some(lane) => Lane::ALL.map(|l| f32::from(u8::from(l == lane))),
-                    None => lane_gains(controls),
-                };
-                (run.whole(seed, gains).into_iter())
-                    .flat_map(|song| song.mix())
-                    .map(|x| [x; 2])
-                    .collect()
-            }
-            Engine::Stream => run.perform(seed),
-        };
-        fade_edges(&mut take);
+        let mut take = run.take(seed, self.solo);
         let target = self.target_lufs();
         let [left, right] = channels(&take);
         let gain = 10f64.powf((target - gated_lufs(&[&left, &right], SAMPLE_RATE)) / 20.0) as f32;
@@ -232,18 +210,6 @@ impl Args {
         match self.solo {
             Some(_) => SOLO_TARGET_LUFS,
             None => TARGET_LUFS,
-        }
-    }
-}
-
-/// `take` faded in from silence and out to it over [`EDGE_FADE_S`].
-fn fade_edges(take: &mut [Frame]) {
-    let n = (EDGE_FADE_S * f64::from(SAMPLE_RATE)) as usize;
-    let last = take.len() - 1;
-    for i in 0..n {
-        let w = (0.5 * (1.0 - (PI * i as f64 / n as f64).cos())) as f32;
-        for at in [i, last - i] {
-            take[at] = take[at].map(|v| v * w);
         }
     }
 }

@@ -12,25 +12,37 @@ use super::onepole::OnePole;
 use crate::compose::Lane;
 use crate::synth::samples_at;
 
-/// Each wet lane's send into the plate, in dB on its mix level: set so its
-/// return reads 12, 14 and 16 LU under its dry lane on the fold, as the
-/// commit that set them measured. Opinion: the pad wettest, then the keys,
-/// then the lead, which stays nearest.
+/// How far under its dry lane each wet lane's return reads on the fold.
+/// Opinion: the pad wettest, then the keys, then the lead, which stays
+/// nearest.
+const PAD_RETURN_UNDER_LU: f64 = 12.0;
+const KEYS_RETURN_UNDER_LU: f64 = 14.0;
+const SPARKLE_RETURN_UNDER_LU: f64 = 16.0;
+
+/// Each wet lane's send into the plate, in dB on its mix level, set to put
+/// its return as far under its dry lane as its `*_RETURN_UNDER_LU`. A send
+/// sets its lane's wetness, so it moves as a sound change the judge scores;
+/// `lofi_measure --pins` prints each beside the send a run gives now.
 const PAD_SEND_DB: f64 = -6.2;
 const KEYS_SEND_DB: f64 = -7.3;
 const SPARKLE_SEND_DB: f64 = -13.4;
 
-/// `lane`'s send into the plate, as a gain on its mix level; none for a lane
-/// lofi keeps dry: the drums and bass ground the centre, and the texture is
-/// a bed already.
+/// `lane`'s send into the plate in dB on its mix level, and how far under
+/// its dry lane that puts its return; none for a lane lofi keeps dry: the
+/// drums and bass ground the centre, and the texture is a bed already.
+pub(crate) fn wet(lane: Lane) -> Option<(f64, f64)> {
+    match lane {
+        Lane::Pad => Some((PAD_SEND_DB, PAD_RETURN_UNDER_LU)),
+        Lane::Keys => Some((KEYS_SEND_DB, KEYS_RETURN_UNDER_LU)),
+        Lane::Sparkle => Some((SPARKLE_SEND_DB, SPARKLE_RETURN_UNDER_LU)),
+        Lane::Drums | Lane::Bass | Lane::Texture => None,
+    }
+}
+
+/// `lane`'s send into the plate, as a gain on its mix level, or `None` for a
+/// lane [`wet`] keeps dry.
 pub(crate) fn send(lane: Lane) -> Option<f64> {
-    let db = match lane {
-        Lane::Pad => PAD_SEND_DB,
-        Lane::Keys => KEYS_SEND_DB,
-        Lane::Sparkle => SPARKLE_SEND_DB,
-        Lane::Drums | Lane::Bass | Lane::Texture => return None,
-    };
-    Some(super::gain_of_db(db))
+    wet(lane).map(|(db, _)| super::gain_of_db(db))
 }
 
 /// The rate Table 1's lengths and Table 2's taps are counted at: "Sample
@@ -370,6 +382,27 @@ mod tests {
         let mut out = [Vec::new(), Vec::new()];
         plate.process(&input, &mut out);
         out
+    }
+
+    #[test]
+    fn the_return_to_two_sends_is_the_sum_of_their_returns() {
+        // what lets `audition::plate_return` hear one lane's return alone
+        let sr = SAMPLE_RATE;
+        let mut noise = NoiseStream::new(1);
+        let mut send =
+            || -> Vec<f64> { (0..sr as usize).map(|_| f64::from(noise.norm())).collect() };
+        let (a, b) = (send(), send());
+        let both: Vec<f64> = a.iter().zip(&b).map(|(x, y)| x + y).collect();
+        let frames = 2 * sr as usize;
+        let [ra, rb, rboth] = [&a, &b, &both].map(|s| returned(&mut Plate::new(sr), s, frames));
+        for side in 0..2 {
+            for ((x, y), z) in ra[side].iter().zip(&rb[side]).zip(&rboth[side]) {
+                assert!(
+                    (x + y - z).abs() < 1e-9,
+                    "the plate isn't linear: {x} + {y} vs {z}"
+                );
+            }
+        }
     }
 
     #[test]

@@ -12,7 +12,7 @@ use crate::corpus::spread;
 /// The moods the stream stages, by a daylight each plays at.
 const MOODS: [(&str, f32); 2] = [("Day", 1.0), ("Night", 0.0)];
 
-fn median(values: Vec<f64>) -> f64 {
+pub(crate) fn median(values: Vec<f64>) -> f64 {
     let [_, _, median, _, _] = spread(values);
     median
 }

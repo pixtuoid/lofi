@@ -40,6 +40,25 @@ pub fn staging(score: &Score, lane: Lane) -> [f64; 2] {
     crate::stream::lanes::staging(score.mood, lane)
 }
 
+/// `lane`'s send into the plate in dB, and how far under its dry lane that
+/// puts its return on the fold, in LU; `None` for a lane kept dry.
+pub fn plate_wet(lane: Lane) -> Option<(f64, f64)> {
+    crate::stream::plate::wet(lane)
+}
+
+/// A song's plate's return to `send` at unity from its first frame: the
+/// plate is linear, so a lane's own return is the plate on that lane alone.
+pub fn plate_return(send: &[f32]) -> Vec<Frame> {
+    let mut out = [Vec::new(), Vec::new()];
+    let send: Vec<f64> = send.iter().map(|&x| f64::from(x)).collect();
+    crate::stream::plate::Plate::new(SAMPLE_RATE).process(&send, &mut out);
+    let [left, right] = out;
+    left.into_iter()
+        .zip(right)
+        .map(|(l, r)| [l as f32, r as f32])
+        .collect()
+}
+
 use crate::dsp::SAMPLE_RATE;
 use crate::perform::Probe;
 use crate::stream::LANES;
@@ -177,7 +196,7 @@ pub const TARGET_LUFS: f64 = -15.0;
 /// each seed's first song.
 pub const LUFS_SEEDS: Range<u64> = 0..24;
 
-/// The seeds `lofi_measure --staging` takes the stream's staging over, each
+/// The seeds `lofi_measure --pins` takes the stream's staging over, each
 /// seed's first song: a texture bed's peak, which its gain follows, is its
 /// loudest few pops, so fewer seeds' median wanders with them.
 pub const STAGING_SEEDS: Range<u64> = 0..256;
@@ -186,8 +205,7 @@ pub const STAGING_SEEDS: Range<u64> = 0..256;
 /// [`LUFS_SEEDS`], as [`lufs_sd`] reads it, at an intensity and a daylight:
 /// `(intensity, daylight, LU)`. What lofi played before it streamed, which a
 /// `Performance`'s loop, unarranged, varies no more than: `lofi_measure
-/// --engine whole` prints it over those seeds at the row's `--tier` and
-/// `--mood`. A non-regression, not a target.
+/// --pins` prints it beside this. A non-regression, not a target.
 pub const WHOLE_LANE_LUFS_SD: [(f32, f32, f64); 2] = [
     (TIER_INTENSITIES[1], 1.0, 0.4182),
     (TIER_INTENSITIES[1], 0.0, 0.2912),
@@ -196,12 +214,11 @@ pub const WHOLE_LANE_LUFS_SD: [(f32, f32, f64); 2] = [
 /// How much a `Performance`'s songs' gated loudness varied across
 /// [`LUFS_SEEDS`], each song played alone, as [`lufs_sd`] reads it, in a
 /// room `lofi_bench` plays: `(intensity, daylight, LU)`. A run's songs vary
-/// no more than these, songs that played alone: `lofi_measure` prints it over
-/// those seeds at the row's `--tier` and `--mood`. A non-regression, not a
-/// target.
+/// no more than these, songs that played alone: `lofi_measure --pins` prints
+/// it beside this. A non-regression, not a target.
 pub const SONG_LUFS_SD: [(f32, f32, f64); 2] = [
-    (TIER_INTENSITIES[0], 1.0, 0.2717),
-    (TIER_INTENSITIES[2], 1.0, 0.3895),
+    (TIER_INTENSITIES[0], 1.0, 0.2847),
+    (TIER_INTENSITIES[2], 1.0, 0.3755),
 ];
 
 /// The most `songs` songs' loudness may vary against `reference`, a row of

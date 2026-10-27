@@ -63,7 +63,7 @@ fn phase(hz: f32, n: usize, sr: u32) -> f32 {
 /// peak normalizations: `in` for its first `normalize`, which sets the level
 /// into the drive (the texture's, into the duck), and `out` for the product of
 /// the rest. A gain sets its lane's level in the stream, so it moves as a
-/// sound change the judge scores; `lofi_measure --staging` prints each beside
+/// sound change the judge scores; `lofi_measure --pins` prints each beside
 /// the median of its normalizations over `audition::STAGING_SEEDS`, and how
 /// far apart they sit.
 pub(crate) fn staging(mood: Mood, lane: Lane) -> [f64; 2] {
@@ -1171,7 +1171,7 @@ mod tests {
 
     #[test]
     fn every_lane_plays_at_its_whole_lane_level() {
-        // `lofi_measure --staging`'s rows: each lane's median gated loudness
+        // `lofi_measure --pins`' rows: each lane's median gated loudness
         // over the whole-lane renders whose peak normalizations the staging
         // stands in for; the tolerance is opinion, and a staging off by 2×
         // misses it by 4.5 LU
