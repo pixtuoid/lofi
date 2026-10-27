@@ -1,0 +1,103 @@
+name: judge-env
+
+# The judge's environment, as `judge.yml` never tries it: that workflow runs
+# the base branch's judge, so a lock bump would first run on the next render
+# PR. A PR runs every model in its own lock's image before it merges, with no
+# corpus; main provisions the caches the new environment keys (`ab_judge.py`'s
+# `environment`), which the PRs' read-only judge can't build, and so first
+# judges with the corpus.
+on:
+  pull_request:
+    paths:
+      # what the rehearsal runs or builds the image from; the client's lock
+      # it doesn't read
+      - .claude/skills/procedural-lofi/judge/**
+      - "!.claude/skills/procedural-lofi/judge/modal-requirements.*"
+      - .claude/skills/procedural-lofi/scripts/ab_judge.py
+      - .claude/skills/procedural-lofi/scripts/test_ab_judge.py
+      - .claude/skills/procedural-lofi/scripts/verdict.py
+      - .github/workflows/judge-env.yml
+  push:
+    branches: [main]
+    paths:
+      - .claude/skills/procedural-lofi/judge/judge-requirements.txt
+      # a client bump's first run with the token, since a PR's rehearsal runs
+      # the base branch's client
+      - .claude/skills/procedural-lofi/judge/modal-requirements.txt
+      - .claude/skills/procedural-lofi/judge/modal_judge.py
+      - .claude/skills/procedural-lofi/scripts/ab_judge.py
+
+permissions: {}
+
+concurrency:
+  group: judge-env-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  rehearse:
+    # a fork's PR gets no secret. The PR's judge code runs beside the token, as
+    # a same-repo PR's workflow file already does; its locks don't: the image's
+    # installs on Modal, and the client comes from the base branch's
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    # modal_judge.py's JUDGE_TIMEOUT_S, with room for the image build
+    timeout-minutes: 85
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            .claude/skills/procedural-lofi/judge
+            .claude/skills/procedural-lofi/scripts
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+          persist-credentials: false
+          sparse-checkout: .claude/skills/procedural-lofi/judge
+      - name: Install the base branch's hash-pinned Modal client
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/modal"
+          "$RUNNER_TEMP/modal/bin/pip" install --quiet --require-hashes --only-binary :all: \
+            -r base/.claude/skills/procedural-lofi/judge/modal-requirements.txt
+      - name: Rehearse the judge in this lock's image
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: |
+          set -euo pipefail
+          # Dependabot's PRs read Dependabot's secrets, not the Actions ones
+          # (https://docs.github.com/en/code-security/dependabot/troubleshooting-dependabot/troubleshooting-dependabot-on-github-actions#accessing-secrets)
+          if [ -z "$MODAL_TOKEN_ID" ]; then
+            echo "::error::no MODAL_TOKEN_ID: a Dependabot PR needs it among the repository's Dependabot secrets"
+            exit 1
+          fi
+          "$RUNNER_TEMP/modal/bin/modal" run .claude/skills/procedural-lofi/judge/modal_judge.py::check
+
+  provision:
+    if: github.event_name == 'push' && github.repository_id == '1414749270'
+    runs-on: ubuntu-latest
+    timeout-minutes: 85
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            .claude/skills/procedural-lofi/judge
+            .claude/skills/procedural-lofi/scripts
+      - name: Install the hash-pinned Modal client
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/modal"
+          "$RUNNER_TEMP/modal/bin/pip" install --quiet --require-hashes --only-binary :all: \
+            -r .claude/skills/procedural-lofi/judge/modal-requirements.txt
+      - name: Provision the caches this environment keys
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: '"$RUNNER_TEMP/modal/bin/modal" run .claude/skills/procedural-lofi/judge/modal_judge.py::provision'

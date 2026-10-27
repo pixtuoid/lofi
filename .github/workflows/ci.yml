@@ -85,13 +85,17 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
+    env:
+      MISE_ENABLE_TOOLS: github:taiki-e/cargo-hack
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+      - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
         with:
-          tool: cargo-hack@0.6.45
+          # opinion: `latest` resolves every run, so a cache saves little and
+          # could hand back an older match
+          cache: false
       - run: cargo hack check --rust-version --all-targets --locked
 
   wasm:
@@ -114,20 +118,22 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
+    env:
+      MISE_ENABLE_TOOLS: zizmor,actionlint,shellcheck
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+      - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
         with:
-          tool: zizmor@1.30.0
+          # opinion: `latest` resolves every run, so a cache saves little and
+          # could hand back an older match
+          cache: false
       # The repo root, not just workflows/, so dependabot.yml is audited too.
       - run: zizmor --config .github/zizmor.yml .
         env:
           GH_TOKEN: ${{ github.token }}
-      - run: |
-          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
-          "$(go env GOPATH)/bin/actionlint"
+      - run: actionlint
 
   # Advisory, so not in ci-gate: `test` already gates the same suite.
   coverage:
@@ -136,6 +142,8 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    env:
+      MISE_ENABLE_TOOLS: aqua:taiki-e/cargo-llvm-cov
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -143,9 +151,11 @@ jobs:
       - uses: pixtuoid/.github/.github/actions/setup-rust@main
         with:
           components: llvm-tools-preview
-      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+      - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
         with:
-          tool: cargo-llvm-cov@0.9.1
+          # opinion: `latest` resolves every run, so a cache saves little and
+          # could hand back an older match
+          cache: false
       - run: cargo llvm-cov --all-targets --codecov --output-path codecov.json
       - uses: pixtuoid/.github/.github/actions/upload-codecov@main
         with:

@@ -4,6 +4,8 @@ Volumes cache, for a batch this machine uploads.
 Usage, with modal-requirements.txt's client and a configured token:
   modal volume put lofi-judge-refs REFS/manifest.json /manifest.json
   modal run modal_judge.py::provision     fetch the corpus, then build the caches
+  modal run modal_judge.py::check         run every model in this lock's image
+                                          on the warm-up take, offline
   modal run modal_judge.py::upload_missing --refs-dir REFS
                                           what archive.org didn't serve, from REFS
   modal run modal_judge.py::judge --batch DIR --base SHA --cand SHA [--out OUT] [--force-score]
@@ -36,12 +38,11 @@ SCRIPTS = HERE.parent / "scripts" if modal.is_local() else Path(REMOTE_SCRIPTS)
 JUDGE = HERE if modal.is_local() else Path(REMOTE_JUDGE)
 MODELS, REFS, BATCH = "/models", "/refs", "/batch"
 sys.path.insert(0, str(JUDGE))
-from judge_local import exit_code, published, redact, select
+from judge_local import exit_code, published, redact, run_steps, select
 from validate_batch import IDENTICAL
 
-# the uv the image and SKILL.md's install run, the release
-# judge-requirements.txt was compiled by
-UV_VERSION = "0.13.0"
+# the uv the image and SKILL.md's install run
+UV_VERSION = "0.13.6"
 # the lock, baked in where uv reads it a second time as the build constraints:
 # encodec, wget and progressbar publish only an sdist
 # (https://pypi.org/pypi/encodec/0.1.1/json and wget's and progressbar's), and
@@ -66,6 +67,11 @@ FETCH_TIMEOUT_S = 120
 CPU = 2.0
 MEMORY_MIB = 12288
 JUDGE_TIMEOUT_S = 4500
+
+# a rehearsal step's limit, ten times the slower step's wall time on a T4,
+# which the commit that set it records, so a hung model fails its step, not
+# the function at JUDGE_TIMEOUT_S (opinion)
+REHEARSAL_STEP_S = 360
 
 # the warm-up pair `build` judges: a take at lofi's own rate (`SAMPLE_RATE`
 # in src/dsp.rs), the one a batch's takes arrive at
@@ -155,20 +161,24 @@ def fetch_refs():
     return report
 
 
+def write_warm(path, gain):
+    """Writes the warm-up take, seeded noise at `gain`, to `path`."""
+    import numpy as np
+    import soundfile as sf
+
+    take = WARMUP_LEVEL * np.random.default_rng(0).standard_normal((WARMUP_S * WARMUP_RATE, 2))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    sf.write(path, take * gain, WARMUP_RATE, subtype="PCM_16")
+
+
 @app.function(gpu="T4", cpu=CPU, memory=MEMORY_MIB, volumes={MODELS: models, REFS: refs}, timeout=JUDGE_TIMEOUT_S)
 def build():
     """Caches every model, the corpus's FAD statistics and the panel's
     screening by judging a warm-up pair as a batch would be judged, online,
     then measures what it took."""
-    import numpy as np
-    import soundfile as sf
-
     warm = Path("/tmp/warm")
-    rng = np.random.default_rng(0)
-    take = WARMUP_LEVEL * rng.standard_normal((WARMUP_S * WARMUP_RATE, 2))
     for side, gain in (("base", 1.0), ("cand", WARMUP_CAND_GAIN)):
-        (warm / side).mkdir(parents=True)
-        sf.write(warm / side / "gen_day_empty_000.wav", take * gain, WARMUP_RATE, subtype="PCM_16")
+        write_warm(warm / side / "gen_day_empty_000.wav", gain)
         (warm / side / "COMMIT").write_text("0" * 40 + "\n")
     started = time.time()
     run = subprocess.run(
@@ -182,6 +192,29 @@ def build():
     if not built:
         print(redact(run.stdout + run.stderr, tracks()))
     return {"built": built, **took(started)}
+
+
+# offline, its network blocked, and mounting the models alone, read-only: a
+# lock not yet merged writes nothing a judge reads, and the corpus isn't there
+# for it to print into a public log
+@app.function(gpu="T4", cpu=CPU, memory=MEMORY_MIB, timeout=JUDGE_TIMEOUT_S, block_network=True, restrict_modal_access=True)
+def rehearse():
+    """The judge's environment as this image builds it: `ab_judge.py`'s
+    tests, then its `smoke`, every model on the warm-up take, each a child
+    process `took` counts."""
+    started = time.time()
+    offline = {**os.environ, "HF_HUB_OFFLINE": "1"}
+    take = Path("/tmp/smoke.wav")
+    write_warm(take, 1.0)
+    smoke = (
+        "import sys; sys.path.insert(0, sys.argv[1]); import ab_judge, soundfile as sf;"
+        " print('smoke scores:', ab_judge.smoke(*sf.read(sys.argv[2], dtype='float32'), float(sys.argv[3])))"
+    )
+    steps = (
+        ("tests", [sys.executable, "-I", f"{REMOTE_SCRIPTS}/test_ab_judge.py"]),
+        ("smoke", [sys.executable, "-I", "-c", smoke, REMOTE_SCRIPTS, str(take), str(WARMUP_CAND_GAIN)]),
+    )
+    return {"failed": run_steps(steps, offline, REHEARSAL_STEP_S), **took(started)}
 
 
 @app.function(gpu="T4", cpu=CPU, memory=MEMORY_MIB, timeout=JUDGE_TIMEOUT_S)
@@ -223,6 +256,21 @@ def provision():
           f" missing: {report['missing'] or 'none'}")
     if "caches" in report:
         print(f"caches: {report['caches']}")
+    if not report.get("caches", {}).get("built"):
+        raise SystemExit(1)
+
+
+@app.local_entrypoint()
+def check():
+    """Rehearses the judge in an image built from this checkout's lock, over
+    the cached models, read-only; exits non-zero when a test or a model
+    failed."""
+    result = rehearse.with_options(volumes={MODELS: models.with_mount_options(read_only=True)}).remote()
+    failed = result["failed"]
+    print(f"rehearsed: {f'the {failed} failed' if failed else 'every model ran'}; wall {result['wall_s']:.0f} s,"
+          f" judge CPU {result['cpu_s']:.0f} s, peak RSS {result['peak_rss_mib']:.0f} MiB")
+    if failed:
+        raise SystemExit(1)
 
 
 @app.local_entrypoint()

@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from judge_local import NOT_A_SCORE, exit_code, published, redact, select
+from judge_local import NOT_A_SCORE, exit_code, published, redact, run_steps, select
 from test_validate_batch import write_wav
 from validate_batch import Takes, stage, validate
 
@@ -122,6 +122,40 @@ class RustCopies(unittest.TestCase):
         self.assertIsNotNone(rust, "no SAMPLE_RATE in src/dsp.rs")
         self.assertIsNotNone(py, "no WARMUP_RATE in modal_judge.py")
         self.assertEqual(int(py[1]), int(rust[1].replace("_", "")))
+
+
+
+class Steps(unittest.TestCase):
+    def run_steps(self, *codes, timeout_s=10):
+        """`run_steps` over a Python step per code in `codes`: the step it
+        names and what it printed."""
+        steps = [(f"step {i}", [sys.executable, "-I", "-c", code]) for i, code in enumerate(codes)]
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            failed = run_steps(steps, None, timeout_s)
+        return failed, out.getvalue()
+
+    def test_steps_that_all_pass_name_none_and_print_their_time_but_not_their_stderr(self):
+        failed, out = self.run_steps("print('one')", "import sys; print('two'); print('noise', file=sys.stderr)")
+        self.assertIsNone(failed)
+        self.assertIn("one", out)
+        self.assertIn("two", out)
+        self.assertNotIn("noise", out)
+        self.assertRegex(out, r"the step 0 took \d+ s")
+        self.assertRegex(out, r"the step 1 took \d+ s")
+
+    def test_the_first_step_to_fail_is_named_with_its_stderr_and_ends_the_run(self):
+        failed, out = self.run_steps(
+            "print('one')", "import sys; print('broke', file=sys.stderr); sys.exit(1)", "print('never')"
+        )
+        self.assertEqual(failed, "step 1")
+        self.assertIn("broke", out)
+        self.assertNotIn("never", out)
+
+    def test_a_step_past_the_limit_is_named_with_what_it_printed(self):
+        failed, out = self.run_steps("import time; print('loading', flush=True); time.sleep(60)", timeout_s=1)
+        self.assertEqual(failed, "step 0")
+        self.assertIn("loading", out)
+        self.assertIn("ran past 1 s", out)
 
 
 if __name__ == "__main__":

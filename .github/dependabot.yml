@@ -18,3 +18,17 @@ updates:
     open-pull-requests-limit: 5
     cooldown:
       default-days: 7
+
+  # The judge's two `uv pip compile` locks, which the uv ecosystem recompiles
+  # with the flags each one's header names (dependabot-core's
+  # uv/lib/dependabot/uv/file_updater/compile_file_updater.rb).
+  - package-ecosystem: uv
+    directory: /.claude/skills/procedural-lofi/judge
+    schedule:
+      interval: weekly
+    groups:
+      judge:
+        patterns: ["*"]
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
