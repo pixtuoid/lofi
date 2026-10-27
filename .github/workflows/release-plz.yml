@@ -16,6 +16,15 @@ on:
 
 permissions: {}
 
+# Push runs go one at a time, in order: a push merged while a release waits
+# for its environment's approval would otherwise check the tag before that
+# release creates it. Under `queue: max` a pending run is kept, not cancelled
+# (https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency).
+concurrency:
+  group: release-plz-${{ github.event_name }}
+  queue: max
+  cancel-in-progress: false
+
 jobs:
   release-pr:
     name: release PR
@@ -123,11 +132,10 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # release-plz releases "only when you merge the release PR"
-  # (https://release-plz.dev/docs/config, `release_always`), and it exits green
-  # when it declines (pixtuoid's release-plz.yml observed it); `release-merge`
-  # refuses a stale one. Either leaves main at a version crates.io never got.
-  # Main at rest sits at a released version, so every push checks that its
-  # version is tagged.
+  # (https://release-plz.dev/docs/config, `release_always`). `release-merge`
+  # refusing a stale release PR, or missing a merged one, skips `release`, and
+  # either leaves main at a version crates.io never got. Main at rest sits at a
+  # released version, so every push checks that its version is tagged.
   version-tagged:
     name: the crate's version is tagged
     needs: [release-merge, release]
@@ -148,6 +156,6 @@ jobs:
           if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null; then
             echo "v$version is tagged"
           else
-            echo "::error::main@${GITHUB_SHA::7} is at v$version, which no tag names, so crates.io never got it. release-plz tags only a merged release PR (release-plz.toml's release_always). If release-merge refused a stale one, revert its merge; otherwise re-run this workflow"
+            echo "::error::main@${GITHUB_SHA::7} is at v$version, which no tag names, so crates.io never got it. release-plz tags only a merged release PR (release-plz.toml's release_always). If release-merge refused a stale one, revert its merge; if its release failed or was declined, re-run that run"
             exit 1
           fi
