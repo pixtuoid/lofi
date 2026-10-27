@@ -29,7 +29,7 @@ Measurement steers a change toward a target; CI's [`judge.yml`](.github/workflow
 
 ## Workflow
 
-- [`ci.yml`](.github/workflows/ci.yml) is the gate, and runs the [`justfile`](justfile)'s recipes. `just setup` turns on the hooks that run them first: pre-commit checks formatting and pre-push runs `just preflight`.
+- [`ci.yml`](.github/workflows/ci.yml) is the gate, and runs the [`justfile`](justfile)'s recipes. `mise exec -- just setup`, once per clone, installs the tools and turns on the hooks that run them first: pre-commit checks formatting and pre-push runs `just preflight`.
 - [`lofi_bench`](examples/lofi_bench.rs) gates what CI can't afford: `Performance::render`'s cost, and a run of each room playing finite at a steady level. A change on render's path runs it natively and on wasm, and the PR names the machine and the numbers.
 - A session pushes its own PR branches and merges its own PR once the ruleset's checks pass, the org's [shared review](https://github.com/pixtuoid/.github/blob/main/.github/workflows/claude-review.yml) among them, and every review thread is resolved. A blocking finding it refutes is dispositioned and resolved in its thread before the review re-runs (`gh run rerun <id> --failed`). It never force-pushes or pushes to `main`, never skips hooks (`--no-verify`), and never files issues.
 - A commit's title is its changelog line. In 0.x, `feat`/`fix` bump the patch and `!` bumps the minor ([release-plz](https://release-plz.dev/docs/config)). A changed `dsp` output takes `!`: pixtuoid's foley hears it, and no semver check does. A new `Controls` field doesn't ([`#[non_exhaustive]`](https://doc.rust-lang.org/cargo/reference/semver.html#struct-add-public-field-when-no-private)), as long as its default keeps the old sound.
