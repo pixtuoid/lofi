@@ -285,8 +285,13 @@ def screened(judges, items):
 
 def screened_out(screen):
     """The judges BS.1534-3's post-screening excludes, by `screened`'s shares
-    on its mid-range anchor."""
-    return [name for name, judge in screen.items() if judge["anchors"][SCREEN_ANCHOR_HZ] > SCREEN_SHARE]
+    on its mid-range anchor, and any that scores the held-out references
+    alike, which tells them apart no more than it has a unit to pool in."""
+    return [
+        name
+        for name, judge in screen.items()
+        if judge["anchors"][SCREEN_ANCHOR_HZ] > SCREEN_SHARE or not judge["scale"] > 0
+    ]
 
 
 class Audiobox:
@@ -384,7 +389,7 @@ def cached_quietest(caches, manifest_sha, takes_lufs):
 
 def screen_file(caches, manifest_sha):
     # keyed by everything a screening is built from
-    built = json.dumps([PANEL, AUDIOBOX, TUNEJURY, MERT, LAION_CLAP, HOLDOUT, ANCHORS_HZ, ANCHOR_RIPPLE_DB, ANCHOR_STOP_DB, ANCHOR_STOP_RATIO])
+    built = json.dumps([PANEL, AUDIOBOX, TUNEJURY, MERT, LAION_CLAP, HOLDOUT, WINDOW_S, ANCHORS_HZ, ANCHOR_RIPPLE_DB, ANCHOR_STOP_DB, ANCHOR_STOP_RATIO])
     return caches / f"{manifest_sha}-screen-{hashlib.sha256(built.encode()).hexdigest()[:16]}.json"
 
 
@@ -571,7 +576,7 @@ def main():
         if out := screened_out(record["screen"]):
             sys.exit(
                 f"{', '.join(out)} rated BS.1534-3's mid-range anchor of the held-out references unimpaired past"
-                f" §4.1.2's {SCREEN_SHARE:.0%} ({record['screen']}), so the panel can't seat it"
+                f" §4.1.2's {SCREEN_SHARE:.0%}, or scored them alike ({record['screen']}), so the panel can't seat it"
             )
         scales = {name: judge["scale"] for name, judge in record["screen"].items()}
         record["judges"] = {
@@ -665,7 +670,8 @@ def main():
         )
     for group, against in result["dissent"].items():
         table.append(
-            f"DISSENT {group}: {', '.join(against)} significantly favour base on their own tests, and no gate fails"
+            f"DISSENT {group}: significantly for base on its own test, and no gate in {group} fails:"
+            f" {', '.join(against)}"
             + (f" ({GUARD} under the guard's margin)" if GUARD in against else "")
         )
     if changed:

@@ -233,7 +233,7 @@ jobs:
             echo "**lofi judge: $outcome**"
             echo
             echo "head \`$HEAD_SHA\` · merge-base \`$MERGE_BASE\` · judge at \`$JUDGE_AT\`"
-            [ -z "$dissent" ] || printf "\n**DISSENT: %s.** Each judge named significantly favours base on its own test, and no gate fails.\n" "$dissent"
+            [ -z "$dissent" ] || printf "\n**DISSENT: %s.** Each judge named significantly favours base on its own test, and no gate in its group fails.\n" "$dissent"
             if [ -n "$table" ]; then
               echo
               echo "<details><summary>scores</summary>"

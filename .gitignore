@@ -3,6 +3,9 @@
 /audio-demos/
 refs-lofigirl/
 /docs/superpowers/
+# what `modal run` leaves beside the judge it imports, as GitHub's Python.gitignore
+# names it, so a judge run leaves the tree a batch renders from clean
+__pycache__/
 # Reference recordings are copyrighted and rendered takes are local auditions:
 # no audio file is ever committed (CI fails on a tracked file this ignores).
 *.wav
