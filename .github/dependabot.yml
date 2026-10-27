@@ -30,5 +30,21 @@ updates:
       judge:
         patterns: ["*"]
     open-pull-requests-limit: 5
+    # The bumps the judge's own dependencies forbid, which would only turn the
+    # update job red with "No solution found" every week. Lift each when the
+    # bound holding it lifts.
+    ignore:
+      # laion-clap 1.1.7 and fadtk 1.1.0, both their newest, require numpy<2
+      - dependency-name: numpy
+        update-types: ["version-update:semver-major"]
+      # scipy 1.18 requires numpy>=2
+      - dependency-name: scipy
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      # fadtk 1.1.0 requires transformers<5
+      - dependency-name: transformers
+        update-types: ["version-update:semver-major"]
+      # transformers 4.57.6 requires huggingface-hub<1.0
+      - dependency-name: huggingface-hub
+        update-types: ["version-update:semver-major"]
     cooldown:
       default-days: 7
