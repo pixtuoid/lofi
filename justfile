@@ -11,7 +11,8 @@ _mise_paths := shell('command -v mise >/dev/null || exit 0; MISE_OFFLINE=1 mise 
 export PATH := (if _mise_paths == '' { '' } else { replace_regex(_mise_paths, '\r?\n', PATH_VAR_SEP) + PATH_VAR_SEP }) + env('PATH')
 
 # The nightly api/pixtuoid-lofi.txt is built on: rustdoc JSON is nightly-only,
-# and cargo-public-api 0.52 reads nightly-2025-11-22 or later
+# and cargo-public-api 0.52 reads the nightlies its README's compatibility
+# matrix lists for 0.52.x
 # (https://github.com/cargo-public-api/cargo-public-api/blob/v0.52.0/README.md)
 API_NIGHTLY := "nightly-2026-10-22"
 # the listing: `-s` is "--omit blanket-impls", in cargo-public-api's "shorthand
