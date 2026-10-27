@@ -134,11 +134,14 @@ class Steps(unittest.TestCase):
             failed = run_steps(steps, None, timeout_s)
         return failed, out.getvalue()
 
-    def test_steps_that_all_pass_name_none(self):
-        failed, out = self.run_steps("print('one')", "print('two')")
+    def test_steps_that_all_pass_name_none_and_print_their_time_but_not_their_stderr(self):
+        failed, out = self.run_steps("print('one')", "import sys; print('two'); print('noise', file=sys.stderr)")
         self.assertIsNone(failed)
         self.assertIn("one", out)
         self.assertIn("two", out)
+        self.assertNotIn("noise", out)
+        self.assertRegex(out, r"the step 0 took \d+ s")
+        self.assertRegex(out, r"the step 1 took \d+ s")
 
     def test_the_first_step_to_fail_is_named_with_its_stderr_and_ends_the_run(self):
         failed, out = self.run_steps(
