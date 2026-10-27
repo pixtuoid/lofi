@@ -160,7 +160,8 @@ jobs:
   # Advisory, so not in ci-gate: `test` already gates the same suite.
   coverage:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # twice the slowest run, which the commit that set it records
+    timeout-minutes: 60
     permissions:
       contents: read
       id-token: write
