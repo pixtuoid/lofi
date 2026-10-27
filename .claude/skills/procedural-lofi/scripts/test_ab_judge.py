@@ -85,11 +85,11 @@ class Anchors(unittest.TestCase):
         self.assertLessEqual(self.response_db(sos, 4500)[0], -50)
 
 
-class Deaf:
-    """A judge that hears nothing."""
+class Dull:
+    """A judge that hears only what an anchor keeps."""
 
     def score(self, x, sr):
-        return 0.0
+        return float(np.sum(signal.sosfilt(signal.butter(4, 1000, "lowpass", fs=sr, output="sos"), x[:, 0]) ** 2))
 
 
 class Bright:
@@ -102,10 +102,12 @@ class Bright:
 class Screening(unittest.TestCase):
     def test_a_judge_that_ties_every_anchor_is_screened_out_and_one_that_hears_them_is_kept(self):
         items = [(gain * take(1), SR) for gain in (1.0, 2.0, 4.0)]
-        screen = screened({"deaf": Deaf(), "bright": Bright()}, items)
-        self.assertEqual(set(screen["deaf"]["anchors"].values()), {1.0})
+        screen = screened({"dull": Dull(), "bright": Bright()}, items)
+        self.assertEqual(set(screen["dull"]["anchors"].values()), {1.0})
         self.assertEqual(set(screen["bright"]["anchors"].values()), {0.0})
-        self.assertEqual(screened_out(screen), ["deaf"])
+        # so only the anchors screen it out
+        self.assertGreater(screen["dull"]["scale"], 0)
+        self.assertEqual(screened_out(screen), ["dull"])
 
     def test_only_the_mid_range_anchor_past_bs1534s_share_screens_out(self):
         screen = {
