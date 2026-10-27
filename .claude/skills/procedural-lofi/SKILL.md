@@ -186,7 +186,7 @@ constraint and re-batch), and every taste axis is a data table or named const wi
 | **a new instrument**       | see the checklist below                                  |
 
 **Add-an-instrument checklist** (executed once for the `Pluck` lead — repeat verbatim):
-1. Write the voice as a pure note fn in `synth.rs`, a `NoteVoice` rendered at the rate it
+1. Write the voice as a pure note fn in `synth/voices.rs`, a `NoteVoice` rendered at the rate it
    is given, physics-first then tuned by ear/fingerprint (Phase 1-2 of this skill still apply).
 2. Add a `compose::LeadVoice` variant + its arm in `LeadVoice::voice` (the ONE dispatch).
 3. Give it a weight in its mood's `Style::voices` — the voice draws from `Stage::LeadVoice`'s
