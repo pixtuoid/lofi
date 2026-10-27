@@ -33,11 +33,27 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: pixtuoid/.github/.github/actions/setup-rust@main
-      - uses: release-plz/action@f67a7e724bdad4a0f6875f186060a0ca2770d76c # v0.5.147
+      - id: release-plz
+        uses: release-plz/action@f67a7e724bdad4a0f6875f186060a0ca2770d76c # v0.5.147
         with:
           command: release-pr
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+      # release-plz/action exits green with `prs` empty (its action.yml at
+      # v0.5.147), which it is "If release-plz didn't open or update a release
+      # PR" (https://release-plz.dev/docs/usage/release-pr#json-output), and the
+      # owner who dispatched it is owed an answer either way.
+      - name: A release PR must have been opened
+        env:
+          PR: ${{ steps.release-plz.outputs.pr }}
+          PRS_CREATED: ${{ steps.release-plz.outputs.prs_created }}
+        run: |
+          set -euo pipefail
+          if [ "$PRS_CREATED" != "true" ]; then
+            echo "::error::release-plz opened or updated no release PR: its log above says why"
+            exit 1
+          fi
+          echo "::notice::release PR: $(jq -r .html_url <<<"$PR")"
 
   # release-plz's own test with `release_always = false`: the pushed commit's
   # associated PRs include one whose head branch carries `pr_branch_prefix`
@@ -105,3 +121,45 @@ jobs:
           command: release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # release-plz releases "only when you merge the release PR"
+  # (https://release-plz.dev/docs/config, `release_always`), so a push that
+  # moves the crate to an untagged version is one: `release-merge` missing it
+  # skips `release`, in green, and leaves main at a version crates.io never
+  # got. A move back to a tagged version, the revert `release-merge` asks of a
+  # stale release PR, passes.
+  version-released:
+    name: a version bump is released
+    needs: [release-merge]
+    if: needs.release-merge.outputs.release == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      MISE_ENABLE_TOOLS: yq
+      BEFORE: ${{ github.event.before }}
+    steps:
+      # "Set `fetch-depth: 0` to fetch all history for all branches and tags"
+      # (https://github.com/actions/checkout/blob/v7.0.1/README.md): `BEFORE`, and
+      # the tags the check reads
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+        with:
+          # opinion: `latest` resolves every run, so a cache saves little and
+          # could hand back an older match
+          cache: false
+      - name: The crate moves to an untagged version only with a release
+        run: |
+          set -euo pipefail
+          version() { yq -p toml -o yaml '.package.version'; }
+          before=$(git show "$BEFORE:Cargo.toml" | version)
+          after=$(version < Cargo.toml)
+          if [ "$before" != "$after" ] && ! git rev-parse -q --verify "refs/tags/v$after" >/dev/null; then
+            echo "::error::this push moves the crate from v$before to v$after, which no tag names, and release-merge found no merged release PR in it, so nothing published v$after. Only a release PR moves the version (release-plz.toml's release_always): revert the bump, or re-run this workflow if release-merge missed a real one"
+            exit 1
+          fi
+          echo "v$after: unchanged, or tagged"
