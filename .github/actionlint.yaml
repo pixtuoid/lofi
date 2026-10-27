@@ -1,7 +1,0 @@
-paths:
-  .github/workflows/release-plz.yml:
-    ignore:
-      # GitHub supports `concurrency.queue`, and actionlint 1.7.12 doesn't know
-      # it yet. Drop this when https://github.com/rhysd/actionlint/pull/654
-      # ships, as pixtuoid's actionlint.yaml will.
-      - 'unexpected key "queue" for "concurrency" section'

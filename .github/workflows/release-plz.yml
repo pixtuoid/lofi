@@ -16,15 +16,6 @@ on:
 
 permissions: {}
 
-# Push runs go one at a time, in order: a push merged while a release waits
-# for its environment's approval would otherwise check the tag before that
-# release creates it. Under `queue: max` a pending run is kept, not cancelled
-# (https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency).
-concurrency:
-  group: release-plz-${{ github.event_name }}
-  queue: max
-  cancel-in-progress: false
-
 jobs:
   release-pr:
     name: release PR
@@ -132,30 +123,38 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # release-plz releases "only when you merge the release PR"
-  # (https://release-plz.dev/docs/config, `release_always`). `release-merge`
-  # refusing a stale release PR, or missing a merged one, skips `release`, and
-  # either leaves main at a version crates.io never got. Main at rest sits at a
-  # released version, so every push checks that its version is tagged.
-  version-tagged:
-    name: the crate's version is tagged
-    needs: [release-merge, release]
-    if: ${{ !cancelled() && needs.release-merge.result == 'success' }}
+  # (https://release-plz.dev/docs/config, `release_always`), so a push that
+  # moves the crate's version is one: `release-merge` missing it skips
+  # `release`, in green, and leaves main at a version crates.io never got.
+  version-released:
+    name: a version bump is released
+    needs: [release-merge]
+    if: needs.release-merge.outputs.release == 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
+    env:
+      MISE_ENABLE_TOOLS: yq
+      BEFORE: ${{ github.event.before }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
-      - uses: pixtuoid/.github/.github/actions/setup-rust@main
-      - name: The crate's version must be tagged
+      - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+        with:
+          # opinion: `latest` resolves every run, so a cache saves little and
+          # could hand back an older match
+          cache: false
+      - name: The crate's version moves only with a release
         run: |
           set -euo pipefail
-          version=$(cargo metadata --format-version 1 --no-deps --locked | jq -r '.packages[0].version')
-          if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null; then
-            echo "v$version is tagged"
-          else
-            echo "::error::main@${GITHUB_SHA::7} is at v$version, which no tag names, so crates.io never got it. release-plz tags only a merged release PR (release-plz.toml's release_always). If release-merge refused a stale one, revert its merge; if its release failed or was declined, re-run that run"
+          version() { yq -p toml -o yaml '.package.version'; }
+          before=$(git show "$BEFORE:Cargo.toml" | version)
+          after=$(version < Cargo.toml)
+          if [ "$before" != "$after" ]; then
+            echo "::error::this push moves the crate from v$before to v$after, and release-merge found no merged release PR in it, so nothing published v$after. Only a release PR moves the version (release-plz.toml's release_always): revert the bump, or re-run this workflow if release-merge missed a real one"
             exit 1
           fi
+          echo "v$after, as before"
