@@ -35,3 +35,9 @@ What the automatic review ([`claude-review.yml`](.github/workflows/claude-review
 2. **Proportion**: a branch, helper, parameter, type or test machinery that serves no reachable case; an invariant held by prose where a type could hold it; a hand-rolled mechanism `std` already provides ("reuse X", never a new dependency). The zero dependencies, the chunk-invariant and history-free render, and the frozen chains are load-bearing.
 3. **Naming**: a new or renamed name says what the item is at the head, reads right without this PR's context, uses the domain's existing word, and is the shortest that stays clear ([Rust API Guidelines](https://rust-lang.github.io/api-guidelines/naming.html)).
 4. **Sourced practice**: an external claim in the diff or the PR body that cites no source and is not labeled opinion breaches AGENTS.md's conventions.
+
+## Must-run
+
+The review only reads, so its summary names each item here the diff touches, and the author runs it and writes the result into the PR body. A result holds for the head it ran at. The [`local-review`](.claude/skills/local-review/SKILL.md) skill runs them.
+
+- **`lofi_bench`**: a change on `Performance::render`'s path runs it natively and on wasm, and the PR names the machine and the numbers.
