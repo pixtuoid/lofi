@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # `just preflight` before a push leaves: a red one costs a CI run and a review
-# run. `mise exec -- just setup` turns the hooks on.
+# run. `mise exec -- just setup` turns the hook on, so mise is there.
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 # mise.toml's just, which the justfile is written for, over any older one on
-# PATH; a bare just only where there is no mise
-if command -v mise >/dev/null; then just=(mise exec -- just); else just=(just); fi
-exec "${just[@]}" preflight
+# PATH
+exec mise exec -- just preflight

@@ -17,9 +17,10 @@ export PATH := (if _mise_paths == '' { '' } else { replace_regex(_mise_paths, '\
 API_NIGHTLY := "nightly-2026-10-22"
 # the listing: `-s` is "--omit blanket-impls", in cargo-public-api's "shorthand
 # for omitting noisy items" (`cargo public-api --help`)
-API_LIST := "RUSTUP_TOOLCHAIN=" + API_NIGHTLY + " cargo public-api -s"
+# mise.toml's cargo-public-api, whatever else is on PATH
+API_LIST := "RUSTUP_TOOLCHAIN=" + API_NIGHTLY + " mise exec -- cargo public-api -s"
 
-# Turn on the hooks and install mise.toml's tools, once per clone
+# Turn on the pre-push hook and install mise.toml's tools, once per clone
 setup:
     git config core.hooksPath .githooks
     mise install
@@ -64,10 +65,14 @@ api-check: _api-nightly
 _api-nightly:
     rustup toolchain install {{ API_NIGHTLY }} --profile minimal --no-self-update
 
-# Every failing test binary, not only the first
+# Every failing test binary, not only the first, and the doctests even then
 test:
-    cargo test --all-targets --no-fail-fast
-    cargo test --doc
+    #!/usr/bin/env bash
+    set -uo pipefail
+    failed=0
+    cargo test --all-targets --no-fail-fast || failed=1
+    cargo test --doc || failed=1
+    exit "$failed"
 
 # Cargo.toml's rust-version, checked as the Cargo book's CI guide checks it
 # (https://doc.rust-lang.org/cargo/guide/continuous-integration.html#verifying-rust-version)

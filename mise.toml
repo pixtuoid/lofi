@@ -15,9 +15,13 @@ zizmor = "latest"
 yq = "latest"
 "github:taiki-e/cargo-hack" = "latest"
 "aqua:taiki-e/cargo-llvm-cov" = "latest"
+# mise's cargo backend installs "from cargo-binstall's prebuilt binaries when
+# cargo-binstall is installed" (https://mise.jdx.dev/dev-tools/backends/cargo.html),
+# not by compiling
 cargo-binstall = "latest"
-# tool-exact, as api/pixtuoid-lofi.txt is: "a different version rewrites them
-# all", as pixtuoid's justfile says of its own listings
+# tool-exact, as api/pixtuoid-lofi.txt is, since the listing is this tool's
+# output (opinion); bumped by hand with API_NIGHTLY, since no bot reads
+# mise.toml
 "cargo:cargo-public-api" = "0.52.0"
 # compiles the judge's locks, and installs SKILL.md's judge venv
 uv = "latest"

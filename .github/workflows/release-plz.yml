@@ -137,7 +137,6 @@ jobs:
     permissions:
       contents: read
     env:
-      MISE_ENABLE_TOOLS: yq
       BEFORE: ${{ github.event.before }}
     steps:
       # "Set `fetch-depth: 0` to fetch all history for all branches and tags"
@@ -147,11 +146,9 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+      - uses: $/.github/actions/setup-tools
         with:
-          # opinion: `latest` resolves every run, so a cache saves little and
-          # could hand back an older match
-          cache: false
+          tools: yq
       - name: The crate moves to an untagged version only with a release
         run: |
           set -euo pipefail

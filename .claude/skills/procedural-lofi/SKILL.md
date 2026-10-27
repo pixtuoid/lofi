@@ -203,7 +203,7 @@ constraint and re-batch), and every taste axis is a data table or named const wi
    judges it on Modal (`judge/modal_judge.py`) for every PR that changes the render:
    ```bash
    J=~/.cache/lofi-judge; S=.claude/skills/procedural-lofi; L=$S/judge/judge-requirements.txt; uv venv --python 3.12 $J
-   uvx --from "uv==$(sed -nE 's/^UV_VERSION = "(.*)"$/\1/p' $S/judge/modal_judge.py)" uv pip install --python $J/bin/python --require-hashes -r $L --build-constraints $L --require-build-hashes
+   uvx --from "uv==$(sed -nE 's/^uv==([^ ]+).*/\1/p' $S/judge/modal-requirements.txt)" uv pip install --python $J/bin/python --require-hashes -r $L --build-constraints $L --require-build-hashes
    $J/bin/python $S/scripts/ab_judge.py DIR --refs REFS
    ```
    The owner's blind listen is optional and, when given, overrides the judge:

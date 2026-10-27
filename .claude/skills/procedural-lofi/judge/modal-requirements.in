@@ -1,3 +1,6 @@
 # The Modal client the CI's judge job runs `modal run` with, hash-locked in
 # modal-requirements.txt.
 modal==1.6.2
+# the uv the judge's image and SKILL.md's venv install with, here so that
+# Dependabot moves it; modal_judge.py reads it from modal-requirements.txt
+uv==0.13.6
