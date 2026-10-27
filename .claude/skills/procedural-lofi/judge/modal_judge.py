@@ -68,6 +68,11 @@ CPU = 2.0
 MEMORY_MIB = 12288
 JUDGE_TIMEOUT_S = 4500
 
+# a rehearsal step's limit, ten times the slower step's 64 s on a T4 (the
+# smoke's), so a hung model fails its step, not the function at
+# JUDGE_TIMEOUT_S (opinion)
+REHEARSAL_STEP_S = 640
+
 # the warm-up pair `build` judges: a take at lofi's own rate (`SAMPLE_RATE`
 # in src/dsp.rs), the one a batch's takes arrive at
 WARMUP_RATE = 44100
@@ -205,15 +210,21 @@ def rehearse():
         "import sys; sys.path.insert(0, sys.argv[1]); import ab_judge, soundfile as sf;"
         " print('smoke scores:', ab_judge.smoke(*sf.read(sys.argv[2], dtype='float32'), float(sys.argv[3])))"
     )
-    for run in (
-        [sys.executable, "-I", f"{REMOTE_SCRIPTS}/test_ab_judge.py"],
-        [sys.executable, "-I", "-c", smoke, REMOTE_SCRIPTS, str(take), str(WARMUP_CAND_GAIN)],
+    for step, run in (
+        ("tests", [sys.executable, "-I", f"{REMOTE_SCRIPTS}/test_ab_judge.py"]),
+        ("smoke", [sys.executable, "-I", "-c", smoke, REMOTE_SCRIPTS, str(take), str(WARMUP_CAND_GAIN)]),
     ):
-        done = subprocess.run(run, capture_output=True, text=True, env=offline)
+        try:
+            done = subprocess.run(run, capture_output=True, text=True, env=offline, timeout=REHEARSAL_STEP_S)
+        except subprocess.TimeoutExpired as late:
+            # bytes even under `text` (observed, Python 3.12)
+            heard = b"".join(o for o in (late.stdout, late.stderr) if o).decode(errors="replace")
+            print(f"{heard}the {step} ran past {REHEARSAL_STEP_S} s")
+            return {"failed": step, **took(started)}
         print(done.stdout + done.stderr if done.returncode else done.stdout)
         if done.returncode:
-            return {"ran": False, **took(started)}
-    return {"ran": True, **took(started)}
+            return {"failed": step, **took(started)}
+    return {"failed": None, **took(started)}
 
 
 @app.function(gpu="T4", cpu=CPU, memory=MEMORY_MIB, timeout=JUDGE_TIMEOUT_S)
@@ -265,9 +276,10 @@ def check():
     the cached models, read-only; exits non-zero when a test or a model
     failed."""
     result = rehearse.with_options(volumes={MODELS: models.with_mount_options(read_only=True)}).remote()
-    print(f"rehearsed: {'every model ran' if result['ran'] else 'a test failed'}; wall {result['wall_s']:.0f} s,"
+    failed = result["failed"]
+    print(f"rehearsed: {f'the {failed} failed' if failed else 'every model ran'}; wall {result['wall_s']:.0f} s,"
           f" judge CPU {result['cpu_s']:.0f} s, peak RSS {result['peak_rss_mib']:.0f} MiB")
-    if not result["ran"]:
+    if failed:
         raise SystemExit(1)
 
 
