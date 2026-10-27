@@ -156,11 +156,14 @@ def fetch_refs():
     return report
 
 
-def warm_take():
-    """The warm-up take, seeded noise, and its rate."""
+def write_warm(path, gain):
+    """Writes the warm-up take, seeded noise at `gain`, to `path`."""
     import numpy as np
+    import soundfile as sf
 
-    return WARMUP_LEVEL * np.random.default_rng(0).standard_normal((WARMUP_S * WARMUP_RATE, 2)), WARMUP_RATE
+    take = WARMUP_LEVEL * np.random.default_rng(0).standard_normal((WARMUP_S * WARMUP_RATE, 2))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    sf.write(path, take * gain, WARMUP_RATE, subtype="PCM_16")
 
 
 @app.function(gpu="T4", cpu=CPU, memory=MEMORY_MIB, volumes={MODELS: models, REFS: refs}, timeout=JUDGE_TIMEOUT_S)
@@ -168,13 +171,9 @@ def build():
     """Caches every model, the corpus's FAD statistics and the panel's
     screening by judging a warm-up pair as a batch would be judged, online,
     then measures what it took."""
-    import soundfile as sf
-
     warm = Path("/tmp/warm")
-    take, rate = warm_take()
     for side, gain in (("base", 1.0), ("cand", WARMUP_CAND_GAIN)):
-        (warm / side).mkdir(parents=True)
-        sf.write(warm / side / "gen_day_empty_000.wav", take * gain, rate, subtype="PCM_16")
+        write_warm(warm / side / "gen_day_empty_000.wav", gain)
         (warm / side / "COMMIT").write_text("0" * 40 + "\n")
     started = time.time()
     run = subprocess.run(
@@ -196,18 +195,24 @@ def build():
 @app.function(gpu="T4", cpu=CPU, memory=MEMORY_MIB, timeout=JUDGE_TIMEOUT_S, block_network=True, restrict_modal_access=True)
 def rehearse():
     """The judge's environment as this image builds it: `ab_judge.py`'s
-    tests, then its `smoke`, every model on the warm-up take."""
+    tests, then its `smoke`, every model on the warm-up take, each a child
+    process `took` counts."""
     started = time.time()
-    os.environ["HF_HUB_OFFLINE"] = "1"
-    tests = subprocess.run([sys.executable, "-I", f"{REMOTE_SCRIPTS}/test_ab_judge.py"], capture_output=True, text=True)
-    if tests.returncode:
-        print(tests.stdout + tests.stderr)
-        return {"ran": False, **took(started)}
-    sys.path.insert(0, REMOTE_SCRIPTS)
-    import ab_judge
-
-    take, rate = warm_take()
-    print(f"smoke scores: {ab_judge.smoke(take.astype('float32'), rate, WARMUP_CAND_GAIN)}")
+    offline = {**os.environ, "HF_HUB_OFFLINE": "1"}
+    take = Path("/tmp/smoke.wav")
+    write_warm(take, 1.0)
+    smoke = (
+        "import sys; sys.path.insert(0, sys.argv[1]); import ab_judge, soundfile as sf;"
+        " print('smoke scores:', ab_judge.smoke(*sf.read(sys.argv[2], dtype='float32'), float(sys.argv[3])))"
+    )
+    for run in (
+        [sys.executable, "-I", f"{REMOTE_SCRIPTS}/test_ab_judge.py"],
+        [sys.executable, "-I", "-c", smoke, REMOTE_SCRIPTS, str(take), str(WARMUP_CAND_GAIN)],
+    ):
+        done = subprocess.run(run, capture_output=True, text=True, env=offline)
+        print(done.stdout + done.stderr if done.returncode else done.stdout)
+        if done.returncode:
+            return {"ran": False, **took(started)}
     return {"ran": True, **took(started)}
 
 

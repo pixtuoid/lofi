@@ -2,6 +2,7 @@
 """ab_judge.py's tests that need its venv: `$J/bin/python -I test_ab_judge.py`,
 $J set up as SKILL.md's GENERATOR loop step 5 says."""
 
+import contextlib
 import errno
 import json
 import sys
@@ -29,10 +30,12 @@ from ab_judge import (
     screened,
     screen_file,
     screened_out,
+    smoke,
     stats_file,
     windows,
 )
 from scipy import signal
+from verdict import JUDGES
 
 SR = 44100
 NAME = "gen_day_empty_000.wav"
@@ -209,6 +212,40 @@ class CorpusCache(unittest.TestCase):
         with installed("2"):
             elsewhere = files()
         self.assertTrue(all(a != b for a, b in zip(here, elsewhere, strict=True)), elsewhere)
+
+
+
+class Smoke(unittest.TestCase):
+    RATE = 48000
+
+    def smoke(self, audiobox=1.0, distance=None):
+        """`smoke` over fake models: Audiobox scoring `audiobox`, TuneJury
+        0.5, and fadtk's distance `distance` (its own when None)."""
+        frames = np.random.default_rng(0).standard_normal((8, 4))
+        model = mock.Mock(sr=self.RATE, get_embedding=mock.Mock(return_value=frames))
+        patches = [
+            mock.patch("ab_judge.clap", return_value=model),
+            mock.patch("ab_judge.judge_device", return_value="cpu"),
+            mock.patch("ab_judge.Audiobox", return_value=mock.Mock(score=mock.Mock(return_value=audiobox))),
+            mock.patch("ab_judge.TuneJury", return_value=mock.Mock(score=mock.Mock(return_value=0.5))),
+        ]
+        if distance is not None:
+            patches.append(mock.patch("ab_judge.calc_frechet_distance", return_value=distance))
+        with contextlib.ExitStack() as stack:
+            for p in patches:
+                stack.enter_context(p)
+            return smoke(np.zeros((self.RATE, 2), dtype=np.float32), self.RATE, 0.5)
+
+    def test_every_judge_scores_the_smoke_take(self):
+        self.assertEqual(set(self.smoke()), set(JUDGES))
+
+    def test_a_panel_score_that_isnt_finite_fails_the_smoke(self):
+        with self.assertRaises(ValueError):
+            self.smoke(audiobox=float("nan"))
+
+    def test_a_distance_that_isnt_finite_fails_the_smoke(self):
+        with self.assertRaises(ValueError):
+            self.smoke(distance=float("nan"))
 
 
 if __name__ == "__main__":
