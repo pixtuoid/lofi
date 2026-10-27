@@ -128,7 +128,7 @@ fn run() -> io::Result<()> {
                     let song = batch.whole(seed, lane_gains).remove(0);
                     let took = started.elapsed();
                     let mix = song.mix();
-                    let lufs = whole_lufs(&mix);
+                    let lufs = mono_lufs(&mix);
                     // one loop of each lane, which the song plays again
                     let rendered = audition::samples_at(score.loop_secs(), SAMPLE_RATE);
                     (whole_rows(&song), mix, lufs, took, rendered)
@@ -137,7 +137,7 @@ fn run() -> io::Result<()> {
                     let started = Instant::now();
                     let frames = batch.perform(seed);
                     let took = started.elapsed();
-                    let lufs = stream_lufs(&frames);
+                    let lufs = frames_lufs(&frames);
                     let mix = fold(&frames);
                     // rendered again, so the render's time is the shipped one's
                     let mut stems = Stems::default();
@@ -167,8 +167,7 @@ fn run() -> io::Result<()> {
                 let shares = shares_of(&Spectrum::cross(&stem_transform, &transform), &spectrum);
                 print_row(
                     row.name,
-                    // a mono stem, heard from both speakers
-                    &format!("{:.1}", gated_lufs(&[&row.stem, &row.stem], SAMPLE_RATE)),
+                    &format!("{:.1}", mono_lufs(&row.stem)),
                     &shares.into_iter().map(pct).collect::<Vec<_>>(),
                     &format!("{:.0}", own.centroid()),
                     &row.seam.map_or("-".into(), |seam| format!("{seam:.2}")),
@@ -222,13 +221,13 @@ fn run() -> io::Result<()> {
     Ok(())
 }
 
-/// A whole-lane mix's gated loudness: a mono mix, heard from both speakers.
-fn whole_lufs(mix: &[f32]) -> f64 {
-    gated_lufs(&[mix, mix], SAMPLE_RATE)
+/// A mono signal's gated loudness, heard from both speakers.
+fn mono_lufs(mono: &[f32]) -> f64 {
+    gated_lufs(&[mono, mono], SAMPLE_RATE)
 }
 
-/// A stream take's gated loudness, on its two channels.
-fn stream_lufs(frames: &[Frame]) -> f64 {
+/// Frames' gated loudness, on their two channels.
+fn frames_lufs(frames: &[Frame]) -> f64 {
     let [left, right] = channels(frames);
     gated_lufs(&[&left, &right], SAMPLE_RATE)
 }
