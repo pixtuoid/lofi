@@ -1,7 +1,12 @@
+# the justfile's `mise env --paths`, which mise "adds" in 2026.10.11
+# (https://github.com/jdx/mise/releases/tag/v2026.10.11)
+min_version = "2026.10.11"
+
 # The tools the gate and the local loop run, each at its newest release. A CI
 # job's MISE_ENABLE_TOOLS names its own: "Allowlist of configured tools mise
 # uses; other tools are ignored" (https://mise.jdx.dev/configuration/settings.html).
 [tools]
+just = "latest"
 actionlint = "latest"
 # "actionlint checks if `shellcheck` command exists in your system and uses it
 # when it is found" (https://github.com/rhysd/actionlint/blob/main/docs/checks.md)

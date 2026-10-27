@@ -21,21 +21,19 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
+    env:
+      MISE_ENABLE_TOOLS: just
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: pixtuoid/.github/.github/actions/setup-rust@main
-      - run: cargo fmt --all --check
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo doc --no-deps
-        env:
-          RUSTDOCFLAGS: -D warnings
-      # a private item's broken link too, which the public build never
-      # renders, and an example's, which only `--examples` renders
-      - run: cargo doc --no-deps --document-private-items --lib --examples
-        env:
-          RUSTDOCFLAGS: -D warnings
+      - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+        with:
+          # opinion: `latest` resolves every run, so a cache saves little and
+          # could hand back an older match
+          cache: false
+      - run: just preflight
       - run: cargo package --locked
       # cargo 1.99.1's verify build passed a package whose example doesn't
       # compile (observed; cargo-package's docs name no target), so this is
@@ -74,17 +72,20 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
+    env:
+      MISE_ENABLE_TOOLS: just
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: pixtuoid/.github/.github/actions/setup-rust@main
-      # every failing test binary, not only the first
-      - run: cargo test --all-targets --no-fail-fast
-      - run: cargo test --doc
+      - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+        with:
+          # opinion: `latest` resolves every run, so a cache saves little and
+          # could hand back an older match
+          cache: false
+      - run: just test
 
-  # Cargo.toml's rust-version, checked as the Cargo book's CI guide checks it
-  # (https://doc.rust-lang.org/cargo/guide/continuous-integration.html#verifying-rust-version),
   # so a toolchain bump can't raise the real floor under the declared one
   msrv:
     runs-on: ubuntu-latest
@@ -92,7 +93,7 @@ jobs:
     permissions:
       contents: read
     env:
-      MISE_ENABLE_TOOLS: github:taiki-e/cargo-hack
+      MISE_ENABLE_TOOLS: just,github:taiki-e/cargo-hack
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -102,13 +103,15 @@ jobs:
           # opinion: `latest` resolves every run, so a cache saves little and
           # could hand back an older match
           cache: false
-      - run: cargo hack check --rust-version --all-targets --locked
+      - run: just msrv
 
   wasm:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
+    env:
+      MISE_ENABLE_TOOLS: just
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -116,13 +119,12 @@ jobs:
       - uses: pixtuoid/.github/.github/actions/setup-rust@main
         with:
           targets: wasm32-unknown-unknown
-      - run: cargo build --lib --target wasm32-unknown-unknown
-      - run: cargo build --example lofi_bench --target wasm32-unknown-unknown
-      # the wasm32-only items' lints and docs, which the host build compiles out
-      - run: cargo clippy --lib --example lofi_bench --target wasm32-unknown-unknown -- -D warnings
-      - run: cargo doc --no-deps --document-private-items --lib --example lofi_bench --target wasm32-unknown-unknown
-        env:
-          RUSTDOCFLAGS: -D warnings
+      - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+        with:
+          # opinion: `latest` resolves every run, so a cache saves little and
+          # could hand back an older match
+          cache: false
+      - run: just wasm
 
   workflows:
     runs-on: ubuntu-latest
@@ -130,7 +132,7 @@ jobs:
     permissions:
       contents: read
     env:
-      MISE_ENABLE_TOOLS: zizmor,actionlint,shellcheck,yq
+      MISE_ENABLE_TOOLS: just,zizmor,actionlint,shellcheck,yq
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -140,22 +142,9 @@ jobs:
           # opinion: `latest` resolves every run, so a cache saves little and
           # could hand back an older match
           cache: false
-      # The repo root, not just workflows/, so dependabot.yml is audited too.
-      - run: zizmor --config .github/zizmor.yml .
+      - run: just workflows
         env:
           GH_TOKEN: ${{ github.token }}
-      - run: actionlint
-      # a job blocks a merge only through ci-gate's needs; `coverage` is advisory
-      - name: ci-gate needs every other job
-        run: |
-          set -euo pipefail
-          jobs=$(yq '.jobs | keys | .[] | select(. != "ci-gate" and . != "coverage")' .github/workflows/ci.yml | sort)
-          needs=$(yq '.jobs["ci-gate"].needs[]' .github/workflows/ci.yml | sort)
-          if [ "$jobs" != "$needs" ]; then
-            echo "::error::ci-gate's needs differ from the gating jobs (< jobs, > needs)"
-            diff <(echo "$jobs") <(echo "$needs") || true
-            exit 1
-          fi
 
   # Advisory, so not in ci-gate: `test` already gates the same suite.
   coverage:
