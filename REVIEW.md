@@ -38,6 +38,6 @@ What the automatic review ([`claude-review.yml`](.github/workflows/claude-review
 
 ## Must-run
 
-The review only reads, so its summary names each item here the diff touches, and the author runs it and writes the result into the PR body. A result holds for the head it ran at. The [`local-review`](.claude/skills/local-review/SKILL.md) skill runs them.
+The review only reads, so the author runs each item here the diff touches and writes its result, for the head it ran at, into the PR body; the [`local-review`](.claude/skills/local-review/SKILL.md) skill runs them. A touched item with no result there is blocking.
 
 - **`lofi_bench`**: a change on `Performance::render`'s path runs it natively and on wasm, and the PR names the machine and the numbers.

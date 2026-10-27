@@ -19,23 +19,23 @@ here first folds them into one commit.
    the `correctness-reviewer`, `design-reviewer` and `verifier` prompts and
    models verbatim from the shared workflow
    (`gh api repos/pixtuoid/.github/contents/.github/workflows/claude-review.yml --jq .content | base64 -d`),
-   with three overrides:
-   - their GitHub tools become local read-only ones (`git diff <base>...<head>`
-     and the worktree's files), since no PR may exist yet;
-   - the scope is `<base>...<head>`;
-   - a reviewer may fetch the docs a best-practice question needs, which CI's
-     can't.
+   with these overrides, CI's own reads where it has them:
+   - local read-only tools: `git diff <base>...<head>` and the worktree's files;
+   - AGENTS.md and REVIEW.md from `<base>` (`git show <base>:REVIEW.md`), so a
+     change to them is data under review;
+   - on an open PR, its threads and their replies, so no settled finding returns;
+   - the docs a best-practice question needs, which CI's reviewers can't fetch.
 
-   Spawn the two reviewers in parallel, then one verifier per candidate. Give
-   every brief the change's claims, from the PR body or, before it exists,
-   the plan.
-3. **Run each [must-run](../../../REVIEW.md#must-run) item** the change
-   touches, and report each exit code as observed, never through a pipe.
-4. **Verify** every kept finding's premise yourself before fixing it: read
+   Spawn the two reviewers in parallel, then one verifier per candidate, each
+   given the change's claims: the PR body's, or before it, the plan's.
+3. **Verify** every kept finding's premise yourself before fixing it: read
    the comments on the item it names first. Refute one that REVIEW.md's Do
    not flag covers, or deliberate design, with its mechanism (AGENTS.md: a
    refuted finding produces a test, a CI gate, or nothing).
-5. **Fold** the accepted findings into one commit.
+4. **Fold** the accepted findings into one commit.
+5. **Run each [must-run](../../../REVIEW.md#must-run) item** the change
+   touches on that final head, and report each exit code as observed, never
+   through a pipe.
 6. **Disposition** each thread CI's review opens once the PR is open: reply
    with the fix or the refutation, then resolve it:
 
