@@ -46,14 +46,17 @@ pub fn plate_wet(lane: Lane) -> Option<(f64, f64)> {
     crate::stream::plate::wet(lane)
 }
 
-/// A song's plate's return, both sides, to `send` at unity from its first
-/// frame: the plate is linear, so a lane's own return is the plate on that
-/// lane alone.
-pub fn plate_return(send: &[f32]) -> [Vec<f32>; 2] {
+/// A song's plate's return to `send` at unity from its first frame: the
+/// plate is linear, so a lane's own return is the plate on that lane alone.
+pub fn plate_return(send: &[f32]) -> Vec<Frame> {
     let mut out = [Vec::new(), Vec::new()];
     let send: Vec<f64> = send.iter().map(|&x| f64::from(x)).collect();
     crate::stream::plate::Plate::new(SAMPLE_RATE).process(&send, &mut out);
-    out.map(|side| side.into_iter().map(|x| x as f32).collect())
+    let [left, right] = out;
+    left.into_iter()
+        .zip(right)
+        .map(|(l, r)| [l as f32, r as f32])
+        .collect()
 }
 
 use crate::dsp::SAMPLE_RATE;

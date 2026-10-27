@@ -160,12 +160,7 @@ fn unity_gap(batch: &Batch, seed: u64, lane: Lane) -> f64 {
     let mut stems = Stems::default();
     batch.perform_with(seed, |performance, out| stems.render(performance, out));
     let dry = &stems.lanes()[lane as usize];
-    let [left, right] = audition::plate_return(dry);
-    let wet: Vec<f32> = left
-        .iter()
-        .zip(&right)
-        .map(|(l, r)| (l + r) / 2.0)
-        .collect();
+    let wet = audition::fold(&audition::plate_return(dry));
     let loop_len = audition::samples_at(batch.score(seed).loop_secs(), SAMPLE_RATE);
     let second = loop_len..2 * loop_len;
     mono_lufs(&dry[second.clone()]) - mono_lufs(&wet[second])
