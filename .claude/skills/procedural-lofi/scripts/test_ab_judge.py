@@ -22,6 +22,7 @@ from ab_judge import (
     anchor_filter,
     cached_quietest,
     cached_screen,
+    environment,
     floored,
     mono_lufs,
     quietest_file,
@@ -198,8 +199,14 @@ class CorpusCache(unittest.TestCase):
                 screen_file(self.caches, self.SHA),
             )
 
-        here = files()
-        with mock.patch("ab_judge.environment", return_value=["torch==0"]):
+        def installed(version):
+            torch = mock.Mock(version=version, metadata={"Name": "Torch"})
+            return mock.patch("ab_judge.distributions", return_value=[torch])
+
+        with installed("1"):
+            self.assertIn("torch==1", environment())
+            here = files()
+        with installed("2"):
             elsewhere = files()
         self.assertTrue(all(a != b for a, b in zip(here, elsewhere, strict=True)), elsewhere)
 

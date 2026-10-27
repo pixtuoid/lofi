@@ -1,5 +1,6 @@
-# The tools the gate and the local loop run, each at its newest release; a CI
-# job installs only the ones its MISE_ENABLE_TOOLS names.
+# The tools the gate and the local loop run, each at its newest release. A CI
+# job's MISE_ENABLE_TOOLS names its own: "Allowlist of configured tools mise
+# uses; other tools are ignored" (https://mise.jdx.dev/configuration/settings.html).
 [tools]
 actionlint = "latest"
 # "actionlint checks if `shellcheck` command exists in your system and uses it
