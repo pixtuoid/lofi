@@ -1468,7 +1468,7 @@ fn groove(rng: &mut NoiseStream, g: &GrooveTemplate, beat_s: f32) -> Vec<Hit> {
 /// The bass window's lowest note, G1: a root folds into the octave from here.
 /// Opinion, from the sweep the commit that set it records: the smallest move
 /// that puts the mix's power under 62 Hz, as a share of its power under
-/// 125 Hz, inside the reference corpus's interquartile range with room on
+/// 125 Hz, inside the archive.org corpus's interquartile range with room on
 /// both sides.
 pub const BASS_LOW: u8 = 31;
 

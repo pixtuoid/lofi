@@ -3,12 +3,11 @@ reference corpus and the models two Volumes cache, for a batch this machine
 uploads.
 
 Usage, with modal-requirements.txt's client and a configured token:
-  modal volume put lofi-judge-refs REFS/manifest.json /manifest.json
-  modal run modal_judge.py::provision     fetch the corpus, then build the caches
+  modal run modal_judge.py::upload_refs --refs-dir REFS
+                                          the corpus, from REFS to the Volume
+  modal run modal_judge.py::provision     build the caches over it
   modal run modal_judge.py::check         run every model in this lock's image
                                           on the warm-up take, offline
-  modal run modal_judge.py::upload_missing --refs-dir REFS
-                                          what archive.org didn't serve, from REFS
   modal run modal_judge.py::judge --batch DIR --base SHA --cand SHA [--out OUT] [--force-score]
                                           judge DIR's base/ and cand/, rendered
                                           at the commits their COMMIT files name
@@ -26,8 +25,6 @@ import resource
 import subprocess
 import sys
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 
 import modal
@@ -54,15 +51,6 @@ UV_VERSION = re.search(r"^uv==(\S+)", (JUDGE / "modal-requirements.txt").read_te
 # them with the newest setuptools, unpinned
 LOCK = HERE / "judge-requirements.txt"
 REMOTE_LOCK = "/root/judge-requirements.txt"
-
-# what archive.org's bots guide asks of automated requests: "a descriptive
-# User-Agent header that identifies: The tool or bot name, Version number",
-# and to "Honor 429 Too Many Requests responses and Retry-After headers"
-# (https://archive.org/developers/bots.html); this one names no person
-USER_AGENT = "lofi-fetch-refs/1"
-SPACING_S = 2
-TRIES = 5
-FETCH_TIMEOUT_S = 120
 
 # over what the cache build and the full judge batches used, which the
 # commit that set them records; the timeout is twice the slowest batch
@@ -144,48 +132,6 @@ def mounted(batch):
         MODELS: models.with_mount_options(read_only=True),
         REFS: refs.with_mount_options(read_only=True),
     }
-
-
-def fetch(url):
-    """`url`'s bytes, or None once TRIES requests have failed."""
-    for attempt in range(TRIES):
-        time.sleep(SPACING_S)
-        request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-        try:
-            with urllib.request.urlopen(request, timeout=FETCH_TIMEOUT_S) as response:
-                return response.read()
-        except urllib.error.HTTPError as e:
-            after = e.headers.get("Retry-After", "")
-            time.sleep(int(after) if after.isdigit() else SPACING_S * 2**attempt)
-        except (urllib.error.URLError, TimeoutError):
-            time.sleep(SPACING_S * 2**attempt)
-    return None
-
-
-@app.function(volumes={REFS: refs}, timeout=JUDGE_TIMEOUT_S)
-def fetch_refs():
-    """Fetches each reference missing or unverified in the refs Volume, one at
-    a time, and keeps it only when its sha256 matches the manifest. With none
-    left missing, builds the caches."""
-    audio = Path(REFS) / "audio"
-    audio.mkdir(exist_ok=True)
-    served, kept, missing = 0, 0, []
-    for i, t in enumerate(tracks()):
-        path = audio / t["file"]
-        if path.is_file() and sha256(path.read_bytes()) == t["sha256"]:
-            kept += 1
-            continue
-        data = fetch(t["file_url"])
-        if data is None or sha256(data) != t["sha256"]:
-            missing.append(i)
-            continue
-        path.write_bytes(data)
-        served += 1
-    refs.commit()
-    report = {"served": served, "kept": kept, "missing": missing}
-    if not missing:
-        report["caches"] = build.remote()
-    return report
 
 
 def write_warm(path, gain):
@@ -286,14 +232,11 @@ def score(batch, paired, changed):
 
 @app.local_entrypoint()
 def provision():
-    """Fetches the corpus into the refs Volume and, once it is whole, builds
-    the caches; prints what each step did."""
-    report = fetch_refs.remote()
-    print(f"archive.org served {report['served']}; {report['kept']} were in the Volume;"
-          f" missing: {report['missing'] or 'none'}")
-    if "caches" in report:
-        print(f"caches: {report['caches']}")
-    if not report.get("caches", {}).get("built"):
+    """Builds the caches over the corpus in the refs Volume, which `Fad`
+    refuses unless every reference matches the manifest."""
+    report = build.remote()
+    print(f"caches: {report}")
+    if not report["built"]:
         raise SystemExit(1)
 
 
@@ -344,9 +287,10 @@ def judge(batch: str, base: str, cand: str, out: str = "", force_score: bool = F
 
 
 @app.local_entrypoint()
-def upload_missing(refs_dir: str):
+def upload_refs(refs_dir: str):
     """Uploads from `refs_dir` each reference the refs Volume lacks, once its
-    sha256 matches the manifest."""
+    sha256 matches the manifest, then the manifest, which replaces the
+    Volume's last: a judge never reads a manifest whose audio isn't there."""
     local = Path(refs_dir)
     manifest = json.loads((local / "manifest.json").read_text())["tracks"]
     present = {Path(e.path).name for e in refs.listdir("/audio")}
@@ -355,6 +299,8 @@ def upload_missing(refs_dir: str):
         for i in missing:
             path = local / "audio" / manifest[i]["file"]
             if sha256(path.read_bytes()) != manifest[i]["sha256"]:
-                raise SystemExit(f"reference {i} doesn't match its manifest sha256 here either")
+                raise SystemExit(f"reference {i} doesn't match its manifest sha256 here")
             upload.put_file(str(path), f"/audio/{manifest[i]['file']}")
-    print(f"uploaded references {missing or 'none'}")
+    with refs.batch_upload(force=True) as upload:
+        upload.put_file(str(local / "manifest.json"), "/manifest.json")
+    print(f"uploaded references {missing or 'none'} and the manifest")
