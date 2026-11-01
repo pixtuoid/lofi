@@ -51,23 +51,46 @@ pub fn plate_wet(lane: Lane) -> Option<(f64, f64)> {
     crate::stream::plate::wet(lane)
 }
 
-/// A song's plate's return to `send` at unity from its first frame: the
-/// plate is linear, so a lane's own return is the plate on that lane alone.
-pub fn plate_return(send: &[f32]) -> Vec<Frame> {
+/// A song's plate's return to `send` at unity from its first frame, dipping
+/// under `score`'s kicks loop after loop as a playing song's does: the plate
+/// is linear, so a lane's own return is the plate on that lane alone.
+pub fn plate_return(score: &Score, send: &[f32]) -> Vec<Frame> {
     let mut out = [Vec::new(), Vec::new()];
     let send: Vec<f64> = send.iter().map(|&x| f64::from(x)).collect();
     crate::stream::plate::Plate::new(SAMPLE_RATE).process(&send, &mut out);
+    let loop_len = samples_at(score.loop_secs(), SAMPLE_RATE);
+    let kicks: Vec<usize> = (0..=send.len() / loop_len)
+        .flat_map(|k| {
+            let onsets = kicks(&score.drums);
+            onsets
+                .into_iter()
+                .map(move |at| k * loop_len + samples_at(at, SAMPLE_RATE))
+        })
+        .collect();
+    let mut duck = Duck::new(
+        &kicks,
+        SIDECHAIN_DB,
+        SIDECHAIN_ATTACK_S,
+        SIDECHAIN_RELEASE_S,
+        SAMPLE_RATE,
+    );
+    duck.reach(send.len(), true);
     let [left, right] = out;
-    left.into_iter()
-        .zip(right)
-        .map(|(l, r)| [l as f32, r as f32])
+    (left.into_iter().zip(right).enumerate())
+        .map(|(n, (l, r))| {
+            let gain = duck.gain(n);
+            [(l * gain) as f32, (r * gain) as f32]
+        })
         .collect()
 }
 
+use crate::compose::kicks;
 use crate::dsp::SAMPLE_RATE;
 use crate::perform::Probe;
 use crate::stream::LANES;
+use crate::stream::lanes::Duck;
 use crate::stream::master::lookahead;
+use crate::synth::{SIDECHAIN_ATTACK_S, SIDECHAIN_DB, SIDECHAIN_RELEASE_S};
 use crate::{Controls, Frame, Performance};
 
 /// Song `k` of `seed`'s run, from its first bar to the next song's, played

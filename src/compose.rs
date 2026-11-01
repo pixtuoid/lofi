@@ -122,8 +122,8 @@ pub(super) const BEATS_PER_BAR: f32 = 4.0;
 /// Eighth notes in one bar: the comp's and the hats' slots.
 const EIGHTHS_PER_BAR: usize = 8;
 
-/// Drum event kinds. The night groove deliberately uses only Kick + Hat (the
-/// sleepy register); the day grooves carry the full kit.
+/// Drum event kinds. The night groove plays no open hat (the sleepy register);
+/// the day grooves carry the full kit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum DrumKind {
     Kick,
@@ -1254,8 +1254,8 @@ const DAY_GROOVES: [GrooveTemplate; 4] = [
         hats: DAY_HATS.skipping(0.15),
         open_hat: true,
     },
-    // boom-bap again, its hats dragged near a triplet, as about a quarter of
-    // LOFI-BIBLE.md §2's tracks swing
+    // boom-bap again, its hats dragged as far as about a quarter of
+    // LOFI-BIBLE.md §2's tracks drag theirs
     GrooveTemplate {
         kicks: [
             Kick {
