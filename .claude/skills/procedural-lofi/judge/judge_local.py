@@ -16,6 +16,11 @@ from verdict import FAILING, RANKS
 EXIT_CODES = {rank: int(rank in FAILING) for rank in RANKS}
 NOT_A_SCORE = 2
 
+# the T4s a batch takes at once, under the Starter plan's 10 GPUs
+# (https://modal.com/pricing), so a rehearsal or a second PR still gets one
+# (opinion)
+SHARDS = 8
+
 
 def exit_code(outcome):
     return EXIT_CODES.get(outcome, NOT_A_SCORE)
@@ -34,6 +39,26 @@ def select(root, base_sha, cand_sha, force_score):
         print(f"invalid batch: {e}", file=sys.stderr)
         raise SystemExit(NOT_A_SCORE) from None
     return takes, scored(root, takes, force_score)
+
+
+def dealt(pairs):
+    """`pairs` dealt to `SHARDS` containers, or one each if fewer. A pair
+    stays whole, so no difference between two hosts enters its deltas."""
+    return [pairs[i::SHARDS] for i in range(min(SHARDS, len(pairs)))]
+
+
+def merged(shards, changed):
+    """The seat `shards` share and their rows by take. A shard takes its own
+    batch's level, and a row is comparable to another only under one seat, so
+    anything but each pair in `changed` once, under one seat, ends the run
+    rather than reach a verdict."""
+    rows = [row for shard in shards for row in shard["rows"].items()]
+    if sorted(name for name, _ in rows) != sorted(changed):
+        sys.exit("the shards' rows aren't each pair sent, once")
+    seats = [shard["seat"] for shard in shards]
+    if any(seat != seats[0] for seat in seats):
+        sys.exit("the shards sat different panels")
+    return next(iter(seats), {}), dict(rows)
 
 
 def redact(text, tracks):

@@ -19,8 +19,11 @@ mod batch;
 use std::fs::File;
 use std::hash::{BuildHasher as _, RandomState};
 use std::io::{self, BufWriter, Write as _};
+use std::num::NonZero;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::thread;
 
 use pixtuoid_lofi::Frame;
 use pixtuoid_lofi::audition::Lane;
@@ -57,16 +60,17 @@ fn run() -> io::Result<()> {
     let mut order: Vec<(&String, &Take)> = files.iter().zip(&takes).collect();
     // rendered in file-name order, so the files' times don't give the seeds away
     order.sort_by_key(|&(file, _)| file);
-    for &(file, take) in &order {
-        let path = args.out.join(file);
-        write_wav(&path, &args.render(&take.run, take.seed)?)?;
-        if args.key.is_none() {
+    on_every_core(&order, |&(file, take)| {
+        write_wav(&args.out.join(file), &args.render(&take.run, take.seed)?)
+    })?;
+    if args.key.is_none() {
+        for &(file, take) in &order {
             let (seed, score) = (take.seed, take.run.score(take.seed));
             println!(
                 "  seed {seed:3}  {:>3.0} bpm  lead={:5}  {}",
                 score.bpm(),
                 score.lead_voice_name(),
-                path.display()
+                args.out.join(file).display()
             );
         }
     }
@@ -85,6 +89,34 @@ fn run() -> io::Result<()> {
         println!("  afplay {}", args.out.join(file).display());
     }
     Ok(())
+}
+
+/// `each` over `items`, each once, on as many threads as the machine runs,
+/// which takes can share since none reads another. The first thread's error
+/// is the run's.
+fn on_every_core<T: Sync>(
+    items: &[T],
+    each: impl Fn(&T) -> io::Result<()> + Sync,
+) -> io::Result<()> {
+    let next = AtomicUsize::new(0);
+    let threads = thread::available_parallelism().map_or(1, NonZero::get);
+    thread::scope(|scope| {
+        let workers: Vec<_> = (0..threads)
+            .map(|_| {
+                scope.spawn(|| {
+                    while let Some(item) = items.get(next.fetch_add(1, Ordering::Relaxed)) {
+                        each(item)?;
+                    }
+                    Ok(())
+                })
+            })
+            .collect();
+        (workers.into_iter()).try_for_each(|worker| {
+            worker
+                .join()
+                .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+        })
+    })
 }
 
 /// One take a run renders: its seed in one of the run's batches, and its
@@ -378,6 +410,27 @@ mod tests {
         assert_eq!(whole, stream);
         // the shape `ab_listen.py`'s NAME pairs
         assert_eq!(whole[0], (0, "gen_night_empty_000.wav".to_owned()));
+    }
+
+    #[test]
+    fn every_take_is_rendered_once() {
+        let takes: Vec<usize> = (0..64).collect();
+        let runs: Vec<AtomicUsize> = takes.iter().map(|_| AtomicUsize::new(0)).collect();
+        on_every_core(&takes, |&take| {
+            runs[take].fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        })
+        .expect("no take fails");
+        assert!(runs.iter().all(|run| run.load(Ordering::Relaxed) == 1));
+    }
+
+    #[test]
+    fn a_take_that_fails_fails_the_run() {
+        let failed = on_every_core(&[0, 1, 2], |&take| match take {
+            1 => Err(io::Error::other("it clips")),
+            _ => Ok(()),
+        });
+        assert_eq!(failed.expect_err("take 1 fails").to_string(), "it clips");
     }
 
     #[test]
