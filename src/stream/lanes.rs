@@ -143,10 +143,10 @@ impl Chain {
                 None,
                 duck,
             ),
-            Part::Bed {
-                mood: Mood::Day, ..
-            } => Self::Room(Room::new(len, &[], gains, sr)),
-            Part::Bed { .. } => Self::Room(Room::new(len, kicks, gains, sr)),
+            Part::Bed { .. } => {
+                let kicks = if part.ducks().is_empty() { &[] } else { kicks };
+                Self::Room(Room::new(len, kicks, gains, sr))
+            }
         }
     }
 
@@ -607,7 +607,7 @@ impl Tape {
 struct Duck {
     /// The kick onsets, in order, each with whether it sounded once the lane
     /// reached it: a kick struck while the drums are absent is silent, and a
-    /// duck under it would pump the room with no beat.
+    /// duck under it would pump the lane with no beat.
     kicks: Vec<(usize, bool)>,
     /// The first of `kicks` the lane hasn't reached.
     reached: usize,

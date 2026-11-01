@@ -590,10 +590,19 @@ impl Batch {
     ) -> Vec<WholeSong> {
         (0..)
             .zip(self.timeline(seed).songs)
-            .map(|(k, (controls, len))| WholeSong {
-                beds: render_take(&audition::song_score(seed, k, controls)),
-                gains: gains(controls),
-                len,
+            .map(|(k, (controls, len))| {
+                let score = audition::song_score(seed, k, controls);
+                // no kick sounds, so no lane ducks, as a stream song's doesn't
+                let silent = lane_gain(Lane::Drums, controls.intensity) == 0.0;
+                WholeSong {
+                    beds: render_take(&if silent {
+                        audition::unbeaten(&score)
+                    } else {
+                        score
+                    }),
+                    gains: gains(controls),
+                    len,
+                }
             })
             .collect()
     }

@@ -214,7 +214,7 @@ impl Part<'_> {
 
     /// The times in the loop a bed ducks under, in order: a night bed's
     /// kicks, so the night room breathes with its groove, while the day room
-    /// runs free. Nothing else ducks.
+    /// runs free. The other lanes' sidechain is `whole::sidechained`'s.
     pub(crate) fn ducks(&self) -> Vec<f32> {
         match *self {
             Part::Bed {

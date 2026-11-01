@@ -336,8 +336,8 @@ impl Schedule {
         self.start(song);
     }
 
-    /// Starts the next song, composed for `controls`, with every lane present
-    /// at its gain in `levels` for good.
+    /// Starts the next song, composed for `controls`, with every lane at its
+    /// gain in `levels` for good, and present where that gain sounds.
     #[cfg(test)]
     pub(crate) fn start_song_at(&mut self, controls: Controls, levels: [f64; LANES]) {
         let song = self.next_song(controls).at_levels(levels);

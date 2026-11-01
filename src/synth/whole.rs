@@ -181,17 +181,19 @@ pub(crate) fn sidechain_gain(since: usize, floor: f64, attack: usize, release: u
     }
 }
 
-/// `buf`, a loop of a generated lane, under `kicks`' sidechain.
+/// `buf`, a loop of a generated lane, under `kicks`' sidechain: a late kick's
+/// dip wraps, since the loop repeats into it.
 fn sidechain(buf: &mut [f32], kicks: &[f32]) {
     let floor = 10f64.powf(f64::from(SIDECHAIN_DB) / 20.0);
     let (attack, release) = (
         n_samples(SIDECHAIN_ATTACK_S),
         n_samples(SIDECHAIN_RELEASE_S),
     );
+    let len = buf.len();
     for &kick in kicks {
         let at = n_samples(kick);
-        for (since, slot) in buf.iter_mut().skip(at).take(attack + release).enumerate() {
-            *slot *= sidechain_gain(since, floor, attack, release) as f32;
+        for since in 0..attack + release {
+            buf[(at + since) % len] *= sidechain_gain(since, floor, attack, release) as f32;
         }
     }
 }
@@ -382,6 +384,55 @@ mod tests {
     use super::*;
     use crate::dsp::{band_energy_share, centroid_hz};
     use crate::score;
+
+    #[test]
+    fn a_late_kicks_dip_wraps_the_loop() {
+        let len = n_samples(1.0);
+        let mut buf = vec![1.0; len];
+        sidechain(&mut buf, &[0.95]);
+        assert!(buf[0] < 1.0, "the dip stopped at the seam");
+        assert_eq!(buf[len / 2], 1.0);
+    }
+
+    /// Against the brightened core, with no sidechain of its own to agree
+    /// with: a staged pad falls to the floor a kick's attack after it.
+    #[test]
+    fn a_staged_lane_reaches_the_floor_under_a_kick() {
+        let score = crate::compose::compose(Mood::Day, 0);
+        let core = render_part(
+            &part(&score, Lane::Pad),
+            score.loop_secs(),
+            &mut NoiseStream::new(2),
+        );
+        let mut bright = core.buf;
+        brighten(&mut bright);
+        let staged = staged_lane(&score, Lane::Pad, &mut NoiseStream::new(2));
+        let times = kicks(&score.drums);
+        let span = SIDECHAIN_ATTACK_S + SIDECHAIN_RELEASE_S;
+        let kick = (times.windows(2))
+            .find(|w| {
+                w[1] - w[0] > span
+                    && bright[n_samples(w[1])..]
+                        .iter()
+                        .take(4410)
+                        .any(|v| v.abs() > 0.01)
+            })
+            .map(|w| w[1])
+            .expect("a kick clear of the last one, under a chord");
+        let at = n_samples(kick) + n_samples(SIDECHAIN_ATTACK_S);
+        let i = at
+            + (0..4410)
+                .find(|j| bright[at + j].abs() > 0.01)
+                .expect("the chord sounds");
+        let elapsed = (i - at) as f64 / n_samples(SIDECHAIN_RELEASE_S) as f64;
+        let floor = 10f64.powf(f64::from(SIDECHAIN_DB) / 20.0);
+        let want = floor + (1.0 - floor) * elapsed;
+        let got = f64::from(staged.buf[i] / bright[i]);
+        assert!(
+            (got - want).abs() < 1e-3,
+            "{got} under the kick, for {want}"
+        );
+    }
 
     #[test]
     fn a_sidechain_falls_to_its_floor_and_comes_back_whole() {

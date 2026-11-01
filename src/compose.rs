@@ -204,6 +204,15 @@ impl Score {
         self.lead_voice.name()
     }
 
+    /// This score with its drums gone: what a room whose drums don't sound
+    /// plays, so no lane ducks under a kick nobody hears.
+    pub(crate) fn unbeaten(&self) -> Self {
+        Self {
+            drums: Vec::new(),
+            ..self.clone()
+        }
+    }
+
     /// Every kick's time in the loop, in order.
     #[cfg(test)]
     pub(super) fn kicks(&self) -> impl Iterator<Item = f32> {
