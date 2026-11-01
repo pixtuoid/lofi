@@ -1,6 +1,6 @@
 //! The frozen takes and the fixtures that render them: fingerprint anchors,
 //! whose pins prove the voices and cores `render_lane` shares still render the
-//! ratified sound.
+//! ratified sound, the drums' rows the kit that replaced the ratified one.
 
 use super::recipe::{DRUMS, KEYS, Part, SPARKLE};
 use super::voices::{ChordTone, chord, ep_pluck_h2, ep_pluck_vel};

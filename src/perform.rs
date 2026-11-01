@@ -317,9 +317,7 @@ mod tests {
 
     #[test]
     fn the_intensity_anchors_play_their_tiers_lane_for_lane() {
-        // pixtuoid's `TierGain`s (crates/pixtuoid-scene/src/audio/mod.rs at
-        // a63f178), but the lead's at the working tiers and the bass's under
-        // its trim, each tier's lanes in `Lane::ALL` order
+        // `tier_gains`, each tier's lanes in `Lane::ALL` order
         let trim = 10f64.powf(f64::from(crate::stream::master::BASS_TRIM_DB) / 20.0) as f32;
         let bass = |gain: f32| gain * trim;
         let lift = 10f64.powf(f64::from(crate::stream::master::DRUMS_LIFT_DB) / 20.0) as f32;

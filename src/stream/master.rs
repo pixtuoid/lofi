@@ -13,12 +13,11 @@ pub const TIER_INTENSITIES: [f32; 3] = [0.0, 0.5, 1.0];
 /// Each lane's gain at each of [`TIER_INTENSITIES`]: pixtuoid's `TierGain`s,
 /// moved here from
 /// <https://github.com/pixtuoid/pixtuoid/blob/a63f1782f477c357666e71a9c1147090b47fe17d/crates/pixtuoid-scene/src/audio/mod.rs#L98-L107>,
-/// but the lead's at the working tiers, and the bass's under [`BASS_TRIM_DB`].
+/// but the lead's at the working tiers, the pad's, drums' and bass's there to
+/// LOFI-BIBLE.md §3's stem shares, and the bass's under [`BASS_TRIM_DB`].
 fn tier_gains(lane: Lane) -> [f32; 3] {
     match lane {
-        // the bed of an empty room; under the beat, where Lofi Girl's stems hold
-        // 38% of a mix's power in everything but the drums and bass (the study
-        // in the commit that set these)
+        // the bed of an empty room, and under the beat at the working tiers
         Lane::Pad => [0.75, 0.45, 0.40],
         // a melodic layer at every tier, as lofi tracks carry one (Fields-Meyer
         // 2025, pp.117-118): under the keys, and a little more where "busy
@@ -39,16 +38,15 @@ fn tier_gains(lane: Lane) -> [f32; 3] {
     }
 }
 
-/// How far under pixtuoid's tier gains the bass plays: what holds its share of
+/// How far under [`tier_gains`]' figures the bass plays: what holds its share of
 /// the mix's gated loudness since its window rose (`compose`'s `BASS_LOW`).
 /// Opinion, sized by the measurement in the commit that set it.
 pub(crate) const BASS_TRIM_DB: f32 = -1.5;
 
-/// How far over its stem's peak the drums play: Lofi Girl's stems hold 22-40%
-/// of a mix's power in the drums (the study in the commit that set this),
-/// which no gain under unity reaches from a stem normalized to its peak. As
-/// high as a take at [`TARGET_LUFS`](crate::audition::TARGET_LUFS) keeps from
-/// clipping.
+/// How far over its stem's peak the drums play: toward LOFI-BIBLE.md §3's stem
+/// share, which no gain under unity reaches from a stem normalized to its
+/// peak, and as far as a take at
+/// [`TARGET_LUFS`](crate::audition::TARGET_LUFS) keeps from clipping.
 pub(crate) const DRUMS_LIFT_DB: f32 = 3.0;
 
 /// `lane`'s gain at `intensity`: its tier's at each of

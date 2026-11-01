@@ -23,8 +23,8 @@ pub(super) fn ep_pluck_h2(midi: u8, dur_s: f32, vel: f32, h2: f32, sr: u32) -> V
 
 /// A kick's length, the Hz its pitch settles on, how far over that it starts
 /// and how fast it falls there, and how fast its level falls: set so the
-/// rendered kick reads as Lofi Girl's do in the study of 2026-11-01, power at
-/// 50 Hz, down 20 dB in 115 ms (the figures are in the commit that set them).
+/// rendered kick reads as LOFI-BIBLE.md §3's does, which the commit that set
+/// them measures.
 const KICK_S: f32 = 0.2;
 const KICK_FLOOR_HZ: f32 = 44.0;
 const KICK_SWEEP_HZ: f32 = 50.0;
@@ -52,7 +52,7 @@ fn kick(rng: &mut NoiseStream, sr: u32) -> Vec<f32> {
 }
 
 /// A snare's length, its noise band, how fast its noise falls, and its tone,
-/// set toward Lofi Girl's: power around 1.1 kHz, down 20 dB in 50 ms.
+/// set toward LOFI-BIBLE.md §3's.
 const SNARE_S: f32 = 0.16;
 const SNARE_BAND_HZ: (f32, f32) = (450.0, 2400.0);
 const SNARE_DECAY_RATE: f32 = 40.0;
@@ -83,8 +83,8 @@ fn snare(rng: &mut NoiseStream, sr: u32) -> Vec<f32> {
 /// §3 low-passes the drums into, so the hat sounds under the drums' cutoff
 /// and the tape's [`ROLLOFF_HZ`](super::ROLLOFF_HZ).
 const HAT_HZ: f32 = 3000.0;
-/// A hat's level under the kick and snare: 6 dB under the one that played
-/// above the chain, now that its band sounds (opinion, judged).
+/// A hat's level under the kick and snare, sized by the mix's 2-4 kHz in the
+/// commit that set it (opinion, judged).
 const HAT_LEVEL: f32 = 0.15;
 
 /// The metallic hash an analogue hat strikes: six square waves "tuned to
