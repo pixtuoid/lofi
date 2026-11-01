@@ -240,7 +240,7 @@ mod tests {
     use crate::compose::Lane;
     use crate::compose::{Edge, Form};
     use crate::dsp::NoiseStream;
-    use crate::stream::schedule::{ANTICIPATION_S, UNITY, bars_and_len};
+    use crate::stream::schedule::{ANTICIPATION_S, bars_and_len};
 
     /// The bars' first frames of song `k` of `seed`'s run under `c` playing
     /// [`Form::plain`], and its length.
