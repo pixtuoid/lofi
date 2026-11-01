@@ -19,7 +19,8 @@ use crate::compose::{Lane, Mood};
 use crate::dsp::NoiseStream;
 use crate::synth::{
     DRIVE, DUCK_DB, DUCK_RELEASE_S, HEAD_BUMP_HZ, HEAD_BUMP_MIX, HISS_HZ, HISS_LEVEL, HUM_HZ,
-    HUM_SWELL_HZ, PadTone, Part, ROLLOFF_HZ, TILT_HZ, TILT_LIFT, WARPS, room_tone, samples_at,
+    HUM_SWELL_HZ, PadTone, Part, ROLLOFF_HZ, SIDECHAIN_ATTACK_S, SIDECHAIN_DB, SIDECHAIN_RELEASE_S,
+    TILT_HZ, TILT_LIFT, WARPS, room_tone, samples_at, sidechain_gain, sidechained,
 };
 
 /// The order of each slope that stands in for a whole-lane brickwall.
@@ -71,13 +72,13 @@ pub(crate) fn staging(mood: Mood, lane: Lane) -> [f64; 2] {
         (Mood::Day, Lane::Pad) => [0.1376, 0.7424],
         (Mood::Day, Lane::Sparkle) => [1.1440, 0.5299],
         (Mood::Day, Lane::Keys) => [0.5419, 0.7848],
-        (Mood::Day, Lane::Drums) => [0.6785, 0.6305],
+        (Mood::Day, Lane::Drums) => [0.9134, 0.6438],
         (Mood::Day, Lane::Texture) => [3.1570, 0.5869],
         (Mood::Day, Lane::Bass) => [0.8351, 0.6117],
         (Mood::Night, Lane::Pad) => [0.2049, 0.7833],
         (Mood::Night, Lane::Sparkle) => [1.2683, 0.5361],
         (Mood::Night, Lane::Keys) => [1.0453, 0.6983],
-        (Mood::Night, Lane::Drums) => [1.0628, 0.7487],
+        (Mood::Night, Lane::Drums) => [1.3995, 0.6367],
         (Mood::Night, Lane::Texture) => [3.0763, 0.6012],
         (Mood::Night, Lane::Bass) => [1.3064, 0.6026],
     }
@@ -93,8 +94,8 @@ pub(crate) enum Chain {
 impl Chain {
     /// `lane`'s chain in a `mood` song `len` frames long at `sr`, picked by
     /// its `part` as `render_lane` picks its whole-lane core, playing under
-    /// `automation` from its first frame; the texture ducks under each onset
-    /// in `kicks`.
+    /// `automation` from its first frame; the sidechained lanes and the night
+    /// texture duck under each onset in `kicks`.
     pub(crate) fn new(
         mood: Mood,
         lane: Lane,
@@ -106,7 +107,17 @@ impl Chain {
     ) -> Self {
         let gains = staging(mood, lane);
         let darkens = rain::darkens(lane);
-        let tape = |own, pad| Self::Tape(Tape::new(own, pad, darkens, gains, automation, sr));
+        let duck = sidechained(lane).then(|| {
+            Duck::new(
+                kicks,
+                SIDECHAIN_DB,
+                SIDECHAIN_ATTACK_S,
+                SIDECHAIN_RELEASE_S,
+                sr,
+            )
+        });
+        let tape =
+            |own, pad, duck| Self::Tape(Tape::new(own, pad, darkens, gains, duck, automation, sr));
         match part {
             Part::Chords { .. } => {
                 let pad = PadTone::of(mood);
@@ -114,7 +125,7 @@ impl Chain {
                     corner_hz: pad.cutoff_hz,
                     drive: f64::from(DRIVE),
                 };
-                tape(own, Some(pad))
+                tape(own, Some(pad), duck)
             }
             Part::Notes { recipes: r, .. } => tape(
                 Tone::Graded(Grade::new(
@@ -122,6 +133,7 @@ impl Chain {
                     [DRIVE, DRIVE],
                 )),
                 None,
+                duck,
             ),
             Part::Hits { recipes: r, .. } => tape(
                 Tone::Graded(Grade::new(
@@ -129,8 +141,12 @@ impl Chain {
                     [r.night.drive, r.day.drive],
                 )),
                 None,
+                duck,
             ),
-            Part::Bed { .. } => Self::Room(Room::new(len, kicks, gains, sr)),
+            Part::Bed { .. } => {
+                let kicks = if part.ducks().is_empty() { &[] } else { kicks };
+                Self::Room(Room::new(len, kicks, gains, sr))
+            }
         }
     }
 
@@ -163,7 +179,8 @@ impl Chain {
 
     /// Plays the lane's frames from song frame `from` in place, under
     /// `automation`, working in `work`; the texture draws its hiss from
-    /// `noise`, and ducks under the kicks in them if `drums_present`.
+    /// `noise`; a lane that ducks does so under the kicks in them if
+    /// `drums_present`.
     pub(crate) fn process(
         &mut self,
         buf: &mut [f64],
@@ -174,7 +191,7 @@ impl Chain {
         work: &mut Vec<f64>,
     ) {
         match self {
-            Self::Tape(tape) => tape.process(buf, from, automation, work),
+            Self::Tape(tape) => tape.process(buf, from, automation, drums_present, work),
             Self::Room(room) => room.process(buf, from, noise, drums_present, work),
         }
     }
@@ -440,6 +457,8 @@ pub(crate) struct Tape {
     darkens: bool,
     /// The pad's slow swell.
     pad: Option<PadTone>,
+    /// The sidechain it plays under, if any.
+    duck: Option<Duck>,
     /// The corner the tone is tuned to.
     tuned: f32,
     gains: [f64; 2],
@@ -463,6 +482,7 @@ impl Tape {
         pad: Option<PadTone>,
         darkens: bool,
         gains: [f64; 2],
+        duck: Option<Duck>,
         automation: &Automation,
         sr: u32,
     ) -> Self {
@@ -480,6 +500,7 @@ impl Tape {
             tuned: cutoff_hz,
             darkens,
             pad,
+            duck,
             gains,
             warp: DelayLine::new(2.0 * reach),
             warps,
@@ -501,12 +522,13 @@ impl Tape {
     }
 
     /// Plays `buf`, song frames from `from` on, under `automation`, its head
-    /// bump's band in `band`.
+    /// bump's band in `band`, and under its sidechain if `drums_present`.
     fn process(
         &mut self,
         buf: &mut [f64],
         from: usize,
         automation: &Automation,
+        drums_present: bool,
         band: &mut Vec<f64>,
     ) {
         let [gain_in, gain_out] = self.gains;
@@ -556,6 +578,12 @@ impl Tape {
         for x in buf.iter_mut() {
             *x *= gain_out;
         }
+        if let Some(duck) = &mut self.duck {
+            duck.reach(from + len, drums_present);
+            for (n, x) in (from..).zip(buf.iter_mut()) {
+                *x *= duck.gain(n);
+            }
+        }
     }
 
     /// The pad's swell on frame `n`; 1 on every other lane.
@@ -574,6 +602,67 @@ impl Tape {
     }
 }
 
+/// A lane's dip under the kicks the form strikes.
+#[derive(Debug)]
+struct Duck {
+    /// The kick onsets, in order, each with whether it sounded once the lane
+    /// reached it: a kick struck while the drums are absent is silent, and a
+    /// duck under it would pump the lane with no beat.
+    kicks: Vec<(usize, bool)>,
+    /// The first of `kicks` the lane hasn't reached.
+    reached: usize,
+    /// The first of `kicks` whose duck still releases.
+    ducking: usize,
+    /// The floor gain, and the attack and release in frames.
+    floor: f64,
+    attack: usize,
+    release: usize,
+}
+
+impl Duck {
+    fn new(kicks: &[usize], db: f32, attack_s: f32, release_s: f32, sr: u32) -> Self {
+        Self {
+            kicks: kicks.iter().map(|&kick| (kick, false)).collect(),
+            reached: 0,
+            ducking: 0,
+            floor: gain_of_db(f64::from(db)),
+            attack: samples_at(attack_s, sr),
+            release: samples_at(release_s, sr),
+        }
+    }
+
+    /// Marks the kicks before song frame `end` as sounded or not, which a
+    /// step holds from one latch to the next.
+    fn reach(&mut self, end: usize, drums_present: bool) {
+        while let Some(kick) = self.kicks.get_mut(self.reached)
+            && kick.0 < end
+        {
+            kick.1 = drums_present;
+            self.reached += 1;
+        }
+    }
+
+    /// The gain on frame `n`: each sounded kick's dip, multiplied where they
+    /// overlap, as the whole-lane lanes duck.
+    fn gain(&mut self, n: usize) -> f64 {
+        let span = self.attack + self.release;
+        while self
+            .kicks
+            .get(self.ducking)
+            .is_some_and(|&(kick, _)| kick + span <= n)
+        {
+            self.ducking += 1;
+        }
+        let (floor, attack, release) = (self.floor, self.attack, self.release);
+        self.kicks[self.ducking..]
+            .iter()
+            .take_while(|&&(kick, _)| kick <= n)
+            .filter(|&&(_, sounded)| sounded)
+            .map(|&(kick, _)| sidechain_gain(n - kick, floor, attack, release))
+            .product()
+    }
+}
+
 /// The texture's chain: its bed of hiss, room tone and the lane's crackle,
 /// crossfaded at the song's ends and ducked under the night kicks, then the
 /// tilt.
@@ -581,17 +670,7 @@ impl Tape {
 pub(crate) struct Room {
     hiss: Hiss,
     gains: [f64; 2],
-    /// The kick onsets the form strikes, in order, each with whether it
-    /// sounded once the bed reached it: a kick struck while the drums are
-    /// absent is silent, and a duck under it would pump the room with no beat.
-    kicks: Vec<(usize, bool)>,
-    /// The first of `kicks` the bed hasn't reached.
-    reached: usize,
-    /// The first of `kicks` whose duck still releases.
-    ducking: usize,
-    /// The duck's floor gain, and its release in frames.
-    floor: f64,
-    release: usize,
+    duck: Duck,
     tilt: Tilt,
     /// The song's length, and the bed's crossfade past each end, in frames.
     len: usize,
@@ -604,11 +683,7 @@ impl Room {
         Self {
             hiss: Hiss::new(HISS_HZ, sr),
             gains,
-            kicks: kicks.iter().map(|&kick| (kick, false)).collect(),
-            reached: 0,
-            ducking: 0,
-            floor: gain_of_db(f64::from(DUCK_DB)),
-            release: samples_at(DUCK_RELEASE_S, sr),
+            duck: Duck::new(kicks, DUCK_DB, 0.0, DUCK_RELEASE_S, sr),
             tilt: Tilt::new(TILT_HZ, f64::from(TILT_LIFT), sr),
             len,
             crossfade: samples_at(BED_CROSSFADE_S, sr),
@@ -633,12 +708,7 @@ impl Room {
         drums_present: bool,
         hissed: &mut Vec<f64>,
     ) {
-        while let Some(kick) = self.kicks.get_mut(self.reached)
-            && kick.0 < from + buf.len()
-        {
-            kick.1 = drums_present;
-            self.reached += 1;
-        }
+        self.duck.reach(from + buf.len(), drums_present);
         let [gain_in, gain_out] = self.gains;
         let end = self.end();
         let bed = end.saturating_sub(from).min(buf.len());
@@ -648,7 +718,7 @@ impl Room {
         for (i, n) in (from..from + buf.len()).enumerate() {
             buf[i] = if n < end {
                 let sum = hissed[i] * f64::from(HISS_LEVEL) + self.hum(n) + buf[i];
-                sum * self.crossfade_gain(n) * gain_in * self.duck(n)
+                sum * self.crossfade_gain(n) * gain_in * self.duck.gain(n)
             } else {
                 0.0
             };
@@ -678,26 +748,6 @@ impl Room {
             return 1.0;
         };
         (x * FRAC_PI_2).sin()
-    }
-
-    /// The duck's gain on frame `n`: each sounded kick's dip releasing
-    /// linearly, multiplied where releases overlap, as the whole-lane night
-    /// texture ducks.
-    fn duck(&mut self, n: usize) -> f64 {
-        while self
-            .kicks
-            .get(self.ducking)
-            .is_some_and(|&(kick, _)| kick + self.release <= n)
-        {
-            self.ducking += 1;
-        }
-        let (floor, release) = (self.floor, self.release as f64);
-        self.kicks[self.ducking..]
-            .iter()
-            .take_while(|&&(kick, _)| kick <= n)
-            .filter(|&&(_, sounded)| sounded)
-            .map(|&(kick, _)| floor + (1.0 - floor) * (n - kick) as f64 / release)
-            .product()
     }
 
     /// Whether the bed is past its end at song frame `at` with its tilt at
@@ -786,7 +836,7 @@ mod tests {
 
     impl Playing {
         fn process(&mut self, buf: &mut [f64]) {
-            (self.tape).process(buf, self.at, &self.automation, &mut self.work);
+            (self.tape).process(buf, self.at, &self.automation, false, &mut self.work);
             self.at += buf.len();
         }
 
@@ -1067,9 +1117,9 @@ mod tests {
                 drive: f64::from(drive),
             };
             let automation = Automation::new(Controls::default(), None);
-            let mut tape = Tape::new(own, None, false, [1.0, 1.0], &automation, sr);
+            let mut tape = Tape::new(own, None, false, [1.0, 1.0], None, &automation, sr);
             let mut buf: Vec<f64> = input.iter().map(|&v| f64::from(v)).collect();
-            tape.process(&mut buf, 0, &automation, &mut Vec::new());
+            tape.process(&mut buf, 0, &automation, false, &mut Vec::new());
             buf.iter().map(|&v| v as f32).collect()
         };
         let n = samples_at(2.0, sr);
@@ -1120,7 +1170,7 @@ mod tests {
             drive: f64::from(DRIVE),
         };
         let automation = Automation::new(Controls::default(), None);
-        let tape = Tape::new(own, Some(pad), false, [1.0, 1.0], &automation, sr);
+        let tape = Tape::new(own, Some(pad), false, [1.0, 1.0], None, &automation, sr);
         let mut off = Vec::new();
         for n in [(1 << 24) + 1, (1 << 24) + 3, (1 << 26) + 5, (1 << 27) + 7] {
             let hum = f64::from(room_tone(exact(HUM_HZ, n), exact(HUM_SWELL_HZ, n)));
@@ -1177,10 +1227,10 @@ mod tests {
         // misses it by 4.5 LU
         const TOLERANCE_LU: f64 = 1.5;
         let whole_lane: [(Mood, [f64; Lane::ALL.len()]); 2] = [
-            (Mood::Day, [-12.89, -18.63, -16.86, -17.87, -34.91, -11.83]),
+            (Mood::Day, [-13.09, -18.82, -17.25, -20.80, -34.91, -12.18]),
             (
                 Mood::Night,
-                [-11.76, -19.97, -16.99, -17.20, -36.23, -10.22],
+                [-11.92, -20.13, -17.57, -22.69, -36.23, -10.53],
             ),
         ];
         let sr = SAMPLE_RATE;

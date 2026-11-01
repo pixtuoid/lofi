@@ -1,6 +1,6 @@
 //! The frozen takes and the fixtures that render them: fingerprint anchors,
 //! whose pins prove the voices and cores `render_lane` shares still render the
-//! ratified sound.
+//! ratified sound, the drums' rows the kit that replaced the ratified one.
 
 use super::recipe::{DRUMS, KEYS, Part, SPARKLE};
 use super::voices::{ChordTone, chord, ep_pluck_h2, ep_pluck_vel};
@@ -270,11 +270,12 @@ mod tests {
                 350.1,
                 &[(125.0, 250.0, 0.312), (250.0, 500.0, 0.542)],
             ),
+            // the kit that replaced the ratified one, not the python chain
             (
                 "drums",
                 stem_drums(&mut NoiseStream::new(4)),
-                214.6,
-                &[(62.5, 125.0, 0.519), (125.0, 250.0, 0.408)],
+                142.8,
+                &[(62.5, 125.0, 0.615), (125.0, 250.0, 0.026)],
             ),
         ];
         for (name, buf, ref_centroid, bands) in cases {
@@ -352,12 +353,13 @@ mod tests {
                 0.10,
                 &[(125.0, 250.0, 0.729), (250.0, 500.0, 0.253)],
             ),
+            // the kit that replaced the ratified one, not the python chain
             (
                 "night_drums",
                 night_drums(&mut NoiseStream::new(4)),
-                118.8,
+                76.5,
                 0.15,
-                &[(62.0, 125.0, 0.561), (125.0, 250.0, 0.412)],
+                &[(62.0, 125.0, 0.700), (125.0, 250.0, 0.008)],
             ),
         ];
         for (name, buf, ref_centroid, tol, bands) in cases {
@@ -403,12 +405,13 @@ mod tests {
                 0.10,
                 &[(125.0, 250.0, 0.323), (250.0, 500.0, 0.556)],
             ),
+            // the kit that replaced the ratified one, not the python chain
             (
                 "day2_drums",
                 day_take_drums(&score::DAY2, &mut NoiseStream::new(4)),
-                235.5,
+                156.6,
                 0.15,
-                &[(62.5, 125.0, 0.492), (125.0, 250.0, 0.420)],
+                &[(62.5, 125.0, 0.615), (125.0, 250.0, 0.034)],
             ),
             (
                 "day3_pad",
@@ -431,12 +434,13 @@ mod tests {
                 0.10,
                 &[(125.0, 250.0, 0.404), (250.0, 500.0, 0.558)],
             ),
+            // the kit that replaced the ratified one, not the python chain
             (
                 "day3_drums",
                 day_take_drums(&score::DAY3, &mut NoiseStream::new(4)),
-                192.2,
+                123.3,
                 0.15,
-                &[(62.5, 125.0, 0.521), (125.0, 250.0, 0.414)],
+                &[(62.5, 125.0, 0.635), (125.0, 250.0, 0.022)],
             ),
         ];
         for (name, buf, ref_centroid, tol, bands) in cases {

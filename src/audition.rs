@@ -23,6 +23,11 @@ pub fn lane_noise(seed: u64) -> [crate::dsp::NoiseStream; Lane::ALL.len()] {
     Lane::ALL.map(|_| noise.fork())
 }
 
+/// `score` as a room whose drums don't sound plays it.
+pub fn unbeaten(score: &Score) -> Score {
+    score.unbeaten()
+}
+
 /// [`render_lane`] with the gains its peak normalizations applied, `[in,
 /// out]`, which the stream's staging stands in for.
 pub fn staged_lane(

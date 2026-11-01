@@ -204,13 +204,30 @@ impl Score {
         self.lead_voice.name()
     }
 
-    /// Every kick's time in the loop, in the order the drums lay them.
-    #[cfg(test)]
-    pub(super) fn kicks(&self) -> impl Iterator<Item = f32> + '_ {
-        (self.drums.iter())
-            .filter(|hit| hit.kind == DrumKind::Kick)
-            .map(|hit| hit.at)
+    /// This score with its drums gone: what a room whose drums don't sound
+    /// plays, so no lane ducks under a kick nobody hears.
+    pub(crate) fn unbeaten(&self) -> Self {
+        Self {
+            drums: Vec::new(),
+            ..self.clone()
+        }
     }
+
+    /// Every kick's time in the loop, in order.
+    #[cfg(test)]
+    pub(super) fn kicks(&self) -> impl Iterator<Item = f32> {
+        kicks(&self.drums).into_iter()
+    }
+}
+
+/// The times in the loop `hits` kick, in order.
+pub(crate) fn kicks(hits: &[Hit]) -> Vec<f32> {
+    let mut kicks: Vec<f32> = (hits.iter())
+        .filter(|hit| hit.kind == DrumKind::Kick)
+        .map(|hit| hit.at)
+        .collect();
+    kicks.sort_by(f32::total_cmp);
+    kicks
 }
 
 /// Every knob a mood's songs are composed with, one part per stage, so each
@@ -1222,11 +1239,11 @@ const DAY_GROOVES: [GrooveTemplate; 3] = [
         kicks: [
             Kick {
                 beats: [DOWNBEAT; 2],
-                gain: 1.0,
+                gain: 0.82,
             },
             Kick {
                 beats: [2.25, 2.5],
-                gain: 0.75,
+                gain: 0.70,
             },
         ],
         ghost_pickup: true,
@@ -1240,7 +1257,7 @@ const DAY_GROOVES: [GrooveTemplate; 3] = [
         kicks: [
             Kick {
                 beats: [DOWNBEAT; 2],
-                gain: 1.0,
+                gain: 0.82,
             },
             Kick {
                 beats: [2.75; 2],
@@ -1258,7 +1275,7 @@ const DAY_GROOVES: [GrooveTemplate; 3] = [
         kicks: [
             Kick {
                 beats: [DOWNBEAT; 2],
-                gain: 0.9,
+                gain: 0.78,
             },
             Kick {
                 beats: [2.5; 2],
@@ -1295,11 +1312,11 @@ const NIGHT_GROOVE: GrooveTemplate = GrooveTemplate {
     kicks: [
         Kick {
             beats: [DOWNBEAT; 2],
-            gain: 0.6,
+            gain: 0.5,
         },
         Kick {
             beats: [2.5; 2],
-            gain: 0.4,
+            gain: 0.38,
         },
     ],
     ghost_pickup: false,

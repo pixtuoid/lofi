@@ -2,7 +2,7 @@
 
 use super::voices::{ChordTone, bass_note, chord, drum_hit, ep_pluck_vel};
 use super::{NoteVoice, SR, bar_onset, onset};
-use crate::compose::{DrumKind, GEN_LOOP_BARS, Hit, Lane, Mood, Note, Score};
+use crate::compose::{GEN_LOOP_BARS, Hit, Lane, Mood, Note, Score, kicks};
 use crate::dsp::NoiseStream;
 
 /// A generated pad's tone before the tape: a low-pass, then a slow swell.
@@ -125,7 +125,7 @@ pub(crate) const DRUMS: ByMood<HitRecipe> = ByMood {
         peak: 0.8,
     },
     day: HitRecipe {
-        cutoff_hz: 7500.0,
+        cutoff_hz: 6500.0,
         drive: 2.2,
         peak: 0.85,
     },
@@ -214,20 +214,13 @@ impl Part<'_> {
 
     /// The times in the loop a bed ducks under, in order: a night bed's
     /// kicks, so the night room breathes with its groove, while the day room
-    /// runs free. Nothing else ducks.
+    /// runs free. The other lanes' sidechain is `whole::sidechained`'s.
     pub(crate) fn ducks(&self) -> Vec<f32> {
         match *self {
             Part::Bed {
                 mood: Mood::Night,
                 hits,
-            } => {
-                let mut kicks: Vec<f32> = (hits.iter())
-                    .filter(|h| h.kind == DrumKind::Kick)
-                    .map(|h| h.at)
-                    .collect();
-                kicks.sort_by(f32::total_cmp);
-                kicks
-            }
+            } => kicks(hits),
             _ => Vec::new(),
         }
     }

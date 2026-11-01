@@ -590,10 +590,19 @@ impl Batch {
     ) -> Vec<WholeSong> {
         (0..)
             .zip(self.timeline(seed).songs)
-            .map(|(k, (controls, len))| WholeSong {
-                beds: render_take(&audition::song_score(seed, k, controls)),
-                gains: gains(controls),
-                len,
+            .map(|(k, (controls, len))| {
+                let score = audition::song_score(seed, k, controls);
+                // no kick sounds, so no lane ducks, as a stream song's doesn't
+                let silent = lane_gain(Lane::Drums, controls.intensity) == 0.0;
+                WholeSong {
+                    beds: render_take(&if silent {
+                        audition::unbeaten(&score)
+                    } else {
+                        score
+                    }),
+                    gains: gains(controls),
+                    len,
+                }
             })
             .collect()
     }
@@ -685,6 +694,32 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
+
+    /// A room whose drums don't sound ducks no lane, as a stream song's
+    /// doesn't: its take renders the score with no drums, by day and by night.
+    #[test]
+    fn a_whole_take_with_no_beat_ducks_no_lane() {
+        let index = |lane| Lane::ALL.iter().position(|&l| l == lane).expect("a lane");
+        for (mood, duck) in [(0, Lane::Pad), (1, Lane::Texture)] {
+            let batch = Batch {
+                mood,
+                tier: Some(Tier::Empty),
+                ..Batch::default()
+            };
+            let seed = 0;
+            let song = batch.whole(seed, lane_gains).remove(0);
+            let (controls, _) = batch.timeline(seed).songs[0];
+            let score = audition::song_score(seed, 0, controls);
+            assert!(
+                song.beds == render_take(&audition::unbeaten(&score)),
+                "mood {mood}: the take isn't the unbeaten score"
+            );
+            assert!(
+                song.beds[index(duck)] != render_take(&score)[index(duck)],
+                "mood {mood}: {duck:?} would duck no differently under the drums"
+            );
+        }
+    }
 
     /// The texture draws its own fork whatever the lanes before it draw: on
     /// one stream for every lane, its pops would follow theirs.

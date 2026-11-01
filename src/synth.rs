@@ -69,8 +69,9 @@ pub(crate) use recipe::{PadTone, Part, part};
 pub use whole::render_lane;
 pub(crate) use whole::{
     CRACKLE_POPS_PER_SEC, DRIVE, DUCK_DB, DUCK_RELEASE_S, HEAD_BUMP_HZ, HEAD_BUMP_MIX, HISS_HZ,
-    HISS_LEVEL, HUM_HZ, HUM_SWELL_HZ, ROLLOFF_HZ, TILT_HZ, TILT_LIFT, WARPS, crackle_pop,
-    room_tone, staged_lane,
+    HISS_LEVEL, HUM_HZ, HUM_SWELL_HZ, ROLLOFF_HZ, SIDECHAIN_ATTACK_S, SIDECHAIN_DB,
+    SIDECHAIN_RELEASE_S, TILT_HZ, TILT_LIFT, WARPS, crackle_pop, room_tone, sidechain_gain,
+    sidechained, staged_lane,
 };
 
 #[cfg(test)]

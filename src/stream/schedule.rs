@@ -12,10 +12,10 @@ use super::rain::{self, RAIN_RAMP_BARS};
 use super::ramp::{Ramp, Shape};
 use super::{BLOCK, LANES, gain_of_db};
 use crate::Controls;
-use crate::compose::Lane;
 use crate::compose::{
     Edge, Form, GEN_LOOP_BARS, HAT_JITTER_S, Layer, Mood, Score, arrange, compose,
 };
+use crate::compose::{Lane, kicks};
 use crate::dsp::{NoiseStream, SAMPLE_RATE, splitmix_draw};
 use crate::synth::{CRACKLE_POPS_PER_SEC, Part, bar_onset, crackle_pop, part, samples_at};
 
@@ -336,8 +336,8 @@ impl Schedule {
         self.start(song);
     }
 
-    /// Starts the next song, composed for `controls`, with every lane present
-    /// at its gain in `levels` for good.
+    /// Starts the next song, composed for `controls`, with every lane at its
+    /// gain in `levels` for good, and present where that gain sounds.
     #[cfg(test)]
     pub(crate) fn start_song_at(&mut self, controls: Controls, levels: [f64; LANES]) {
         let song = self.next_song(controls).at_levels(levels);
@@ -517,9 +517,9 @@ impl Song {
         let cues = Lane::ALL.map(|lane| Cues::new(&score, &form, lane, &window, noise.fork(), sr));
         // forked after every lane's, so it moves none of their draws
         let crackle = Crackle::new(noise.fork(), sr);
-        // where the whole-lane night texture ducks, rounded as it rounds them:
-        // under each kick the form strikes, since the duck is the groove's
-        let onsets: Vec<usize> = (part(&score, Lane::Texture).ducks().into_iter())
+        // where the whole-lane lanes duck, rounded as they round them: under
+        // each kick the form strikes, since the duck is the groove's
+        let onsets: Vec<usize> = (kicks(&score.drums).into_iter())
             .map(|at| samples_at(at, sr))
             .collect();
         let kicks: Vec<usize> = (window.tile(&onsets).into_iter())
@@ -563,10 +563,11 @@ impl Song {
         }
     }
 
-    /// The song with every lane present at its gain in `levels` for good.
+    /// The song with every lane at its gain in `levels` for good, and present
+    /// where that gain sounds.
     #[cfg(test)]
     fn at_levels(mut self, levels: [f64; LANES]) -> Self {
-        self.present = [true; LANES];
+        self.present = levels.map(|level| level > 0.0);
         self.levels = levels.map(|level| Ramp::held(level, Shape::Db));
         self.latched = self.window.bars.len();
         self
@@ -1709,29 +1710,59 @@ mod tests {
     }
 
     #[test]
-    fn a_break_does_not_duck_the_room() {
+    fn a_break_ducks_no_lane() {
         let (seed, night) = (4, Controls::default().with_daylight(0.0));
         let mut form = Form::plain();
         let (from, to) = (20, 24);
         for bar in from..to {
             form.plays_mut(bar).set(Layer::Drums, false);
         }
-        let texture = index(Lane::Texture);
         let mut broken = Song::with_form(seed, 0, night, form, SAMPLE_RATE).at_levels(UNITY);
         let mut whole = plain_song(seed, 0, night, SAMPLE_RATE).at_levels(UNITY);
         let end = broken.window.bars[to];
-        let [got, want] = [&mut broken, &mut whole].map(|song| play_to(song, end)[texture].clone());
+        let [got, want] = [&mut broken, &mut whole].map(|song| play_to(song, end).clone());
         let start = broken.window.bars[from];
-        // the room before the break, past any kick's release, plays alike
-        assert_eq!(got[..start / 2], want[..start / 2]);
-        assert!(
-            energy(&got[start..end]) > energy(&want[start..end]),
-            "the room ducked under kicks the break never struck"
-        );
+        for lane in [Lane::Texture, Lane::Pad] {
+            let (got, want) = (&got[index(lane)], &want[index(lane)]);
+            // the lane before the break, past any kick's release, plays alike
+            assert_eq!(got[..start / 2], want[..start / 2], "{lane:?}");
+            assert!(
+                energy(&got[start..end]) > energy(&want[start..end]),
+                "{lane:?} ducked under kicks the break never struck"
+            );
+        }
+    }
+
+    /// A kick off the bar line, where no chord or root lands to mask the dip.
+    #[test]
+    fn a_sidechained_lane_dips_under_a_kick() {
+        let sr = SAMPLE_RATE;
+        let mut song = plain_song(2, 0, Controls::default(), sr).at_levels(UNITY);
+        let pad = index(Lane::Pad);
+        let bar = samples_at(song.score.bar_s(), sr);
+        let window = samples_at(0.03, sr);
+        let kicks: Vec<usize> = (song.score.kicks())
+            .map(|at| samples_at(at, sr))
+            .filter(|&kick| kick % bar > bar / 4 && bar - kick % bar > bar / 4)
+            .collect();
+        assert!(!kicks.is_empty());
+        let end = kicks[kicks.len() - 1] + 2 * window;
+        let played = play_to(&mut song, end)[pad].clone();
+        let (before, after): (f64, f64) = kicks
+            .iter()
+            .map(|&kick| {
+                (
+                    energy(&played[kick - window..kick]),
+                    energy(&played[kick + window..kick + 2 * window]),
+                )
+            })
+            .fold((0.0, 0.0), |sum, (a, b)| (sum.0 + a, sum.1 + b));
+        let dip = (after / before).sqrt();
+        assert!(dip < 0.75, "the pad must dip under a kick: {dip:.3}");
     }
 
     #[test]
-    fn an_absent_beat_does_not_duck_the_room() {
+    fn an_absent_beat_ducks_no_lane() {
         let (seed, empty) = (
             4,
             Controls::default().with_daylight(0.0).with_intensity(0.0),
@@ -1744,10 +1775,13 @@ mod tests {
         let mut songs = [Form::plain(), unbeaten]
             .map(|form| Song::with_form(seed, 0, empty, form, SAMPLE_RATE));
         let end = songs[0].window.bars[GEN_LOOP_BARS];
-        let [got, want] = songs
-            .each_mut()
-            .map(|song| play_to(song, end)[index(Lane::Texture)].clone());
-        assert!(got == want, "the room ducked under kicks no drum sounded");
+        let [got, want] = songs.each_mut().map(|song| play_to(song, end).clone());
+        for lane in [Lane::Texture, Lane::Pad, Lane::Bass] {
+            assert!(
+                got[index(lane)] == want[index(lane)],
+                "{lane:?} ducked under kicks no drum sounded"
+            );
+        }
     }
 
     /// The first seed whose song 0 under the default controls has a form

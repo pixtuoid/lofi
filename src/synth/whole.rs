@@ -3,6 +3,7 @@
 use super::recipe::{PadTone, Part, part};
 use super::voices::{ChordTone, chord, drum_hit};
 use super::{NoteVoice, SR, n_samples, place, samples_at};
+use crate::compose::kicks;
 use crate::compose::{GEN_LOOP_BARS, Hit, Lane, Mood, Note, Score};
 use crate::dsp::{NoiseStream, SAMPLE_RATE, bandpass, lowpass, white_noise_gain};
 
@@ -157,6 +158,46 @@ fn master(mut buf: Vec<f32>, drive: f32, peak: f32) -> Staged {
 pub(crate) const DUCK_DB: f32 = -4.0;
 pub(crate) const DUCK_RELEASE_S: f32 = 0.15;
 
+/// The sidechain every lane but the drums and the room sits under: what
+/// Lofi Girl's stems do around a kick (LOFI-BIBLE.md §2, measured in the commit
+/// that set these). Its attack keeps a held chord from clicking.
+pub(crate) const SIDECHAIN_DB: f32 = -6.0;
+pub(crate) const SIDECHAIN_ATTACK_S: f32 = 0.01;
+pub(crate) const SIDECHAIN_RELEASE_S: f32 = 0.19;
+
+/// Whether `lane` plays under the kicks' sidechain.
+pub(crate) fn sidechained(lane: Lane) -> bool {
+    matches!(lane, Lane::Pad | Lane::Sparkle | Lane::Keys | Lane::Bass)
+}
+
+/// A lane's gain `since` samples into a duck to `floor`.
+pub(crate) fn sidechain_gain(since: usize, floor: f64, attack: usize, release: usize) -> f64 {
+    if since < attack {
+        1.0 - (1.0 - floor) * since as f64 / attack as f64
+    } else if since < attack + release {
+        floor + (1.0 - floor) * (since - attack) as f64 / release as f64
+    } else {
+        1.0
+    }
+}
+
+/// `buf`, a loop of a generated lane, under `kicks`' sidechain: a late kick's
+/// dip wraps, since the loop repeats into it.
+fn sidechain(buf: &mut [f32], kicks: &[f32]) {
+    let floor = 10f64.powf(f64::from(SIDECHAIN_DB) / 20.0);
+    let (attack, release) = (
+        n_samples(SIDECHAIN_ATTACK_S),
+        n_samples(SIDECHAIN_RELEASE_S),
+    );
+    let len = buf.len();
+    for &kick in kicks {
+        let at = n_samples(kick);
+        for since in 0..attack + release {
+            buf[(at + since) % len] *= sidechain_gain(since, floor, attack, release) as f32;
+        }
+    }
+}
+
 /// Loop-seam splice length: the night texture's buffer is the night loop length,
 /// NOT a power of two, so its FFT-shaped hiss is not circularly seamless.
 const NIGHT_TEXTURE_SPLICE_S: f32 = 0.03;
@@ -293,6 +334,9 @@ pub fn render_lane(score: &Score, lane: Lane, rng: &mut NoiseStream) -> Vec<f32>
 pub(crate) fn staged_lane(score: &Score, lane: Lane, rng: &mut NoiseStream) -> Staged {
     let mut staged = render_part(&part(score, lane), score.loop_secs(), rng);
     staged.gains[1] *= brighten(&mut staged.buf);
+    if sidechained(lane) {
+        sidechain(&mut staged.buf, &kicks(&score.drums));
+    }
     staged
 }
 
@@ -340,6 +384,67 @@ mod tests {
     use super::*;
     use crate::dsp::{band_energy_share, centroid_hz};
     use crate::score;
+
+    #[test]
+    fn a_late_kicks_dip_wraps_the_loop() {
+        let len = n_samples(1.0);
+        let mut buf = vec![1.0; len];
+        sidechain(&mut buf, &[0.95]);
+        assert!(buf[0] < 1.0, "the dip stopped at the seam");
+        assert_eq!(buf[len / 2], 1.0);
+    }
+
+    /// Against the brightened core, with no sidechain of its own to agree
+    /// with: a staged pad falls to the floor a kick's attack after it.
+    #[test]
+    fn a_staged_lane_reaches_the_floor_under_a_kick() {
+        let score = crate::compose::compose(Mood::Day, 0);
+        let core = render_part(
+            &part(&score, Lane::Pad),
+            score.loop_secs(),
+            &mut NoiseStream::new(2),
+        );
+        let mut bright = core.buf;
+        brighten(&mut bright);
+        let staged = staged_lane(&score, Lane::Pad, &mut NoiseStream::new(2));
+        let times = kicks(&score.drums);
+        let span = SIDECHAIN_ATTACK_S + SIDECHAIN_RELEASE_S;
+        let kick = (times.windows(2))
+            .find(|w| {
+                w[1] - w[0] > span
+                    && bright[n_samples(w[1])..]
+                        .iter()
+                        .take(4410)
+                        .any(|v| v.abs() > 0.01)
+            })
+            .map(|w| w[1])
+            .expect("a kick clear of the last one, under a chord");
+        let at = n_samples(kick) + n_samples(SIDECHAIN_ATTACK_S);
+        let i = at
+            + (0..4410)
+                .find(|j| bright[at + j].abs() > 0.01)
+                .expect("the chord sounds");
+        let elapsed = (i - at) as f64 / n_samples(SIDECHAIN_RELEASE_S) as f64;
+        let floor = 10f64.powf(f64::from(SIDECHAIN_DB) / 20.0);
+        let want = floor + (1.0 - floor) * elapsed;
+        let got = f64::from(staged.buf[i] / bright[i]);
+        assert!(
+            (got - want).abs() < 1e-3,
+            "{got} under the kick, for {want}"
+        );
+    }
+
+    #[test]
+    fn a_sidechain_falls_to_its_floor_and_comes_back_whole() {
+        let (floor, attack, release) = (0.5, 10, 100);
+        assert_eq!(sidechain_gain(0, floor, attack, release), 1.0);
+        assert_eq!(sidechain_gain(attack, floor, attack, release), floor);
+        assert_eq!(
+            sidechain_gain(attack + release, floor, attack, release),
+            1.0
+        );
+        assert_eq!(sidechain_gain(0, floor, 0, release), floor);
+    }
 
     #[test]
     fn a_day_lead_sits_above_its_pad() {
@@ -417,7 +522,8 @@ mod tests {
     }
 
     /// A lane's staged render is its core's, brightened, with the brighten's
-    /// gain folded into the second: a bed, a chord lane and a hit lane each.
+    /// gain folded into the second, then under the sidechain if it plays
+    /// under one: a bed, a chord lane and a hit lane each.
     #[test]
     fn a_staged_lane_is_its_core_brightened() {
         let score = crate::compose::compose(Mood::Day, 0);
@@ -429,6 +535,9 @@ mod tests {
             );
             let mut bright = core.buf.clone();
             let gain = brighten(&mut bright);
+            if sidechained(lane) {
+                sidechain(&mut bright, &kicks(&score.drums));
+            }
             let staged = staged_lane(&score, lane, &mut NoiseStream::new(2));
             assert!(staged.buf == bright, "{lane:?}'s render");
             assert_eq!(

@@ -21,16 +21,26 @@ pub(super) fn ep_pluck_h2(midi: u8, dur_s: f32, vel: f32, h2: f32, sr: u32) -> V
         .collect()
 }
 
+/// A kick's length, the Hz its pitch settles on, how far over that it starts
+/// and how fast it falls there, and how fast its level falls: set so the
+/// rendered kick reads as LOFI-BIBLE.md §3's does, which the commit that set
+/// them measures.
+const KICK_S: f32 = 0.2;
+const KICK_FLOOR_HZ: f32 = 44.0;
+const KICK_SWEEP_HZ: f32 = 50.0;
+const KICK_SWEEP_RATE: f32 = 40.0;
+const KICK_DECAY_RATE: f32 = 27.0;
+
 fn kick(rng: &mut NoiseStream, sr: u32) -> Vec<f32> {
-    let n = samples_at(0.32, sr);
+    let n = samples_at(KICK_S, sr);
     let tau = std::f32::consts::TAU;
     let mut phase = 0.0f32;
     let mut buf: Vec<f32> = (0..n)
         .map(|i| {
             let t = i as f32 / sr as f32;
-            let f = 110.0 * (-t * 9.0).exp() + 42.0;
+            let f = KICK_SWEEP_HZ * (-t * KICK_SWEEP_RATE).exp() + KICK_FLOOR_HZ;
             phase += tau * f / sr as f32;
-            phase.sin() * (-t * 11.0).exp()
+            phase.sin() * (-t * KICK_DECAY_RATE).exp()
         })
         .collect();
     let white = white_noise_gain(sr);
@@ -41,19 +51,30 @@ fn kick(rng: &mut NoiseStream, sr: u32) -> Vec<f32> {
     buf
 }
 
+/// A snare's length, its noise band, how fast its noise falls, and its tone,
+/// set toward LOFI-BIBLE.md §3's.
+const SNARE_S: f32 = 0.16;
+const SNARE_BAND_HZ: (f32, f32) = (450.0, 2400.0);
+const SNARE_DECAY_RATE: f32 = 40.0;
+const SNARE_TONE_HZ: f32 = 185.0;
+const SNARE_TONE_RATE: f32 = 40.0;
+const SNARE_TONE_LEVEL: f32 = 0.3;
+const SNARE_LEVEL: f32 = 0.8;
+
 fn snare(rng: &mut NoiseStream, sr: u32) -> Vec<f32> {
-    let n = samples_at(0.22, sr);
+    let n = samples_at(SNARE_S, sr);
     let white = white_noise_gain(sr);
     let raw: Vec<f32> = (0..n).map(|_| rng.norm() * white).collect();
-    let noise = bandpass_at(&raw, 400.0, 3200.0, sr);
+    let noise = bandpass_at(&raw, SNARE_BAND_HZ.0, SNARE_BAND_HZ.1, sr);
     let tau = std::f32::consts::TAU;
     noise
         .iter()
         .enumerate()
         .map(|(i, noise)| {
             let t = i as f32 / sr as f32;
-            let tone = (tau * 185.0 * t).sin() * (-t * 25.0).exp() * 0.5;
-            (noise * (-t * 22.0).exp() + tone) * 0.8
+            let tone =
+                (tau * SNARE_TONE_HZ * t).sin() * (-t * SNARE_TONE_RATE).exp() * SNARE_TONE_LEVEL;
+            (noise * (-t * SNARE_DECAY_RATE).exp() + tone) * SNARE_LEVEL
         })
         .collect()
 }
@@ -62,9 +83,9 @@ fn snare(rng: &mut NoiseStream, sr: u32) -> Vec<f32> {
 /// §3 low-passes the drums into, so the hat sounds under the drums' cutoff
 /// and the tape's [`ROLLOFF_HZ`](super::ROLLOFF_HZ).
 const HAT_HZ: f32 = 3000.0;
-/// A hat's level under the kick and snare: 6 dB under the one that played
-/// above the chain, now that its band sounds (opinion, judged).
-const HAT_LEVEL: f32 = 0.25;
+/// A hat's level under the kick and snare, sized by the mix's 2-4 kHz in the
+/// commit that set it (opinion, judged).
+const HAT_LEVEL: f32 = 0.15;
 
 /// The metallic hash an analogue hat strikes: six square waves "tuned to
 /// random intervals" across "around 200-800 Hz, though it's not that

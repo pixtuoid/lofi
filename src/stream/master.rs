@@ -13,16 +13,20 @@ pub const TIER_INTENSITIES: [f32; 3] = [0.0, 0.5, 1.0];
 /// Each lane's gain at each of [`TIER_INTENSITIES`]: pixtuoid's `TierGain`s,
 /// moved here from
 /// <https://github.com/pixtuoid/pixtuoid/blob/a63f1782f477c357666e71a9c1147090b47fe17d/crates/pixtuoid-scene/src/audio/mod.rs#L98-L107>,
-/// but the lead's at the working tiers, and the bass's under [`BASS_TRIM_DB`].
+/// but the lead's at the working tiers, the pad's and drums' there to
+/// LOFI-BIBLE.md §3's stem shares, and the bass's under [`BASS_TRIM_DB`].
 fn tier_gains(lane: Lane) -> [f32; 3] {
     match lane {
-        Lane::Pad => [0.75, 0.70, 0.65],
+        // the bed of an empty room, and under the beat at the working tiers
+        Lane::Pad => [0.75, 0.45, 0.40],
         // a melodic layer at every tier, as lofi tracks carry one (Fields-Meyer
         // 2025, pp.117-118): under the keys, and a little more where "busy
         // adds" (docs/phase0-ratification.md); the levels are opinion
         Lane::Sparkle => [0.70, 0.50, 0.55],
         Lane::Keys => [0.0, 0.60, 0.70],
-        Lane::Drums => [0.0, 0.35, 0.60],
+        Lane::Drums => {
+            [0.0, 0.65, 0.80].map(|gain| gain * gain_of_db(f64::from(DRUMS_LIFT_DB)) as f32)
+        }
         // far past the Phase-0 ratification: at its ratified level the hiss
         // and crackle were inaudible
         Lane::Texture => [0.78, 0.84, 0.78],
@@ -39,7 +43,13 @@ fn tier_gains(lane: Lane) -> [f32; 3] {
 /// Opinion, sized by the measurement in the commit that set it.
 pub(crate) const BASS_TRIM_DB: f32 = -1.5;
 
-/// `lane`'s gain at `intensity`, in `[0, 1]`: its tier's at each of
+/// How far over its stem's peak the drums play: toward LOFI-BIBLE.md §3's stem
+/// share, which no gain under unity reaches from a stem normalized to its
+/// peak, and as far as a take at
+/// [`TARGET_LUFS`](crate::audition::TARGET_LUFS) keeps from clipping.
+pub(crate) const DRUMS_LIFT_DB: f32 = 4.5;
+
+/// `lane`'s gain at `intensity`: its tier's at each of
 /// [`TIER_INTENSITIES`], linear between them, which is opinion.
 pub fn lane_gain(lane: Lane, intensity: f32) -> f32 {
     let gains = tier_gains(lane);
