@@ -1208,8 +1208,9 @@ struct GrooveTemplate {
     ghost_pickup: bool,
     /// How far behind the grid the kicks land, in seconds.
     drag_s: f32,
-    /// The beats the snare lands on.
+    /// The beats the snare lands on, and how hard.
     snares: &'static [f32],
+    snare_gain: f32,
     hats: Hats,
     /// Whether each phrase's last hat opens.
     open_hat: bool,
@@ -1233,7 +1234,7 @@ struct Hats {
 
 const DOWNBEAT: f32 = 0.0;
 
-const DAY_GROOVES: [GrooveTemplate; 3] = [
+const DAY_GROOVES: [GrooveTemplate; 4] = [
     // boom-bap: backbeats on 2&4
     GrooveTemplate {
         kicks: [
@@ -1249,7 +1250,28 @@ const DAY_GROOVES: [GrooveTemplate; 3] = [
         ghost_pickup: true,
         drag_s: DRAG_KICK_S,
         snares: &[1.0, 3.0],
+        snare_gain: SNARE_GAIN,
         hats: DAY_HATS.skipping(0.15),
+        open_hat: true,
+    },
+    // boom-bap again, its hats dragged near a triplet, as about a quarter of
+    // LOFI-BIBLE.md §2's tracks swing
+    GrooveTemplate {
+        kicks: [
+            Kick {
+                beats: [DOWNBEAT; 2],
+                gain: 0.82,
+            },
+            Kick {
+                beats: [2.25, 2.5],
+                gain: 0.70,
+            },
+        ],
+        ghost_pickup: true,
+        drag_s: DRAG_KICK_S,
+        snares: &[1.0, 3.0],
+        snare_gain: SNARE_GAIN,
+        hats: SWUNG_HATS.skipping(0.15),
         open_hat: true,
     },
     // half-time: the lazy backbeat
@@ -1267,10 +1289,11 @@ const DAY_GROOVES: [GrooveTemplate; 3] = [
         ghost_pickup: false,
         drag_s: DRAG_KICK_S,
         snares: &[2.0],
+        snare_gain: SNARE_GAIN,
         hats: DAY_HATS.skipping(0.30),
         open_hat: true,
     },
-    // sparse: quiet-focus
+    // sparse: quiet-focus, on the backbeat most of Lofi Girl's tracks keep
     GrooveTemplate {
         kicks: [
             Kick {
@@ -1284,7 +1307,8 @@ const DAY_GROOVES: [GrooveTemplate; 3] = [
         ],
         ghost_pickup: false,
         drag_s: DRAG_KICK_S,
-        snares: &[2.0],
+        snares: &[1.0, 3.0],
+        snare_gain: SNARE_GAIN,
         hats: DAY_HATS.skipping(0.45),
         open_hat: false,
     },
@@ -1301,13 +1325,20 @@ const DAY_HATS: Hats = Hats {
     },
 };
 
+/// [`DAY_HATS`] swung hard.
+const SWUNG_HATS: Hats = Hats {
+    swing: 0.74,
+    ..DAY_HATS
+};
+
 impl Hats {
     const fn skipping(self, skip_p: f32) -> Self {
         Self { skip_p, ..self }
     }
 }
 
-/// The night groove: kick + soft closed hats only (the sleepy register).
+/// The night groove: kick, soft closed hats and a backbeat under the day's by
+/// LOFI-BIBLE.md §3's sleepy snare (the sleepy register).
 const NIGHT_GROOVE: GrooveTemplate = GrooveTemplate {
     kicks: [
         Kick {
@@ -1322,7 +1353,8 @@ const NIGHT_GROOVE: GrooveTemplate = GrooveTemplate {
     ghost_pickup: false,
     // a separate lag on purpose, not a drifted copy of DRAG_KICK_S
     drag_s: 0.018,
-    snares: &[],
+    snares: &[1.0, 3.0],
+    snare_gain: NIGHT_SNARE_GAIN,
     hats: Hats {
         off_eighths_only: true,
         skip_p: 0.45,
@@ -1348,6 +1380,7 @@ const GHOST_KICK: Kick = Kick {
 /// How far behind the grid a snare lands, in seconds.
 const SNARE_DRAG_S: f32 = 0.008;
 const SNARE_GAIN: f32 = 0.85;
+const NIGHT_SNARE_GAIN: f32 = 0.43;
 
 /// Each bar's velocity wobble, which all its hits share, and each hit's own.
 const WOBBLE: Spread = Spread {
@@ -1454,7 +1487,7 @@ fn groove(rng: &mut NoiseStream, g: &GrooveTemplate, beat_s: f32) -> Vec<Hit> {
             out.push(Hit {
                 at: t.max(0.0),
                 kind: DrumKind::Snare,
-                gain: SNARE_GAIN * at.wobble * HIT_ACCENT.draw(rng),
+                gain: g.snare_gain * at.wobble * HIT_ACCENT.draw(rng),
             });
         }
         let hats = &g.hats;

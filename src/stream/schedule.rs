@@ -5,7 +5,7 @@
 use std::collections::VecDeque;
 use std::ops::Range;
 
-use super::lanes::{Automation, Chain, Sweep};
+use super::lanes::{Automation, Chain, Duck, Sweep};
 use super::master::{lane_gain, resting_gain};
 use super::plate::{self, Plate};
 use super::rain::{self, RAIN_RAMP_BARS};
@@ -17,7 +17,10 @@ use crate::compose::{
 };
 use crate::compose::{Lane, kicks};
 use crate::dsp::{NoiseStream, SAMPLE_RATE, splitmix_draw};
-use crate::synth::{CRACKLE_POPS_PER_SEC, Part, bar_onset, crackle_pop, part, samples_at};
+use crate::synth::{
+    CRACKLE_POPS_PER_SEC, Part, SIDECHAIN_ATTACK_S, SIDECHAIN_DB, SIDECHAIN_RELEASE_S, bar_onset,
+    crackle_pop, part, samples_at,
+};
 
 /// How long before its bar line a bar latches the controls asked for: the
 /// composer's earliest anticipation, a downbeat hat's half of
@@ -431,6 +434,8 @@ struct Song {
     rain_ramp: usize,
     /// The song's plate, which rings out with its tails.
     plate: Plate,
+    /// The plate return's sidechain, as its lanes'.
+    plate_duck: Duck,
     /// The music lanes' level through the intro's edge and the outro's, each
     /// held at 1 where its edge is plain.
     edges: [Ramp; 2],
@@ -550,6 +555,13 @@ impl Song {
             automation,
             rain_ramp: samples_at(RAIN_RAMP_BARS * score.bar_s(), sr),
             plate: Plate::new(sr),
+            plate_duck: Duck::new(
+                &kicks,
+                SIDECHAIN_DB,
+                SIDECHAIN_ATTACK_S,
+                SIDECHAIN_RELEASE_S,
+                sr,
+            ),
             score,
             window,
             sr,
@@ -739,6 +751,14 @@ impl Song {
             }
         }
         self.plate.process(sent, wet);
+        // the return dips with its lanes, or its tail fills the dip back in
+        self.plate_duck
+            .reach(end, self.present[Lane::Drums as usize]);
+        for (i, n) in (self.played..end).enumerate() {
+            let gain = self.plate_duck.gain(n);
+            wet[0][i] *= gain;
+            wet[1][i] *= gain;
+        }
         for (sum, wet) in plates.iter_mut().zip(wet.iter()) {
             for (s, x) in sum.iter_mut().zip(wet) {
                 *s += x;
@@ -1540,7 +1560,7 @@ mod tests {
     /// platform.
     #[test]
     fn a_plain_form_plays_every_cue_where_it_did() {
-        const PLAIN_FRAMES_GOLDEN: u64 = 0xf96b_6294_238b_f97d;
+        const PLAIN_FRAMES_GOLDEN: u64 = 0xa177_94c7_53be_56ad;
         let mut words: Vec<u64> = Vec::new();
         for daylight in [1.0, 0.0] {
             for seed in 0..4 {
@@ -1731,6 +1751,41 @@ mod tests {
                 "{lane:?} ducked under kicks the break never struck"
             );
         }
+    }
+
+    /// The plate's return dips with its lanes, or its tail fills their dip
+    /// back in: a kick off the bar line, against the plate at the same frames
+    /// with the drums absent.
+    #[test]
+    fn the_plate_return_dips_under_a_kick() {
+        let sr = SAMPLE_RATE;
+        let seed = 2;
+        let play = |levels: [f64; LANES]| {
+            let mut song = plain_song(seed, 0, Controls::default(), sr).at_levels(levels);
+            let bar = samples_at(song.score.bar_s(), sr);
+            let kick = (song.score.kicks())
+                .map(|at| samples_at(at, sr))
+                .find(|&kick| kick > bar && kick % bar > bar / 4)
+                .expect("a kick off the bar line");
+            let end = kick + samples_at(0.05, sr);
+            let (mut left, mut buf) = (Vec::with_capacity(end), Scratch::new());
+            while left.len() < end {
+                let n = BLOCK.min(end - left.len());
+                let mut sums: [Vec<f64>; LANES] = std::array::from_fn(|_| vec![0.0; n]);
+                let mut plates = [vec![0.0; n], vec![0.0; n]];
+                song.play(&mut sums, &mut plates, &mut buf, n);
+                left.extend_from_slice(&plates[0]);
+            }
+            (left, kick)
+        };
+        let (ducked, kick) = play(UNITY);
+        let mut unbeaten = UNITY;
+        unbeaten[index(Lane::Drums)] = 0.0;
+        let (free, _) = play(unbeaten);
+        let at = kick + samples_at(SIDECHAIN_ATTACK_S, sr);
+        let window = samples_at(0.03, sr);
+        let dip = (energy(&ducked[at..at + window]) / energy(&free[at..at + window])).sqrt();
+        assert!(dip < 0.75, "the plate's return must dip: {dip:.3}");
     }
 
     /// A kick off the bar line, where no chord or root lands to mask the dip.
