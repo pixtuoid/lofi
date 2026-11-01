@@ -273,8 +273,8 @@ mod tests {
             (
                 "drums",
                 stem_drums(&mut NoiseStream::new(4)),
-                214.6,
-                &[(62.5, 125.0, 0.519), (125.0, 250.0, 0.408)],
+                240.4,
+                &[(62.5, 125.0, 0.400), (125.0, 250.0, 0.056)],
             ),
         ];
         for (name, buf, ref_centroid, bands) in cases {
@@ -355,9 +355,9 @@ mod tests {
             (
                 "night_drums",
                 night_drums(&mut NoiseStream::new(4)),
-                118.8,
+                80.0,
                 0.15,
-                &[(62.0, 125.0, 0.561), (125.0, 250.0, 0.412)],
+                &[(62.0, 125.0, 0.529), (125.0, 250.0, 0.020)],
             ),
         ];
         for (name, buf, ref_centroid, tol, bands) in cases {
@@ -406,9 +406,9 @@ mod tests {
             (
                 "day2_drums",
                 day_take_drums(&score::DAY2, &mut NoiseStream::new(4)),
-                235.5,
+                241.6,
                 0.15,
-                &[(62.5, 125.0, 0.492), (125.0, 250.0, 0.420)],
+                &[(62.5, 125.0, 0.412), (125.0, 250.0, 0.070)],
             ),
             (
                 "day3_pad",
@@ -434,9 +434,9 @@ mod tests {
             (
                 "day3_drums",
                 day_take_drums(&score::DAY3, &mut NoiseStream::new(4)),
-                192.2,
+                189.1,
                 0.15,
-                &[(62.5, 125.0, 0.521), (125.0, 250.0, 0.414)],
+                &[(62.5, 125.0, 0.433), (125.0, 250.0, 0.050)],
             ),
         ];
         for (name, buf, ref_centroid, tol, bands) in cases {

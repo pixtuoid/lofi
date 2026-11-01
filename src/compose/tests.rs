@@ -650,7 +650,7 @@ fn a_seeded_groove_lays_every_hit_where_it_did() {
     assert_eq!(h, GOLDEN, "{h:#018x}");
 }
 
-const GOLDEN: u64 = 0x71ca_6f22_f488_2daf;
+const GOLDEN: u64 = 0x4f58_eafa_9f53_f6b3;
 
 /// Both moods' first eight seeds, every event and the harmonic timeline as f32
 /// bits. `compose` runs no transcendental function, so these bits hold on every
@@ -696,4 +696,4 @@ fn every_seed_composes_the_score_it_did() {
     assert_eq!(h, EVERY_SEED_GOLDEN, "{h:#018x}");
 }
 
-const EVERY_SEED_GOLDEN: u64 = 0x1761_ed49_8eeb_4e98;
+const EVERY_SEED_GOLDEN: u64 = 0x63a9_7d10_16ca_8354;

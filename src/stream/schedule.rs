@@ -1539,7 +1539,7 @@ mod tests {
     /// platform.
     #[test]
     fn a_plain_form_plays_every_cue_where_it_did() {
-        const PLAIN_FRAMES_GOLDEN: u64 = 0xf96b_6294_238b_f97d;
+        const PLAIN_FRAMES_GOLDEN: u64 = 0xb577_863b_e46c_4341;
         let mut words: Vec<u64> = Vec::new();
         for daylight in [1.0, 0.0] {
             for seed in 0..4 {
@@ -1584,19 +1584,25 @@ mod tests {
         lanes
     }
 
+    /// More seeds than it takes to draw a pickup.
+    const PICKUP_SEEDS: u64 = 64;
+
     #[test]
     fn a_muted_note_strikes_nothing_and_its_tail_rings_on() {
-        let (seed, c) = (3, Controls::default());
-        let mut whole = plain_song(seed, 0, c, SAMPLE_RATE).at_levels(UNITY);
+        let c = Controls::default();
         let bass = index(Lane::Bass);
-        let ring = samples_at(BASS.at(whole.score.mood).dur_s, SAMPLE_RATE);
-        let lines = &whole.window.bars;
         // a bar the last one's bass rings into, so muting it can't cut that
-        // tail
-        let bar = (1..lines.len() - 1)
-            .find(|&bar| {
-                (whole.cues[bass].order.iter())
-                    .any(|&(at, ..)| at < lines[bar] && at + ring > lines[bar])
+        // tail: only a pickup rings that far, and not every seed draws one
+        let (seed, mut whole, bar) = (0..PICKUP_SEEDS)
+            .find_map(|seed| {
+                let whole = plain_song(seed, 0, c, SAMPLE_RATE).at_levels(UNITY);
+                let ring = samples_at(BASS.at(whole.score.mood).dur_s, SAMPLE_RATE);
+                let lines = &whole.window.bars;
+                let bar = (1..lines.len() - 1).find(|&bar| {
+                    (whole.cues[bass].order.iter())
+                        .any(|&(at, ..)| at < lines[bar] && at + ring > lines[bar])
+                })?;
+                Some((seed, whole, bar))
             })
             .expect("a bass note rings over a bar line");
         let mut form = Form::plain();

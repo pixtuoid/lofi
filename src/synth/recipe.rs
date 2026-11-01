@@ -108,12 +108,12 @@ pub(crate) const KEYS: ByMood<NoteRecipe> = ByMood {
 };
 pub(crate) const BASS: ByMood<NoteRecipe> = ByMood {
     night: NoteRecipe {
-        dur_s: 1.7,
+        dur_s: 0.45,
         cutoff_hz: 700.0,
         peak: 0.8,
     },
     day: NoteRecipe {
-        dur_s: 1.5,
+        dur_s: 0.4,
         cutoff_hz: 900.0,
         peak: 0.8,
     },
@@ -121,12 +121,12 @@ pub(crate) const BASS: ByMood<NoteRecipe> = ByMood {
 pub(crate) const DRUMS: ByMood<HitRecipe> = ByMood {
     night: HitRecipe {
         cutoff_hz: 6000.0,
-        drive: 2.0,
+        drive: 7.5,
         peak: 0.8,
     },
     day: HitRecipe {
-        cutoff_hz: 7500.0,
-        drive: 2.2,
+        cutoff_hz: 6500.0,
+        drive: 8.0,
         peak: 0.85,
     },
 };

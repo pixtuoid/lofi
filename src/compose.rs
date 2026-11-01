@@ -321,7 +321,7 @@ const DAY: Style = Style {
     },
     drums: Grooves::Drawn(&DAY_GROOVES),
     bass: BassStyle {
-        answer_p: 0.55,
+        answer_p: 0.7,
         answer_beat: 2.5,
         fifth_p: 0.4,
         pickup_p: Some(0.25),
@@ -364,7 +364,7 @@ const NIGHT: Style = Style {
     },
     drums: Grooves::Fixed(&NIGHT_GROOVE),
     bass: BassStyle {
-        answer_p: 0.7,
+        answer_p: 0.8,
         // the old baked sub's pulse
         answer_beat: 2.0,
         fifth_p: 0.2,
@@ -1222,11 +1222,11 @@ const DAY_GROOVES: [GrooveTemplate; 3] = [
         kicks: [
             Kick {
                 beats: [DOWNBEAT; 2],
-                gain: 1.0,
+                gain: 0.82,
             },
             Kick {
                 beats: [2.25, 2.5],
-                gain: 0.75,
+                gain: 0.70,
             },
         ],
         ghost_pickup: true,
@@ -1240,7 +1240,7 @@ const DAY_GROOVES: [GrooveTemplate; 3] = [
         kicks: [
             Kick {
                 beats: [DOWNBEAT; 2],
-                gain: 1.0,
+                gain: 0.82,
             },
             Kick {
                 beats: [2.75; 2],
@@ -1258,7 +1258,7 @@ const DAY_GROOVES: [GrooveTemplate; 3] = [
         kicks: [
             Kick {
                 beats: [DOWNBEAT; 2],
-                gain: 0.9,
+                gain: 0.78,
             },
             Kick {
                 beats: [2.5; 2],
@@ -1295,11 +1295,11 @@ const NIGHT_GROOVE: GrooveTemplate = GrooveTemplate {
     kicks: [
         Kick {
             beats: [DOWNBEAT; 2],
-            gain: 0.6,
+            gain: 0.5,
         },
         Kick {
             beats: [2.5; 2],
-            gain: 0.4,
+            gain: 0.38,
         },
     ],
     ghost_pickup: false,

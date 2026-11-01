@@ -71,13 +71,13 @@ pub(crate) fn staging(mood: Mood, lane: Lane) -> [f64; 2] {
         (Mood::Day, Lane::Pad) => [0.1376, 0.7424],
         (Mood::Day, Lane::Sparkle) => [1.1440, 0.5299],
         (Mood::Day, Lane::Keys) => [0.5419, 0.7848],
-        (Mood::Day, Lane::Drums) => [0.6785, 0.6305],
+        (Mood::Day, Lane::Drums) => [0.9134, 0.4254],
         (Mood::Day, Lane::Texture) => [3.1570, 0.5869],
-        (Mood::Day, Lane::Bass) => [0.8351, 0.6117],
+        (Mood::Day, Lane::Bass) => [1.1728, 0.6019],
         (Mood::Night, Lane::Pad) => [0.2049, 0.7833],
         (Mood::Night, Lane::Sparkle) => [1.2683, 0.5361],
         (Mood::Night, Lane::Keys) => [1.0453, 0.6983],
-        (Mood::Night, Lane::Drums) => [1.0628, 0.7487],
+        (Mood::Night, Lane::Drums) => [1.3995, 0.4484],
         (Mood::Night, Lane::Texture) => [3.0763, 0.6012],
         (Mood::Night, Lane::Bass) => [1.3064, 0.6026],
     }
@@ -1177,10 +1177,10 @@ mod tests {
         // misses it by 4.5 LU
         const TOLERANCE_LU: f64 = 1.5;
         let whole_lane: [(Mood, [f64; Lane::ALL.len()]); 2] = [
-            (Mood::Day, [-12.89, -18.63, -16.86, -17.87, -34.91, -11.83]),
+            (Mood::Day, [-12.89, -18.63, -16.86, -20.44, -34.91, -12.17]),
             (
                 Mood::Night,
-                [-11.76, -19.97, -16.99, -17.20, -36.23, -10.22],
+                [-11.76, -19.97, -16.99, -21.06, -36.23, -11.96],
             ),
         ];
         let sr = SAMPLE_RATE;

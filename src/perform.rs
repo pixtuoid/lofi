@@ -322,10 +322,12 @@ mod tests {
         // its trim, each tier's lanes in `Lane::ALL` order
         let trim = 10f64.powf(f64::from(crate::stream::master::BASS_TRIM_DB) / 20.0) as f32;
         let bass = |gain: f32| gain * trim;
+        let lift = 10f64.powf(f64::from(crate::stream::master::DRUMS_LIFT_DB) / 20.0) as f32;
+        let drums = |gain: f32| gain * lift;
         let tiers: [(f32, [f32; Lane::ALL.len()]); 3] = [
-            (0.0, [0.75, 0.70, 0.0, 0.0, 0.78, bass(0.60)]),
-            (0.5, [0.70, 0.50, 0.60, 0.35, 0.84, bass(0.70)]),
-            (1.0, [0.65, 0.55, 0.70, 0.60, 0.78, bass(0.75)]),
+            (0.0, [0.75, 0.70, 0.0, drums(0.0), 0.78, bass(0.60)]),
+            (0.5, [0.45, 0.50, 0.60, drums(0.65), 0.84, bass(0.74)]),
+            (1.0, [0.40, 0.55, 0.70, drums(0.80), 0.78, bass(0.80)]),
         ];
         let seed = 2;
         let mut whole = Schedule::plain(seed, 0, SAMPLE_RATE);
