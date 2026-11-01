@@ -1,5 +1,6 @@
-"""`ab_judge.py` on a Modal T4, over the reference corpus and the models two
-Volumes cache, for a batch this machine uploads.
+"""`ab_judge.py` on Modal's T4s, a shard of the pairs on each, over the
+reference corpus and the models two Volumes cache, for a batch this machine
+uploads.
 
 Usage, with modal-requirements.txt's client and a configured token:
   modal volume put lofi-judge-refs REFS/manifest.json /manifest.json
@@ -39,8 +40,7 @@ SCRIPTS = HERE.parent / "scripts" if modal.is_local() else Path(REMOTE_SCRIPTS)
 JUDGE = HERE if modal.is_local() else Path(REMOTE_JUDGE)
 MODELS, REFS, BATCH = "/models", "/refs", "/batch"
 sys.path.insert(0, str(JUDGE))
-from judge_local import exit_code, published, redact, select
-from validate_batch import IDENTICAL
+from judge_local import dealt, exit_code, published, redact, select
 
 # the uv the image and SKILL.md's install run, which modal-requirements.in
 # pins where Dependabot moves it
@@ -114,11 +114,36 @@ def sha256(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def took(started):
-    """What the calling function's children have taken since `started`: wall
-    time, their CPU and their peak RSS."""
+def took(started, shards=()):
+    """What the calling function's children and `shards` have taken since
+    `started`: wall time, their CPU and the highest peak RSS."""
     usage = resource.getrusage(resource.RUSAGE_CHILDREN)
-    return {"wall_s": time.time() - started, "cpu_s": usage.ru_utime + usage.ru_stime, "peak_rss_mib": usage.ru_maxrss / 1024}
+    return {
+        "wall_s": time.time() - started,
+        "cpu_s": usage.ru_utime + usage.ru_stime + sum(shard["cpu_s"] for shard in shards),
+        "peak_rss_mib": max([usage.ru_maxrss / 1024, *(shard["peak_rss_mib"] for shard in shards)]),
+    }
+
+
+def offline():
+    return {**os.environ, "HF_HUB_OFFLINE": "1"}
+
+
+def run_judge(batch, *flags, **options):
+    """`ab_judge.py` over `batch` and the corpus, in a child whose output
+    goes nowhere until a caller masks it: nothing a model or a library prints
+    reaches a public log."""
+    command = [sys.executable, f"{REMOTE_SCRIPTS}/ab_judge.py", str(batch), "--refs", REFS, "--corpus-cache", f"{REFS}/corpus-cache"]
+    return subprocess.run([*command, *flags], capture_output=True, text=True, **options)
+
+
+def mounted(batch):
+    """A scoring function's Volumes: `batch`, and the caches read-only."""
+    return {
+        BATCH: batch,
+        MODELS: models.with_mount_options(read_only=True),
+        REFS: refs.with_mount_options(read_only=True),
+    }
 
 
 def fetch(url):
@@ -183,11 +208,7 @@ def build():
         write_warm(warm / side / "gen_day_empty_000.wav", gain)
         (warm / side / "COMMIT").write_text("0" * 40 + "\n")
     started = time.time()
-    run = subprocess.run(
-        [sys.executable, f"{REMOTE_SCRIPTS}/ab_judge.py", str(warm), "--refs", REFS, "--corpus-cache", f"{REFS}/corpus-cache"],
-        capture_output=True,
-        text=True,
-    )
+    run = run_judge(warm)
     models.commit()
     refs.commit()
     built = (warm / "judge.json").is_file()
@@ -205,46 +226,62 @@ def rehearse():
     tests, then its `smoke`, every model on the warm-up take, each a child
     process `took` counts; a failure raises out of the call."""
     started = time.time()
-    offline = {**os.environ, "HF_HUB_OFFLINE": "1"}
     take = Path("/tmp/smoke.wav")
     write_warm(take, 1.0)
     smoke = (
         "import sys; sys.path.insert(0, sys.argv[1]); import ab_judge, soundfile as sf;"
         " print('smoke scores:', ab_judge.smoke(*sf.read(sys.argv[2], dtype='float32'), float(sys.argv[3])))"
     )
-    subprocess.run([sys.executable, "-I", f"{REMOTE_SCRIPTS}/test_ab_judge.py"], env=offline, check=True)
-    subprocess.run([sys.executable, "-I", "-c", smoke, REMOTE_SCRIPTS, str(take), str(WARMUP_CAND_GAIN)], env=offline, check=True)
+    subprocess.run([sys.executable, "-I", f"{REMOTE_SCRIPTS}/test_ab_judge.py"], env=offline(), check=True)
+    subprocess.run([sys.executable, "-I", "-c", smoke, REMOTE_SCRIPTS, str(take), str(WARMUP_CAND_GAIN)], env=offline(), check=True)
     return took(started)
 
 
-@app.function(gpu="T4", cpu=CPU, memory=MEMORY_MIB, timeout=JUDGE_TIMEOUT_S)
-def score(score_identical=False):
-    """Judges the batch the caller mounts at BATCH, offline, over the
-    read-only caches, and returns what's safe to publish: the table, the
-    record without the corpus's names, and what the run took."""
+# one shard to a container, since a ready one "will be reused"
+# (https://modal.com/docs/guide/cold-start): the child's usage `took` reads and
+# the rows it leaves are then this shard's alone
+@app.function(gpu="T4", cpu=CPU, memory=MEMORY_MIB, timeout=JUDGE_TIMEOUT_S, single_use_containers=True)
+def score_shard(names):
+    """Scores the pairs `names` of the batch the caller mounts at BATCH,
+    offline, over the read-only caches, and returns their rows and seat with
+    what it took, or None with its log, names masked, Modal's."""
+    started = time.time()
+    rows = Path("/tmp/rows.json")
+    run = run_judge(BATCH, "--shard", str(rows), *names, env=offline())
+    if not rows.is_file():
+        print(redact(run.stdout + run.stderr, tracks()))
+        return None
+    return {**json.loads(rows.read_text()), **took(started)}
+
+
+# no T4 of its own: it runs the tests before any shard takes one, then waits
+@app.function(cpu=CPU, memory=MEMORY_MIB, timeout=JUDGE_TIMEOUT_S)
+def score(batch, paired, changed):
+    """Judges the pairs `changed` of `paired` on the Volume `batch`, which
+    the caller mounts here too, a shard to each container, and returns what's
+    safe to publish: the table, the record without the corpus's names, and
+    what the run took."""
     started = time.time()
     known = tracks()
-    offline = {**os.environ, "HF_HUB_OFFLINE": "1"}
     # the tests that need this venv, which runs nowhere else: a broken floor
     # or corpus cache still prints a verdict
     tests = subprocess.run(
-        [sys.executable, "-I", f"{REMOTE_SCRIPTS}/test_ab_judge.py"], capture_output=True, text=True, env=offline
+        [sys.executable, "-I", f"{REMOTE_SCRIPTS}/test_ab_judge.py"], capture_output=True, text=True, env=offline()
     )
     if tests.returncode:
         print(redact(tests.stdout + tests.stderr, known))
         return {"outcome": "infra failure", "message": "ab_judge.py's tests failed; their log, names masked, is Modal's", **took(started)}
-    run = subprocess.run(
-        [sys.executable, f"{REMOTE_SCRIPTS}/ab_judge.py", BATCH, "--refs", REFS, "--corpus-cache", f"{REFS}/corpus-cache"]
-        + (["--score-identical"] if score_identical else []),
-        capture_output=True,
-        text=True,
-        env=offline,
-    )
+    shards = list(score_shard.with_options(volumes=mounted(batch)).map(dealt(changed), return_exceptions=True))
+    if not all(isinstance(shard, dict) for shard in shards):
+        return {"outcome": "infra failure", "message": "a shard stopped before its rows; its log, names masked, is Modal's", **took(started)}
+    plan = Path("/tmp/plan.json")
+    plan.write_text(json.dumps({"paired": paired, "changed": changed, "shards": shards}))
+    run = run_judge(BATCH, "--merge", str(plan), env=offline())
     written = Path(BATCH) / "judge.json"
     if not written.is_file():
         print(redact(run.stdout + run.stderr, known))
-        return {"outcome": "infra failure", "message": "the judge stopped before a verdict; its log, names masked, is Modal's", **took(started)}
-    return {**published(json.loads(written.read_text()), known), **took(started)}
+        return {"outcome": "infra failure", "message": "the judge stopped before a verdict; its log, names masked, is Modal's", **took(started, shards)}
+    return {**published(json.loads(written.read_text()), known), **took(started, shards)}
 
 
 @app.local_entrypoint()
@@ -275,9 +312,8 @@ def judge(batch: str, base: str, cand: str, out: str = "", force_score: bool = F
     """Judges `batch`'s base/ and cand/, rendered at commits `base` and
     `cand`, through a Volume that lives as long as the run, prints the table,
     and writes the result to `out`. Only the pairs `judge_local.select` picks
-    go up, with the IDENTICAL list the batch keeps, so a batch with none
-    makes no remote call; `force_score` sends and scores every pair, the
-    proof that identical ones tie."""
+    go up, so a batch with none makes no remote call; `force_score` sends and
+    scores every pair, the proof that identical ones tie."""
     root = Path(batch)
     takes, differ = select(root, base, cand, force_score)
     if differ:
@@ -287,15 +323,7 @@ def judge(batch: str, base: str, cand: str, out: str = "", force_score: bool = F
                     upload.put_file(str(root / side / "COMMIT"), f"/{side}/COMMIT")
                     for n in differ:
                         upload.put_file(str(root / side / n), f"/{side}/{n}")
-                if (root / IDENTICAL).is_file():
-                    upload.put_file(str(root / IDENTICAL), f"/{IDENTICAL}")
-            result = score.with_options(
-                volumes={
-                    BATCH: vol,
-                    MODELS: models.with_mount_options(read_only=True),
-                    REFS: refs.with_mount_options(read_only=True),
-                }
-            ).remote(score_identical=force_score)
+            result = score.with_options(volumes=mounted(vol)).remote(vol, takes.paired, differ)
         print(result.get("table", result.get("message")))
         print(f"\nverdict: {result['outcome']}")
         print(f"\nwall {result['wall_s']:.0f} s, judge CPU {result['cpu_s']:.0f} s, peak RSS {result['peak_rss_mib']:.0f} MiB")

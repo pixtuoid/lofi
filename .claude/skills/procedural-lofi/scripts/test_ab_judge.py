@@ -4,6 +4,7 @@ $J set up as SKILL.md's GENERATOR loop step 5 says."""
 
 import contextlib
 import errno
+import io
 import json
 import sys
 import tempfile
@@ -14,10 +15,12 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import numpy as np
+import soundfile as sf
 from ab_judge import (
     FLOOR_CALIBRATED_DBFS,
     FLOOR_CALIBRATED_LUFS,
     ANCHOR_RIPPLE_DB,
+    SCREEN_ANCHOR_HZ,
     SCREEN_SHARE,
     WINDOW_S,
     anchor_filter,
@@ -25,6 +28,7 @@ from ab_judge import (
     cached_screen,
     environment,
     floored,
+    main,
     mono_lufs,
     quietest_file,
     screened,
@@ -35,7 +39,7 @@ from ab_judge import (
     windows,
 )
 from scipy import signal
-from verdict import JUDGES
+from verdict import JUDGES, PANEL
 
 SR = 44100
 NAME = "gen_day_empty_000.wav"
@@ -246,6 +250,72 @@ class Smoke(unittest.TestCase):
     def test_a_distance_that_isnt_finite_fails_the_smoke(self):
         with self.assertRaises(ValueError):
             self.smoke(distance=float("nan"))
+
+
+class Shards(unittest.TestCase):
+    NAMES = ["gen_day_empty_000.wav", "gen_day_empty_001.wav", "gen_night_busy_002.wav"]
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.batch = Path(self.dir.name)
+        for gain, side in ((1.0, "base"), (0.5, "cand")):
+            (self.batch / side).mkdir()
+            (self.batch / side / "COMMIT").write_text("0" * 40 + "\n")
+            for i, name in enumerate(self.NAMES):
+                x = np.random.default_rng(i).standard_normal((SR, 2)) / 8
+                sf.write(self.batch / side / name, x * gain, SR, subtype="PCM_16")
+
+    def run_judge(self, *flags):
+        """`main` over fake judges, each score a function of the take alone,
+        as a shard's must be for the merge to change nothing."""
+        heard = lambda x, sr: float(np.abs(x).sum())
+        model = mock.Mock(num_features=4)
+        model.name = "clap"
+        fad = mock.Mock(
+            model=model,
+            lufs=-20.0,
+            calibration={"reference.mp3": 0.1, "other.mp3": 0.2},
+            score_pair=lambda base, cand: [heard(*base), heard(*cand)],
+        )
+        panel = mock.Mock(score=heard)
+        screen = {name: {"scale": 2.0, "anchors": {SCREEN_ANCHOR_HZ: 0.0}} for name in PANEL}
+        argv = ["ab_judge", str(self.batch), "--refs", "/refs", "--corpus-cache", "/cache", *flags]
+        with (
+            mock.patch("sys.argv", argv),
+            mock.patch("ab_judge.judge_device", return_value="cpu"),
+            mock.patch("ab_judge.Fad", return_value=fad),
+            mock.patch("ab_judge.Audiobox", return_value=panel),
+            mock.patch("ab_judge.TuneJury", return_value=panel),
+            mock.patch("ab_judge.cached_screen", return_value=screen),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            try:
+                main()
+            except SystemExit:
+                pass  # too few pairs to pass, which `judge.json` still records
+
+    def test_shards_merged_judge_what_one_run_judges(self):
+        self.run_judge()
+        whole = json.loads((self.batch / "judge.json").read_text())
+        (self.batch / "judge.json").unlink()
+        rows = [self.batch.parent / f"{self.batch.name}-{i}.json" for i in range(2)]
+        self.addCleanup(lambda: [r.unlink(missing_ok=True) for r in rows])
+        self.run_judge("--shard", str(rows[0]), self.NAMES[2], self.NAMES[0])
+        self.run_judge("--shard", str(rows[1]), self.NAMES[1])
+        plan = self.batch.parent / f"{self.batch.name}-plan.json"
+        self.addCleanup(lambda: plan.unlink(missing_ok=True))
+        shards = [json.loads(r.read_text()) for r in rows]
+        plan.write_text(json.dumps({"paired": self.NAMES, "changed": self.NAMES, "shards": shards}))
+        self.run_judge("--merge", str(plan))
+        self.assertEqual(json.loads((self.batch / "judge.json").read_text()), whole)
+
+    def test_a_shard_scores_its_takes_and_judges_nothing(self):
+        rows = self.batch / "rows.json"
+        self.run_judge("--shard", str(rows), self.NAMES[0])
+        shard = json.loads(rows.read_text())
+        self.assertEqual(list(shard["rows"]), self.NAMES[:1])
+        self.assertFalse((self.batch / "judge.json").exists())
 
 
 if __name__ == "__main__":

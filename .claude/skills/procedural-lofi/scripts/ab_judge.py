@@ -12,6 +12,10 @@ Usage: $J/bin/python ab_judge.py DIR --refs REFS [--corpus-cache CACHE] [--score
   CACHE holds the corpus's FAD statistics and the panel's screening, built on
   a miss.
   --score-identical scores byte-identical pairs too: the proof that they tie.
+  --shard ROWS TAKE... and --merge PLAN split a run across containers, for
+  `modal_judge.py`, whose caller has validated the batch: the first scores
+  TAKEs into ROWS and judges nothing, the second scores nothing and judges
+  PLAN's rows ({paired, changed, shards}).
 
 The verdict is the controller's proposal (opinion), `verdict.judged`'s, and
 this exits non-zero on REGRESSION or INSUFFICIENT. The owner's blind listen,
@@ -84,6 +88,7 @@ sys.dont_write_bytecode = True
 HERE = Path(__file__).resolve().parent
 # `judge/` sits beside `scripts/` here and in the Modal image alike
 sys.path[:0] = [str(HERE), str(HERE.parent / "judge")]
+from judge_local import merged
 from validate_batch import NAME, Invalid, scored, validate
 from verdict import GUARD, JUDGES, PANEL, exit_message, judged
 
@@ -575,51 +580,23 @@ def read_commit(side):
     return commit.read_text().strip()
 
 
-def main():
-    ap = argparse.ArgumentParser(description="Judge an A/B batch by measurement.")
-    ap.add_argument("dir", type=Path, help="the batch: base/ and cand/ of same-named takes")
-    ap.add_argument("--refs", type=Path, required=True, help="the reference corpus: audio/ and manifest.json")
-    ap.add_argument(
-        "--corpus-cache",
-        type=Path,
-        default=Path(sys.prefix) / "corpus-cache",
-        help="the corpus's FAD statistics and the panel's screening, built here on a miss (default: the venv's)",
-    )
-    ap.add_argument("--score-identical", action="store_true", help="score byte-identical pairs too")
-    args = ap.parse_args()
-    base_dir, cand_dir = args.dir / "base", args.dir / "cand"
-
-    try:
-        takes = validate(args.dir)
-    except Invalid as e:
-        sys.exit(f"invalid batch: {e}")
-    if takes.new or takes.gone:
-        print(f"unpaired, left out: {', '.join(takes.new + takes.gone)}")
-    commits = {"base": read_commit(base_dir), "cand": read_commit(cand_dir)}
-    sides = (("base", base_dir), ("cand", cand_dir))
-    changed = scored(args.dir, takes, args.score_identical)
-    pairs = [
-        {"take": n.removesuffix(".wav"), "mood": NAME.fullmatch(n)["mood"], "identical": n not in changed}
-        for n in takes.paired
-    ]
-    record = {"dir": str(args.dir.resolve()), "commits": commits, "floor_re_take_db": FLOOR_RE_TAKE_DB}
-    held, scales = [], {}
-
-    if changed:
-        device = judge_device()
-        takes_lufs = float(
-            np.median([mono_lufs(*sf.read(d / n, dtype="float32")) for n in changed for _, d in sides])
+def scored_rows(args, names, sides):
+    """The seat a run's panel takes and `names`' rows, every judge loaded
+    once. The takes' level is `names`' alone, which `merged` holds to one
+    across a run's shards."""
+    device = judge_device()
+    takes_lufs = float(np.median([mono_lufs(*sf.read(d / n, dtype="float32")) for n in names for _, d in sides]))
+    fad = Fad(args.refs, takes_lufs, args.corpus_cache)
+    panel = dict(zip(PANEL, (Audiobox(), TuneJury(fad.model, device)), strict=True))
+    screen = cached_screen(args.corpus_cache, fad, panel)
+    if out := screened_out(screen):
+        sys.exit(
+            f"{', '.join(out)} rated BS.1534-3's mid-range anchor of the held-out references unimpaired past"
+            f" §4.1.2's {SCREEN_SHARE:.0%}, or scored them alike ({screen}), so the panel can't seat it"
         )
-        fad = Fad(args.refs, takes_lufs, args.corpus_cache)
-        panel = dict(zip(PANEL, (Audiobox(), TuneJury(fad.model, device)), strict=True))
-        record["screen"] = cached_screen(args.corpus_cache, fad, panel)
-        if out := screened_out(record["screen"]):
-            sys.exit(
-                f"{', '.join(out)} rated BS.1534-3's mid-range anchor of the held-out references unimpaired past"
-                f" §4.1.2's {SCREEN_SHARE:.0%}, or scored them alike ({record['screen']}), so the panel can't seat it"
-            )
-        scales = {name: judge["scale"] for name, judge in record["screen"].items()}
-        record["judges"] = {
+    seat = {
+        "screen": screen,
+        "judges": {
             "audiobox": {"package": version("audiobox_aesthetics"), "checkpoint": AUDIOBOX},
             "tunejury": {"checkpoint": TUNEJURY, "encoders": [LAION_CLAP, MERT]},
             "fad": {
@@ -631,27 +608,73 @@ def main():
             },
             "torch": version("torch"),
             "device": str(device),
-        }
-        record["fad_calibration"] = fad.calibration
-        held = list(fad.calibration.values())
-        for row in pairs:
-            if row["identical"]:
-                continue
-            name = f"{row['take']}.wav"
-            takes = {}
-            for side, d in sides:
-                x, sr = sf.read(d / name, dtype="float32")
-                # the descriptors measure the take as rendered, the judges hear it floored
-                row[side] = describe(x, sr)
-                takes[side] = floored(x, name, mono_lufs(x, sr)), sr
-                row[side]["scores"] = {j: judge.score(*takes[side]) for j, judge in panel.items()}
-            row["base"]["scores"][GUARD], row["cand"]["scores"][GUARD] = fad.score_pair(takes["base"], takes["cand"])
-            row["bands_delta_db"] = [c - b for b, c in zip(row["base"]["bands_db"], row["cand"]["bands_db"])]
-            b, c = row["base"]["scores"], row["cand"]["scores"]
-            row["deltas"] = {j: c[j] - b[j] for j in JUDGES}
-            # nearer the corpus is better, so a gain is a fall in FAD
-            row["gains"] = {j: -d if j == GUARD else d for j, d in row["deltas"].items()}
-            print(f"scored {row['take']}", flush=True)
+        },
+        "fad_calibration": fad.calibration,
+    }
+    rows = {}
+    for name in names:
+        row = rows[name] = {}
+        takes = {}
+        for side, d in sides:
+            x, sr = sf.read(d / name, dtype="float32")
+            # the descriptors measure the take as rendered, the judges hear it floored
+            row[side] = describe(x, sr)
+            takes[side] = floored(x, name, mono_lufs(x, sr)), sr
+            row[side]["scores"] = {j: judge.score(*takes[side]) for j, judge in panel.items()}
+        row["base"]["scores"][GUARD], row["cand"]["scores"][GUARD] = fad.score_pair(takes["base"], takes["cand"])
+        row["bands_delta_db"] = [c - b for b, c in zip(row["base"]["bands_db"], row["cand"]["bands_db"])]
+        b, c = row["base"]["scores"], row["cand"]["scores"]
+        row["deltas"] = {j: c[j] - b[j] for j in JUDGES}
+        # nearer the corpus is better, so a gain is a fall in FAD
+        row["gains"] = {j: -d if j == GUARD else d for j, d in row["deltas"].items()}
+        print(f"scored {name}", flush=True)
+    return {"seat": seat, "rows": rows}
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Judge an A/B batch by measurement.")
+    ap.add_argument("dir", type=Path, help="the batch: base/ and cand/ of same-named takes")
+    ap.add_argument("--refs", type=Path, required=True, help="the reference corpus: audio/ and manifest.json")
+    ap.add_argument(
+        "--corpus-cache",
+        type=Path,
+        default=Path(sys.prefix) / "corpus-cache",
+        help="the corpus's FAD statistics and the panel's screening, built here on a miss (default: the venv's)",
+    )
+    ap.add_argument("--score-identical", action="store_true", help="score byte-identical pairs too")
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--shard", nargs="+", metavar=("ROWS", "TAKE"), help="score TAKEs into ROWS and judge nothing")
+    mode.add_argument("--merge", type=Path, metavar="PLAN", help="judge PLAN's rows and score nothing")
+    args = ap.parse_args()
+    base_dir, cand_dir = args.dir / "base", args.dir / "cand"
+    sides = (("base", base_dir), ("cand", cand_dir))
+
+    if args.shard:
+        rows, *names = args.shard
+        Path(rows).write_text(json.dumps(scored_rows(args, names, sides)))
+        return
+    if args.merge:
+        plan = json.loads(args.merge.read_text())
+        paired, changed, shards = plan["paired"], plan["changed"], plan["shards"]
+    else:
+        try:
+            takes = validate(args.dir)
+        except Invalid as e:
+            sys.exit(f"invalid batch: {e}")
+        if takes.new or takes.gone:
+            print(f"unpaired, left out: {', '.join(takes.new + takes.gone)}")
+        paired = takes.paired
+        changed = scored(args.dir, takes, args.score_identical)
+        shards = [scored_rows(args, changed, sides)] if changed else []
+    commits = {"base": read_commit(base_dir), "cand": read_commit(cand_dir)}
+    seat, rows = merged(shards, changed)
+    pairs = [
+        {"take": n.removesuffix(".wav"), "mood": NAME.fullmatch(n)["mood"], "identical": n not in changed, **rows.get(n, {})}
+        for n in paired
+    ]
+    record = {"dir": str(args.dir.resolve()), "commits": commits, "floor_re_take_db": FLOOR_RE_TAKE_DB, **seat}
+    held = list(seat.get("fad_calibration", {}).values())
+    scales = {name: judge["scale"] for name, judge in seat.get("screen", {}).items()}
 
     result = judged(pairs, held, scales)
     verdict = {}

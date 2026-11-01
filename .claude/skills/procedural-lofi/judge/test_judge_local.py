@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from judge_local import NOT_A_SCORE, exit_code, published, redact, select
+from judge_local import NOT_A_SCORE, SHARDS, dealt, exit_code, merged, published, redact, select
 from test_validate_batch import write_wav
 from validate_batch import Takes, stage, validate
 
@@ -112,6 +112,49 @@ class Publishing(unittest.TestCase):
         self.assertEqual(got["outcome"], "PASS")
         self.assertEqual(got["table"], "take dCE\nday_empty_000 +0.01\nnearest ref#0")
         self.assertEqual(got["record"], {"judges": {"fad": {"lufs": -20.0}}, "fad_calibration": [0.2, 0.4], "overall": "PASS"})
+
+
+class Dealing(unittest.TestCase):
+    def test_every_pair_goes_to_one_shard_of_the_most_a_batch_takes(self):
+        pairs = [f"gen_day_empty_{i:03}.wav" for i in range(95)]
+        shards = dealt(pairs)
+        self.assertEqual(len(shards), SHARDS)
+        self.assertEqual(sorted(name for shard in shards for name in shard), pairs)
+
+    def test_the_shards_of_a_batch_differ_by_at_most_one_pair(self):
+        sizes = [len(shard) for shard in dealt(list(range(95)))]
+        self.assertLessEqual(max(sizes) - min(sizes), 1)
+
+    def test_a_batch_smaller_than_the_shards_takes_one_each_and_no_empty_one(self):
+        self.assertEqual(dealt(PAIRS), [PAIRS[:1], PAIRS[1:]])
+
+
+class Merging(unittest.TestCase):
+    SEAT = {"judges": {"fad": {"lufs": -20.0}}}
+
+    def shard(self, *names, seat=SEAT):
+        return {"seat": seat, "rows": {name: {"take": name} for name in names}}
+
+    def test_the_rows_join_under_the_seat_the_shards_share(self):
+        seat, rows = merged([self.shard(PAIRS[1]), self.shard(PAIRS[0])], PAIRS)
+        self.assertEqual(seat, self.SEAT)
+        self.assertEqual(set(rows), set(PAIRS))
+
+    def test_a_shard_that_dropped_a_pair_is_refused(self):
+        with self.assertRaises(SystemExit):
+            merged([self.shard(PAIRS[0])], PAIRS)
+
+    def test_a_pair_two_shards_scored_is_refused(self):
+        with self.assertRaises(SystemExit):
+            merged([self.shard(*PAIRS), self.shard(PAIRS[0])], PAIRS)
+
+    def test_a_shard_seated_at_another_level_is_refused(self):
+        other = {"judges": {"fad": {"lufs": -21.0}}}
+        with self.assertRaises(SystemExit):
+            merged([self.shard(PAIRS[0]), self.shard(PAIRS[1], seat=other)], PAIRS)
+
+    def test_a_batch_with_no_pair_to_score_has_no_seat_and_no_rows(self):
+        self.assertEqual(merged([], []), ({}, {}))
 
 
 class RustCopies(unittest.TestCase):
