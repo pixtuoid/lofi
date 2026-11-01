@@ -13,7 +13,7 @@ pub const TIER_INTENSITIES: [f32; 3] = [0.0, 0.5, 1.0];
 /// Each lane's gain at each of [`TIER_INTENSITIES`]: pixtuoid's `TierGain`s,
 /// moved here from
 /// <https://github.com/pixtuoid/pixtuoid/blob/a63f1782f477c357666e71a9c1147090b47fe17d/crates/pixtuoid-scene/src/audio/mod.rs#L98-L107>,
-/// but the lead's at the working tiers, the pad's, drums' and bass's there to
+/// but the lead's at the working tiers, the pad's and drums' there to
 /// LOFI-BIBLE.md §3's stem shares, and the bass's under [`BASS_TRIM_DB`].
 fn tier_gains(lane: Lane) -> [f32; 3] {
     match lane {
@@ -33,12 +33,12 @@ fn tier_gains(lane: Lane) -> [f32; 3] {
         // never 0, and rising where the pad's falls: the lane must hold up
         // once the drums, the keys and pixtuoid's typing enter
         Lane::Bass => {
-            [0.60, 0.74, 0.80].map(|gain| gain * gain_of_db(f64::from(BASS_TRIM_DB)) as f32)
+            [0.60, 0.70, 0.75].map(|gain| gain * gain_of_db(f64::from(BASS_TRIM_DB)) as f32)
         }
     }
 }
 
-/// How far under [`tier_gains`]' figures the bass plays: what holds its share of
+/// How far under pixtuoid's tier gains the bass plays: what holds its share of
 /// the mix's gated loudness since its window rose (`compose`'s `BASS_LOW`).
 /// Opinion, sized by the measurement in the commit that set it.
 pub(crate) const BASS_TRIM_DB: f32 = -1.5;
@@ -47,7 +47,7 @@ pub(crate) const BASS_TRIM_DB: f32 = -1.5;
 /// share, which no gain under unity reaches from a stem normalized to its
 /// peak, and as far as a take at
 /// [`TARGET_LUFS`](crate::audition::TARGET_LUFS) keeps from clipping.
-pub(crate) const DRUMS_LIFT_DB: f32 = 3.0;
+pub(crate) const DRUMS_LIFT_DB: f32 = 4.5;
 
 /// `lane`'s gain at `intensity`: its tier's at each of
 /// [`TIER_INTENSITIES`], linear between them, which is opinion.

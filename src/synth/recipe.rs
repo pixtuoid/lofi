@@ -2,7 +2,7 @@
 
 use super::voices::{ChordTone, bass_note, chord, drum_hit, ep_pluck_vel};
 use super::{NoteVoice, SR, bar_onset, onset};
-use crate::compose::{DrumKind, GEN_LOOP_BARS, Hit, Lane, Mood, Note, Score};
+use crate::compose::{GEN_LOOP_BARS, Hit, Lane, Mood, Note, Score, kicks};
 use crate::dsp::NoiseStream;
 
 /// A generated pad's tone before the tape: a low-pass, then a slow swell.
@@ -108,12 +108,12 @@ pub(crate) const KEYS: ByMood<NoteRecipe> = ByMood {
 };
 pub(crate) const BASS: ByMood<NoteRecipe> = ByMood {
     night: NoteRecipe {
-        dur_s: 0.45,
+        dur_s: 1.7,
         cutoff_hz: 700.0,
         peak: 0.8,
     },
     day: NoteRecipe {
-        dur_s: 0.4,
+        dur_s: 1.5,
         cutoff_hz: 900.0,
         peak: 0.8,
     },
@@ -121,12 +121,12 @@ pub(crate) const BASS: ByMood<NoteRecipe> = ByMood {
 pub(crate) const DRUMS: ByMood<HitRecipe> = ByMood {
     night: HitRecipe {
         cutoff_hz: 6000.0,
-        drive: 7.5,
+        drive: 2.0,
         peak: 0.8,
     },
     day: HitRecipe {
         cutoff_hz: 6500.0,
-        drive: 8.0,
+        drive: 2.2,
         peak: 0.85,
     },
 };
@@ -220,14 +220,7 @@ impl Part<'_> {
             Part::Bed {
                 mood: Mood::Night,
                 hits,
-            } => {
-                let mut kicks: Vec<f32> = (hits.iter())
-                    .filter(|h| h.kind == DrumKind::Kick)
-                    .map(|h| h.at)
-                    .collect();
-                kicks.sort_by(f32::total_cmp);
-                kicks
-            }
+            } => kicks(hits),
             _ => Vec::new(),
         }
     }

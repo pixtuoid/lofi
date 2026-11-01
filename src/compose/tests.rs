@@ -696,4 +696,4 @@ fn every_seed_composes_the_score_it_did() {
     assert_eq!(h, EVERY_SEED_GOLDEN, "{h:#018x}");
 }
 
-const EVERY_SEED_GOLDEN: u64 = 0x63a9_7d10_16ca_8354;
+const EVERY_SEED_GOLDEN: u64 = 0xd35e_ee47_b931_5853;

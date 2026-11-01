@@ -204,13 +204,21 @@ impl Score {
         self.lead_voice.name()
     }
 
-    /// Every kick's time in the loop, in the order the drums lay them.
+    /// Every kick's time in the loop, in order.
     #[cfg(test)]
-    pub(super) fn kicks(&self) -> impl Iterator<Item = f32> + '_ {
-        (self.drums.iter())
-            .filter(|hit| hit.kind == DrumKind::Kick)
-            .map(|hit| hit.at)
+    pub(super) fn kicks(&self) -> impl Iterator<Item = f32> {
+        kicks(&self.drums).into_iter()
     }
+}
+
+/// The times in the loop `hits` kick, in order.
+pub(crate) fn kicks(hits: &[Hit]) -> Vec<f32> {
+    let mut kicks: Vec<f32> = (hits.iter())
+        .filter(|hit| hit.kind == DrumKind::Kick)
+        .map(|hit| hit.at)
+        .collect();
+    kicks.sort_by(f32::total_cmp);
+    kicks
 }
 
 /// Every knob a mood's songs are composed with, one part per stage, so each
@@ -321,7 +329,7 @@ const DAY: Style = Style {
     },
     drums: Grooves::Drawn(&DAY_GROOVES),
     bass: BassStyle {
-        answer_p: 0.7,
+        answer_p: 0.55,
         answer_beat: 2.5,
         fifth_p: 0.4,
         pickup_p: Some(0.25),
@@ -364,7 +372,7 @@ const NIGHT: Style = Style {
     },
     drums: Grooves::Fixed(&NIGHT_GROOVE),
     bass: BassStyle {
-        answer_p: 0.8,
+        answer_p: 0.7,
         // the old baked sub's pulse
         answer_beat: 2.0,
         fifth_p: 0.2,

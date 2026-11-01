@@ -270,11 +270,12 @@ mod tests {
                 350.1,
                 &[(125.0, 250.0, 0.312), (250.0, 500.0, 0.542)],
             ),
+            // the kit that replaced the ratified one, not the python chain
             (
                 "drums",
                 stem_drums(&mut NoiseStream::new(4)),
-                240.4,
-                &[(62.5, 125.0, 0.400), (125.0, 250.0, 0.056)],
+                142.8,
+                &[(62.5, 125.0, 0.615), (125.0, 250.0, 0.026)],
             ),
         ];
         for (name, buf, ref_centroid, bands) in cases {
@@ -352,12 +353,13 @@ mod tests {
                 0.10,
                 &[(125.0, 250.0, 0.729), (250.0, 500.0, 0.253)],
             ),
+            // the kit that replaced the ratified one, not the python chain
             (
                 "night_drums",
                 night_drums(&mut NoiseStream::new(4)),
-                80.0,
+                76.5,
                 0.15,
-                &[(62.0, 125.0, 0.529), (125.0, 250.0, 0.020)],
+                &[(62.0, 125.0, 0.700), (125.0, 250.0, 0.008)],
             ),
         ];
         for (name, buf, ref_centroid, tol, bands) in cases {
@@ -403,12 +405,13 @@ mod tests {
                 0.10,
                 &[(125.0, 250.0, 0.323), (250.0, 500.0, 0.556)],
             ),
+            // the kit that replaced the ratified one, not the python chain
             (
                 "day2_drums",
                 day_take_drums(&score::DAY2, &mut NoiseStream::new(4)),
-                241.6,
+                156.6,
                 0.15,
-                &[(62.5, 125.0, 0.412), (125.0, 250.0, 0.070)],
+                &[(62.5, 125.0, 0.615), (125.0, 250.0, 0.034)],
             ),
             (
                 "day3_pad",
@@ -431,12 +434,13 @@ mod tests {
                 0.10,
                 &[(125.0, 250.0, 0.404), (250.0, 500.0, 0.558)],
             ),
+            // the kit that replaced the ratified one, not the python chain
             (
                 "day3_drums",
                 day_take_drums(&score::DAY3, &mut NoiseStream::new(4)),
-                189.1,
+                123.3,
                 0.15,
-                &[(62.5, 125.0, 0.433), (125.0, 250.0, 0.050)],
+                &[(62.5, 125.0, 0.635), (125.0, 250.0, 0.022)],
             ),
         ];
         for (name, buf, ref_centroid, tol, bands) in cases {

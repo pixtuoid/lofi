@@ -324,21 +324,12 @@ mod tests {
         let drums = |gain: f32| gain * lift;
         let tiers: [(f32, [f32; Lane::ALL.len()]); 3] = [
             (0.0, [0.75, 0.70, 0.0, drums(0.0), 0.78, bass(0.60)]),
-            (0.5, [0.45, 0.50, 0.60, drums(0.65), 0.84, bass(0.74)]),
-            (1.0, [0.40, 0.55, 0.70, drums(0.80), 0.78, bass(0.80)]),
+            (0.5, [0.45, 0.50, 0.60, drums(0.65), 0.84, bass(0.70)]),
+            (1.0, [0.40, 0.55, 0.70, drums(0.80), 0.78, bass(0.75)]),
         ];
         let seed = 2;
-        let mut whole = Schedule::plain(seed, 0, SAMPLE_RATE);
-        whole.start_song_at(Controls::default(), UNITY);
         // the first loop, before any song but the first plays
         let frames = loop_frames(seed, 0, Controls::default());
-        let mut unity = vec![Vec::with_capacity(frames); Lane::ALL.len()];
-        while unity[0].len() < frames {
-            let n = BLOCK.min(frames - unity[0].len());
-            for (lane, sum) in unity.iter_mut().zip(whole.play(n)) {
-                lane.extend_from_slice(sum);
-            }
-        }
         for (intensity, gains) in tiers {
             assert_eq!(
                 Lane::ALL.map(|lane| audition::lane_gain(lane, intensity)),
@@ -346,6 +337,17 @@ mod tests {
                 "intensity {intensity}"
             );
             let c = Controls::default().with_intensity(intensity);
+            // only the lanes this tier plays, since a lane ducks only under a
+            // kick that sounds
+            let mut whole = Schedule::plain(seed, 0, SAMPLE_RATE);
+            whole.start_song_at(c, gains.map(|gain| f64::from(u8::from(gain > 0.0))));
+            let mut unity = vec![Vec::with_capacity(frames); Lane::ALL.len()];
+            while unity[0].len() < frames {
+                let n = BLOCK.min(frames - unity[0].len());
+                for (lane, sum) in unity.iter_mut().zip(whole.play(n)) {
+                    lane.extend_from_slice(sum);
+                }
+            }
             let (_, got, _) = mixed(&mut Performance::plain(seed, c), frames);
             let first_diff = (0..frames).position(|i| {
                 let lanes: f64 = (unity.iter().zip(gains))
