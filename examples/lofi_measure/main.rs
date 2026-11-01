@@ -232,6 +232,10 @@ fn frames_lufs(frames: &[Frame]) -> f64 {
     gated_lufs(&[&left, &right], SAMPLE_RATE)
 }
 
+/// How many decimals a printed share keeps: the top band's percentiles are
+/// thousandths of a percent apart, and a spread must rise.
+const SHARE_DECIMALS: usize = 3;
+
 /// Reads every track in `dir`'s `audio/` as a take's mix is read, and prints
 /// the [`CORPUS`] and `MEASURED_ON` they give, for `corpus.rs`.
 fn read_corpus(dir: &Path) -> io::Result<()> {
@@ -266,7 +270,7 @@ fn read_corpus(dir: &Path) -> io::Result<()> {
     println!("// {} tracks", files.len());
     println!("pub(crate) const CORPUS: Corpus = Corpus {{\n    shares_pct: [");
     for share in shares {
-        println!("        {},", row(share, 2));
+        println!("        {},", row(share, SHARE_DECIMALS));
     }
     println!("    ],\n    centroid_hz: {},", row(centroids, 1));
     println!("    ltas_db_per_oct: {},\n}};", row(slopes, 2));

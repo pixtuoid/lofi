@@ -46,30 +46,26 @@ pub(crate) struct Corpus {
     pub(crate) ltas_db_per_oct: Spread,
 }
 
-/// 100 lofi tracks from archive.org netlabel uploads, 5.98 h, each item
-/// declaring a CC BY-NC licence in its `licenseurl`, each read whole as
-/// `lofi_measure` reads a take: decoded at lofi's sample rate, folded to mono
-/// as `fold` does, and read by `Spectrum`, one rectangular FFT over the track
-/// with DC left out. Each spread is linear between ranks (numpy's
-/// `percentile`). Measured 2026-10-19.
-#[expect(
-    clippy::approx_constant,
-    reason = "a slope's p90 reads -3.14 dB/oct, not π"
-)]
+/// 108 tracks of Lofi Girl's own lofi hip hop playlist on YouTube, 5.00 h,
+/// the most viewed there under a cap of three to an artist and to a release,
+/// each read whole as `lofi_measure` reads a take: decoded at lofi's sample
+/// rate, folded to mono as `fold` does, and read by `Spectrum`, one rectangular
+/// FFT over the track with DC left out. Each spread is linear between ranks
+/// (numpy's `percentile`). Measured 2026-11-01.
 pub(crate) const CORPUS: Corpus = Corpus {
     shares_pct: [
-        [3.90, 8.09, 14.75, 26.20, 36.85],
-        [18.64, 23.56, 35.37, 47.61, 59.81],
-        [6.23, 10.95, 15.38, 22.67, 29.49],
-        [2.90, 5.54, 8.52, 13.07, 19.09],
-        [2.03, 2.73, 5.95, 9.97, 14.19],
-        [0.96, 1.57, 3.05, 5.70, 8.84],
-        [0.61, 1.05, 2.00, 3.55, 5.26],
-        [0.31, 0.55, 1.11, 1.84, 2.57],
-        [0.15, 0.30, 0.69, 1.60, 2.64],
+        [11.483, 18.168, 26.188, 37.776, 46.833],
+        [15.785, 20.261, 29.122, 36.535, 44.478],
+        [6.942, 10.445, 15.213, 19.250, 24.753],
+        [5.722, 10.375, 14.791, 20.651, 28.989],
+        [2.294, 3.364, 5.086, 8.071, 12.548],
+        [0.553, 0.763, 1.438, 2.534, 4.302],
+        [0.062, 0.164, 0.403, 0.629, 1.077],
+        [0.004, 0.017, 0.060, 0.181, 0.336],
+        [0.001, 0.002, 0.010, 0.052, 0.102],
     ],
-    centroid_hz: [206.3, 310.3, 445.3, 579.3, 763.2],
-    ltas_db_per_oct: [-7.00, -6.15, -5.07, -3.89, -3.14],
+    centroid_hz: [146.9, 169.3, 211.2, 264.1, 314.3],
+    ltas_db_per_oct: [-11.28, -9.57, -8.31, -7.28, -6.40],
 };
 
 /// `values`' [`PERCENTILES`], each linear between ranks, as numpy's

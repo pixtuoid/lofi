@@ -766,7 +766,7 @@ mod tests {
     }
 
     /// The bands are the measured corpora's (LOFI-BIBLE R11): Fields-Meyer's
-    /// 150 Lofi Girl tracks and the judge's 100-track corpus. How far a
+    /// 150 Lofi Girl tracks and the archive.org corpus. How far a
     /// statistic may sit from its corpus is opinion.
     #[test]
     fn the_forms_land_in_the_measured_corpus() {
