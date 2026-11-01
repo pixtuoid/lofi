@@ -288,19 +288,17 @@ def judge(batch: str, base: str, cand: str, out: str = "", force_score: bool = F
 
 @app.local_entrypoint()
 def upload_refs(refs_dir: str):
-    """Uploads from `refs_dir` each reference the refs Volume lacks, once its
-    sha256 matches the manifest, then the manifest, which replaces the
-    Volume's last: a judge never reads a manifest whose audio isn't there."""
+    """Uploads from `refs_dir` every reference, once its sha256 matches the
+    manifest, over any the refs Volume holds under its name, then the
+    manifest, last: a judge never reads a manifest whose audio isn't there."""
     local = Path(refs_dir)
     manifest = json.loads((local / "manifest.json").read_text())["tracks"]
-    present = {Path(e.path).name for e in refs.listdir("/audio")}
-    missing = [i for i, t in enumerate(manifest) if t["file"] not in present]
-    with refs.batch_upload() as upload:
-        for i in missing:
-            path = local / "audio" / manifest[i]["file"]
-            if sha256(path.read_bytes()) != manifest[i]["sha256"]:
+    with refs.batch_upload(force=True) as upload:
+        for i, t in enumerate(manifest):
+            path = local / "audio" / t["file"]
+            if sha256(path.read_bytes()) != t["sha256"]:
                 raise SystemExit(f"reference {i} doesn't match its manifest sha256 here")
-            upload.put_file(str(path), f"/audio/{manifest[i]['file']}")
+            upload.put_file(str(path), f"/audio/{t['file']}")
     with refs.batch_upload(force=True) as upload:
         upload.put_file(str(local / "manifest.json"), "/manifest.json")
-    print(f"uploaded references {missing or 'none'} and the manifest")
+    print(f"uploaded {len(manifest)} references and the manifest")
