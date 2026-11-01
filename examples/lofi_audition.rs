@@ -60,7 +60,7 @@ fn run() -> io::Result<()> {
     let mut order: Vec<(&String, &Take)> = files.iter().zip(&takes).collect();
     // rendered in file-name order, so the files' times don't give the seeds away
     order.sort_by_key(|&(file, _)| file);
-    on_every_core(&order, |&(file, take)| {
+    on_threads(args.threads(), &order, |&(file, take)| {
         write_wav(&args.out.join(file), &args.render(&take.run, take.seed)?)
     })?;
     if args.key.is_none() {
@@ -91,17 +91,16 @@ fn run() -> io::Result<()> {
     Ok(())
 }
 
-/// `each` over `items`, each once, on as many threads as the machine runs,
-/// which takes can share since none reads another. The first thread's error
-/// is the run's.
-fn on_every_core<T: Sync>(
+/// `each` over `items`, each once, on `threads`, which takes can share since
+/// none reads another. The first thread's error is the run's.
+fn on_threads<T: Sync>(
+    threads: NonZero<usize>,
     items: &[T],
     each: impl Fn(&T) -> io::Result<()> + Sync,
 ) -> io::Result<()> {
     let next = AtomicUsize::new(0);
-    let threads = thread::available_parallelism().map_or(1, NonZero::get);
     thread::scope(|scope| {
-        let workers: Vec<_> = (0..threads)
+        let workers: Vec<_> = (0..threads.get())
             .map(|_| {
                 scope.spawn(|| {
                     while let Some(item) = items.get(next.fetch_add(1, Ordering::Relaxed)) {
@@ -237,6 +236,16 @@ impl Args {
         Ok(take)
     }
 
+    /// One thread under `--shuffle`, since threads finish a take when its
+    /// render does, which would sort the files by what they hold; every core
+    /// otherwise.
+    fn threads(&self) -> NonZero<usize> {
+        match self.key {
+            Some(_) => NonZero::<usize>::MIN,
+            None => thread::available_parallelism().unwrap_or(NonZero::<usize>::MIN),
+        }
+    }
+
     /// The gated loudness every take of the run renders at.
     fn target_lufs(&self) -> f64 {
         match self.solo {
@@ -321,6 +330,8 @@ fn write_wav(path: &Path, take: &[Frame]) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
     use super::*;
     use batch::Sweep;
     use pixtuoid_lofi::{Controls, audition};
@@ -416,7 +427,8 @@ mod tests {
     fn every_take_is_rendered_once() {
         let takes: Vec<usize> = (0..64).collect();
         let runs: Vec<AtomicUsize> = takes.iter().map(|_| AtomicUsize::new(0)).collect();
-        on_every_core(&takes, |&take| {
+        let threads = NonZero::new(4).expect("four is not zero");
+        on_threads(threads, &takes, |&take| {
             runs[take].fetch_add(1, Ordering::Relaxed);
             Ok(())
         })
@@ -425,8 +437,22 @@ mod tests {
     }
 
     #[test]
+    fn a_shuffled_run_renders_one_take_at_a_time_in_order() {
+        let shuffled = parsed(&["--shuffle", "key.txt"]);
+        assert_eq!(shuffled.threads(), NonZero::<usize>::MIN);
+        let seen = Mutex::new(Vec::new());
+        let takes = [0, 1, 2, 3];
+        on_threads(shuffled.threads(), &takes, |&take| {
+            seen.lock().expect("no test thread panics").push(take);
+            Ok(())
+        })
+        .expect("no take fails");
+        assert_eq!(*seen.lock().expect("no test thread panics"), takes);
+    }
+
+    #[test]
     fn a_take_that_fails_fails_the_run() {
-        let failed = on_every_core(&[0, 1, 2], |&take| match take {
+        let failed = on_threads(NonZero::<usize>::MIN, &[0, 1, 2], |&take| match take {
             1 => Err(io::Error::other("it clips")),
             _ => Ok(()),
         });

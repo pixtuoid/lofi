@@ -25,7 +25,6 @@ import re
 import resource
 import subprocess
 import sys
-import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -238,14 +237,16 @@ def rehearse():
     return took(started)
 
 
-@app.function(gpu="T4", cpu=CPU, memory=MEMORY_MIB, timeout=JUDGE_TIMEOUT_S)
+# one shard to a container, since a ready one "will be reused"
+# (https://modal.com/docs/guide/cold-start): the child's usage `took` reads and
+# the rows it leaves are then this shard's alone
+@app.function(gpu="T4", cpu=CPU, memory=MEMORY_MIB, timeout=JUDGE_TIMEOUT_S, single_use_containers=True)
 def score_shard(names):
     """Scores the pairs `names` of the batch the caller mounts at BATCH,
     offline, over the read-only caches, and returns their rows and seat with
     what it took, or None with its log, names masked, Modal's."""
     started = time.time()
-    # a container can serve a second shard: no file of the first's is its own
-    rows = Path(tempfile.mkdtemp()) / "rows.json"
+    rows = Path("/tmp/rows.json")
     run = run_judge(BATCH, "--shard", str(rows), *names, env=offline())
     if not rows.is_file():
         print(redact(run.stdout + run.stderr, tracks()))
@@ -273,7 +274,7 @@ def score(batch, paired, changed):
     shards = list(score_shard.with_options(volumes=mounted(batch)).map(dealt(changed), return_exceptions=True))
     if not all(isinstance(shard, dict) for shard in shards):
         return {"outcome": "infra failure", "message": "a shard stopped before its rows; its log, names masked, is Modal's", **took(started)}
-    plan = Path(tempfile.mkdtemp()) / "plan.json"
+    plan = Path("/tmp/plan.json")
     plan.write_text(json.dumps({"paired": paired, "changed": changed, "shards": shards}))
     run = run_judge(BATCH, "--merge", str(plan), env=offline())
     written = Path(BATCH) / "judge.json"
