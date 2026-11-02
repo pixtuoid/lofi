@@ -10,21 +10,28 @@ set -euo pipefail
 tree=$1 out=$3
 sha=$(git -C "$tree" rev-parse --verify "$2^{commit}")
 mkdir -p "$out"
-out=$(cd "$out" && pwd)
-all="$out/g${sha:0:12}/all"
+dir="$(cd "$out" && pwd)/g${sha:0:12}"
+all="$dir/all"
 
 if [ ! -f "$all/COMMIT" ]; then
-    mkdir -p "$out/g${sha:0:12}"
-    src=$(mktemp -d "$out/src.XXXXXX")
-    trap 'rm -rf "$src"' EXIT
+    mkdir -p "$dir"
+    # each run's own, so a run alongside for the same commit touches neither
+    src=$(mktemp -d "$dir/src.XXXXXX")
+    stage=$(mktemp -d "$dir/stage.XXXXXX")
+    trap 'rm -rf "$src" "$stage"' EXIT
     git -C "$tree" archive "$sha" | tar -x -C "$src"
     # a target of its own: `git archive` stamps the commit's time, and a target
     # another commit built later than that read as fresh, its binary rendered
     (cd "$src" && cargo build --locked --release --example lofi_audition)
-    rm -rf "$all.partial"
-    "$src/target/release/examples/lofi_audition" --batch judge --out "$all.partial" \
-        >"$out/g${sha:0:12}/render.log" 2>&1
-    printf '%s\n' "$sha" >"$all.partial/COMMIT"
-    mv "$all.partial" "$all"
+    "$src/target/release/examples/lofi_audition" --batch judge --out "$stage/all" \
+        >"$stage/render.log" 2>&1
+    printf '%s\n' "$sha" >"$stage/all/COMMIT"
+    mv -f "$stage/render.log" "$dir/render.log"
+    # a run alongside may have published first; an `all` with no COMMIT never
+    # finished, and `mv` would nest the render inside it
+    if [ ! -f "$all/COMMIT" ]; then
+        rm -rf "$all"
+        mv "$stage/all" "$all"
+    fi
 fi
 printf '%s\n' "$all"

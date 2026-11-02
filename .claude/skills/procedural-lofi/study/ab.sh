@@ -22,7 +22,8 @@ modal_version=$(sed -nE 's/^modal==([^ ]+).*/\1/p' "$judge_dir/modal-requirement
 
 base=$("$here/render.sh" "$tree" "$base_sha" "$out")
 cand=$("$here/render.sh" "$tree" "$cand_sha" "$out")
-work="$(cd "$out" && pwd)/ab-${cand_sha:0:12}"
+# the pair's own: a base the merge-base moved from would leave its takes here
+work="$(cd "$out" && pwd)/ab-${base_sha:0:12}-${cand_sha:0:12}"
 mkdir -p "$work/base" "$work/cand"
 # the validator refuses a symlinked side; hard links cost no disk
 ln -f "$base"/* "$work/base/"
