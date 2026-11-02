@@ -18,6 +18,12 @@ mkdir -p "$dir"
 # is atomic, and a lock a SIGKILL left stays until removed by hand
 # (https://mywiki.wooledge.org/BashFAQ/045)
 until mkdir "$dir/lock" 2>/dev/null; do
+    if [ ! -d "$dir/lock" ]; then
+        # no run holds it, so not a wait, unless one let go just now: one more
+        # try takes it or says, in mkdir's own words, why not
+        mkdir "$dir/lock" && break
+        exit 1
+    fi
     [ -n "${waiting:-}" ] || echo "render.sh: waiting on $dir/lock" >&2
     waiting=1
     sleep 1
