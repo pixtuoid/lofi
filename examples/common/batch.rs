@@ -205,7 +205,7 @@ pub(crate) struct Timeline {
 }
 
 /// `verdict.py`'s `MIN_UNTIED`, which `test_verdict.py` reads here: the
-/// untied pairs each mood of the judge batch is built to reach.
+/// untied pairs a change to one family reaches in each group that plays it.
 pub(crate) const JUDGE_MIN_UNTIED: usize = 8;
 
 /// The songs whose lead voices are every voice a mood draws.
@@ -219,8 +219,10 @@ const JUDGE_TIER_SEEDS: u64 = JUDGE_MIN_UNTIED.div_ceil(2) as u64;
 /// listener can judge, which no closed-form test pins.
 const JUDGE_SWEEPS: [Sweep; 2] = [Sweep::Twilight, Sweep::Rain];
 
-/// The seeds each judged sweep spreads over its takes: room above
-/// [`JUDGE_MIN_UNTIED`] for the pairs a change leaves tied (opinion).
+/// The seeds each take of a judged sweep plays: a take holds one family, as
+/// the twilight sweep's do one each, so a change to one family alone still
+/// reaches [`JUDGE_MIN_UNTIED`]; the room above it is for the pairs a change
+/// leaves tied (opinion).
 const JUDGE_SWEEP_SEEDS: u64 = 12;
 
 /// The lanes' noise seed: any fixed value, so a take renders alike on every run
@@ -434,15 +436,13 @@ impl Batch {
                         ..empty
                     })
                 });
-                // a sweep's takes split its seeds, so its group holds each once
+                // each take its own seeds, so its group holds each seed once
                 let sweeps = JUDGE_SWEEPS.into_iter().flat_map(move |sweep| {
-                    let starts = sweep.starts().len();
-                    let seeds = JUDGE_SWEEP_SEEDS / starts as u64;
-                    (0..starts).map(move |sweep_start| Batch {
+                    (0..sweep.starts().len()).map(move |sweep_start| Batch {
                         sweep: Some(sweep),
                         sweep_start,
-                        seeds,
-                        start: sweep_start as u64 * seeds,
+                        seeds: JUDGE_SWEEP_SEEDS,
+                        start: sweep_start as u64 * JUDGE_SWEEP_SEEDS,
                         ..at
                     })
                 });
@@ -880,29 +880,46 @@ mod tests {
     fn the_judge_batch_plays_each_of_its_sweeps_over_its_own_seeds() {
         let judge = parsed("--batch", "judge").expect("the batch parses").runs();
         for sweep in JUDGE_SWEEPS {
-            let mut seeds: Vec<u64> = (judge.iter())
+            let runs: Vec<&Batch> = (judge.iter())
                 .filter(|run| run.sweep == Some(sweep))
-                .flat_map(Batch::seeds)
                 .collect();
+            assert_eq!(runs.len(), sweep.starts().len(), "{sweep:?}'s takes");
+            assert!(
+                (runs.iter()).all(|run| run.seeds().count() as u64 == JUDGE_SWEEP_SEEDS),
+                "{sweep:?}'s seeds per take"
+            );
+            let mut seeds: Vec<u64> = runs.iter().flat_map(|run| run.seeds()).collect();
+            let all = seeds.len();
             seeds.sort_unstable();
             seeds.dedup();
-            assert_eq!(
-                seeds.len() as u64,
-                JUDGE_SWEEP_SEEDS,
-                "{sweep:?}'s distinct seeds"
-            );
-            let takes = judge.iter().filter(|run| run.sweep == Some(sweep));
-            assert_eq!(
-                takes.map(|run| run.seeds().count() as u64).sum::<u64>(),
-                JUDGE_SWEEP_SEEDS,
-                "{sweep:?}'s takes"
-            );
+            assert_eq!(seeds.len(), all, "{sweep:?} plays a seed twice");
         }
         assert!(
             judge
                 .iter()
                 .all(|run| run.sweep.is_none_or(|s| JUDGE_SWEEPS.contains(&s)))
         );
+    }
+
+    #[test]
+    fn a_change_to_one_family_alone_reaches_the_floor_in_every_group_that_plays_it() {
+        let judge = parsed("--batch", "judge").expect("the batch parses").runs();
+        let mut takes: BTreeMap<(&str, &str), usize> = BTreeMap::new();
+        for run in &judge {
+            for seed in run.seeds() {
+                let score = run.score(seed);
+                let (family, _) = (MOODS.iter())
+                    .find(|&&(_, daylight)| {
+                        let at = Controls::default().with_daylight(daylight);
+                        audition::song_score(seed, 0, at) == score
+                    })
+                    .expect("every take composes one family's song");
+                *takes.entry((run.mood_name(), family)).or_insert(0) += 1;
+            }
+        }
+        for ((group, family), n) in takes {
+            assert!(n >= JUDGE_MIN_UNTIED, "{group} plays {n} {family} takes");
+        }
     }
 
     #[test]
