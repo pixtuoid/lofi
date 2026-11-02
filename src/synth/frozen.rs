@@ -24,18 +24,19 @@ fn ep_pluck(midi: u8, dur_s: f32, vel: f32, sr: u32) -> Vec<f32> {
     ep_pluck_h2(midi, dur_s, vel, 0.35, sr)
 }
 
-/// How long the day-1 anchor's lead notes ring, where the shipped day lead's
-/// ring [`SPARKLE`]'s.
+/// How long the day-1 anchor's lead notes ring: its own, not the shipped day
+/// lead's.
 const ANCHOR_LEAD_DUR_S: f32 = 1.6;
 
 /// The day-1 anchor's `(beats, midi, vel)` rows as the notes its cores
-/// place.
-fn anchor_events(rows: &[(f32, u8, f32)]) -> Vec<Note> {
+/// place, each held `dur`.
+fn anchor_events(rows: &[(f32, u8, f32)], dur: f32) -> Vec<Note> {
     (rows.iter())
         .map(|&(beats, midi, vel)| Note {
             at: beats * beat_s(),
             midi,
             vel,
+            dur,
         })
         .collect()
 }
@@ -51,30 +52,16 @@ pub(crate) fn stem_pad() -> Vec<f32> {
 }
 
 pub(crate) fn stem_sparkle() -> Vec<f32> {
-    let (r, events) = (SPARKLE.day, anchor_events(&score::SPARKLE_SCORE));
+    let r = SPARKLE.day;
+    let events = anchor_events(&score::SPARKLE_SCORE, ANCHOR_LEAD_DUR_S);
     let loop_s = score::loop_secs();
-    events_stem_voiced(
-        loop_s,
-        &events,
-        ANCHOR_LEAD_DUR_S,
-        r.cutoff_hz,
-        r.peak,
-        ep_pluck,
-    )
-    .buf
+    events_stem_voiced(loop_s, &events, r.cutoff_hz, r.peak, ep_pluck).buf
 }
 
 pub(crate) fn stem_keys() -> Vec<f32> {
-    let (r, events) = (KEYS.day, anchor_events(&score::KEYS_SCORE));
-    events_stem_voiced(
-        score::loop_secs(),
-        &events,
-        r.dur_s,
-        r.cutoff_hz,
-        r.peak,
-        ep_pluck,
-    )
-    .buf
+    let r = KEYS.day;
+    let events = anchor_events(&score::KEYS_SCORE, score::DAY_KEYS_DUR);
+    events_stem_voiced(score::loop_secs(), &events, r.cutoff_hz, r.peak, ep_pluck).buf
 }
 
 /// The day-1 anchor's kick/snare/swung-hat groove, its hat velocities the

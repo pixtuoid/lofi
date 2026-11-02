@@ -133,12 +133,15 @@ pub(super) enum DrumKind {
 }
 
 /// One note a lane plays: when it sounds, in seconds into the loop, its
-/// pitch (MIDI) and its velocity.
+/// pitch (MIDI), its velocity and how long it's held, in seconds. A note's
+/// end is the score's, as MIDI's Note Off is a message of its own
+/// (https://midi.org/summary-of-midi-1-0-messages), so a line can articulate.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct Note {
     pub(super) at: f32,
     pub(super) midi: u8,
     pub(super) vel: f32,
+    pub(super) dur: f32,
 }
 
 /// One drum hit: when it lands, in seconds into the loop, its drum and its
@@ -261,6 +264,8 @@ struct LeadStyle {
     /// rest: by day, LOFI-BIBLE R10's density.
     note_p: f32,
     velocity: Spread,
+    /// How long each note is held, in seconds.
+    dur: f32,
 }
 
 struct KeysStyle {
@@ -268,6 +273,8 @@ struct KeysStyle {
     density: Density,
     velocity: Spread,
     comp: Comp,
+    /// How long each note is held, in seconds.
+    dur: f32,
 }
 
 /// How a mood sets the keys' density.
@@ -308,6 +315,8 @@ struct BassStyle {
     pickup_p: Option<f32>,
     /// The root's velocity; the answer's is [`ANSWER_SOFTER`] under it.
     velocity: Spread,
+    /// How long each note is held, in seconds.
+    dur: f32,
 }
 
 const DAY: Style = Style {
@@ -322,6 +331,7 @@ const DAY: Style = Style {
             base: 0.34,
             span: 0.10,
         },
+        dur: 2.0,
     },
     keys: KeysStyle {
         density: Density::Drawn(Spread::between(0.28, 0.38)),
@@ -330,6 +340,7 @@ const DAY: Style = Style {
             span: 0.30,
         },
         comp: Comp::Shell,
+        dur: 0.9,
     },
     drums: Grooves::Drawn(&DAY_GROOVES),
     bass: BassStyle {
@@ -341,6 +352,7 @@ const DAY: Style = Style {
             base: 0.62,
             span: 0.08,
         },
+        dur: 1.5,
     },
     voices: &[
         (LeadVoice::Pluck, 35),
@@ -364,6 +376,7 @@ const NIGHT: Style = Style {
             base: 0.25,
             span: 0.12,
         },
+        dur: 2.2,
     },
     keys: KeysStyle {
         density: Density::Fixed(0.15),
@@ -372,6 +385,7 @@ const NIGHT: Style = Style {
             span: 0.25,
         },
         comp: Comp::Single,
+        dur: 1.1,
     },
     drums: Grooves::Fixed(&NIGHT_GROOVE),
     bass: BassStyle {
@@ -384,6 +398,7 @@ const NIGHT: Style = Style {
             base: 0.55,
             span: 0.08,
         },
+        dur: 1.7,
     },
     voices: &[(LeadVoice::Vibraphone, 35), (LeadVoice::EpVel, 65)],
 };
@@ -832,6 +847,7 @@ fn lead(rng: &mut NoiseStream, harmony: &Harmony, style: &LeadStyle, beat_s: f32
                 at,
                 midi: n.note,
                 vel: n.vel * LEAD_ACCENT.draw(rng),
+                dur: style.dur,
             }
         })
         .collect()
@@ -1358,6 +1374,7 @@ fn bass(
             at,
             midi: root,
             vel: style.velocity.draw(rng),
+            dur: style.dur,
         });
         if chance(rng, style.answer_p) {
             let note = if chance(rng, style.fifth_p) {
@@ -1370,6 +1387,7 @@ fn bass(
                 at,
                 midi: note,
                 vel: answer_velocity.draw(rng),
+                dur: style.dur,
             });
         }
         if style.pickup_p.is_some_and(|p| chance(rng, p))
@@ -1380,7 +1398,12 @@ fn bass(
             let at = PICKUP_LAG.after(b0 + PICKUP_BEAT * beat_s, rng);
             let midi = bass_pitch(next.root_pc) - 1;
             let vel = PICKUP_VELOCITY.draw(rng);
-            out.push(Note { at, midi, vel });
+            out.push(Note {
+                at,
+                midi,
+                vel,
+                dur: style.dur,
+            });
         }
     }
     out
@@ -1437,12 +1460,14 @@ fn keys(
                         at,
                         midi: third,
                         vel,
+                        dur: style.dur,
                     });
                     // a hand rolls the dyad; a sequencer stamps it
                     out.push(Note {
                         at: ROLL.after(at, rng),
                         midi: upper,
                         vel: vel * ROLLED_SOFTER,
+                        dur: style.dur,
                     });
                 }
                 Comp::Single => {
@@ -1451,6 +1476,7 @@ fn keys(
                         at,
                         midi: note,
                         vel: style.velocity.draw(rng),
+                        dur: style.dur,
                     });
                 }
             }

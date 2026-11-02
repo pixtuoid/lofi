@@ -653,12 +653,14 @@ fn every_seed_composes_the_score_it_did() {
                     at,
                     midi: note,
                     vel,
+                    dur,
                 } in lane
                 {
                     words.extend([
                         u64::from(at.to_bits()),
                         u64::from(note),
                         u64::from(vel.to_bits()),
+                        u64::from(dur.to_bits()),
                     ]);
                 }
             }
@@ -682,4 +684,4 @@ fn every_seed_composes_the_score_it_did() {
     assert_eq!(h, EVERY_SEED_GOLDEN, "{h:#018x}");
 }
 
-const EVERY_SEED_GOLDEN: u64 = 0x55a7_84e5_1b76_f2de;
+const EVERY_SEED_GOLDEN: u64 = 0x9ba3_24ce_82e8_f4f7;
