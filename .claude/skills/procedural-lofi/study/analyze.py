@@ -161,6 +161,19 @@ def beat_grid(mix, drums, times, voices, hint):
     return beats, 60.0 / float(np.median(np.diff(beats))), int(np.argmax(score)), None, "form"
 
 
+def placed(t, beats):
+    """Where `t` falls on the grid `beats` lays from a downbeat: its 16th in
+    its bar, its phase in its beat and that beat's length; None off the grid."""
+    import numpy as np
+
+    at = int(np.searchsorted(beats, t, side="right")) - 1
+    if at < 0 or at + 1 >= beats.size:
+        return None
+    span = beats[at + 1] - beats[at]
+    phase = (t - beats[at]) / span
+    return int(round((at % BEATS_PER_BAR) * STEPS_PER_BEAT + phase * STEPS_PER_BEAT)) % STEPS, phase, span
+
+
 def drum_grid(times, voices, levels, beats, downbeat):
     """Each voice's share of bars with a hit on each 16th, its hits a bar and
     the spread of its levels; where an off-eighth sits in its beat; how late
@@ -174,12 +187,11 @@ def drum_grid(times, voices, levels, beats, downbeat):
         grid = np.zeros(STEPS)
         mine = levels[voices == code]
         for t in times[voices == code]:
-            at = int(np.searchsorted(bars, t, side="right")) - 1
-            if at < 0 or at + 1 >= bars.size:
+            where = placed(t, bars)
+            if where is None:
                 continue
-            span = bars[at + 1] - bars[at]
-            phase = (t - bars[at]) / span
-            grid[int(round((at % BEATS_PER_BAR) * STEPS_PER_BEAT + phase * STEPS_PER_BEAT)) % STEPS] += 1
+            step, phase, span = where
+            grid[step] += 1
             if OFF_EIGHTH[0] <= phase <= OFF_EIGHTH[1]:
                 offs.append(float(phase))
             if code in on_beat and (phase < ON_BEAT_EARLY or phase > ON_BEAT_LATE):
@@ -362,7 +374,10 @@ def monophonic(notes):
     return line
 
 
-def bass_line(notes, n_bars):
+def bass_line(notes, n_bars, beats, kicks):
+    """The bass's line, and where on the grid `beats` lays its notes start:
+    each 16th's share of bars, the share on a beat and on an off-eighth, and
+    the share with one of `kicks`, as near as `beat_grid` lands a hit."""
     import numpy as np
 
     line = monophonic(notes)
@@ -373,11 +388,18 @@ def bass_line(notes, n_bars):
     lengths = np.array([e - s for s, e, _, _ in line])
     gaps = np.diff(starts)
     near = gaps < LEGATO_GAP_S
+    steps = np.array([where[0] for where in (placed(t, beats) for t in starts) if where], dtype=int)
+    with_kick = [kicks.size > 0 and float(np.abs(kicks - t).min()) < NEAR_S for t in starts]
+    share = lambda held: round(float(np.mean(held)), 3) if steps.size else None
     return {
         "register": np.percentile(pitches, BASS_REGISTER_PERCENTILES).round(1).tolist(),
         "notes_per_bar": round(len(line) / max(n_bars, 1), 2),
         "legato": round(float(np.median(lengths[:-1][near] / gaps[near])), 3) if near.any() else None,
         "median_note_ms": round(float(np.median(lengths)) * 1000, 1),
+        "steps": (np.bincount(steps, minlength=STEPS) / max(n_bars, 1)).round(3).tolist(),
+        "on_beat_share": share(steps % STEPS_PER_BEAT == 0),
+        "off_eighth_share": share(steps % STEPS_PER_BEAT == STEPS_PER_BEAT // 2),
+        "with_kick_share": round(float(np.mean(with_kick)), 3),
     }
 
 
@@ -429,7 +451,7 @@ def one(job):
         "kick": drum_sound(drums, times, voices, levels, KICK, KICK_LENGTH_S),
         "snare": drum_sound(drums, times, voices, levels, SNARE, SNARE_LENGTH_S),
         "hat": drum_sound(drums, times, voices, levels, HAT, HAT_LENGTH_S),
-        "bass": bass_line(bass_notes, n_bars),
+        "bass": bass_line(bass_notes, n_bars, bar_times, times[voices == KICK]),
         "mode": mode,
         "tonic": tonic,
         "key_r": confidence,

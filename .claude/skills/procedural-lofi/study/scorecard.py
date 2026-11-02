@@ -96,6 +96,9 @@ LAYERS = [
         ("hat level sd dB", STUDY, path("drums", "hat", "level_sd_db")),
         ("bass notes /bar", STUDY, path("bass", "notes_per_bar")),
         ("bass legato", STUDY, path("bass", "legato")),
+        ("bass on a beat", STUDY, path("bass", "on_beat_share")),
+        ("bass on an off-eighth", STUDY, path("bass", "off_eighth_share")),
+        ("bass with a kick", STUDY, path("bass", "with_kick_share")),
     ]),
     ("3 melody", [
         ("pentatonic share", STUDY, path("melody", "pentatonic_share")),
