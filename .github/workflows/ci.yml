@@ -58,6 +58,8 @@ jobs:
         run: python3 -I .claude/skills/procedural-lofi/judge/test_validate_batch.py
       - name: the remote judge's local logic holds its tests
         run: python3 -I .claude/skills/procedural-lofi/judge/test_judge_local.py
+      - name: the scorecard holds its tests
+        run: python3 -I .claude/skills/procedural-lofi/study/test_scorecard.py
 
   test:
     strategy:

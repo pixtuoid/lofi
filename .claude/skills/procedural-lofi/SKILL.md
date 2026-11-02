@@ -175,6 +175,7 @@ constraint and re-batch), and every taste axis is a data table or named const wi
 
 | Want to change…            | Edit (all in `compose.rs` unless noted)                  |
 |----------------------------|----------------------------------------------------------|
+| what to work on next       | `study/score.sh TREE OUT`'s scorecard, top layer first; one factor's A/B: `study/ab.sh` |
 | harmony vocabulary         | `MAJOR_LOOPS` / `MINOR_LOOPS` (rows of `Degree`s); a mood's lean: `HarmonyStyle`'s `major_share` |
 | a mood's tempo, lead register and density, comping, bass, voice weights | the `DAY` / `NIGHT` `Style` |
 | melody rules               | the lead stage's consts and its `Role`s (quote, close, peak, leap bound, grid) |
