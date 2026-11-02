@@ -313,8 +313,6 @@ struct BassStyle {
     pickup_p: Option<f32>,
     /// The root's velocity; a later note's is [`ANSWER_SOFTER`] under it.
     velocity: Spread,
-    /// The longest a note is held, in seconds.
-    dur: f32,
 }
 
 const DAY: Style = Style {
@@ -348,7 +346,6 @@ const DAY: Style = Style {
             base: 0.62,
             span: 0.08,
         },
-        dur: 1.5,
     },
     voices: &[
         (LeadVoice::Pluck, 35),
@@ -391,7 +388,6 @@ const NIGHT: Style = Style {
             base: 0.55,
             span: 0.08,
         },
-        dur: 1.7,
     },
     voices: &[(LeadVoice::Vibraphone, 35), (LeadVoice::EpVel, 65)],
 };
@@ -1435,7 +1431,7 @@ fn bass(
                 (BASS_LAG.after(on, rng), midi, answer_velocity.draw(rng))
             };
             // place() clips at the loop end, so no note rings into the seam
-            let dur = (gap * BASS_GATE).min(style.dur).min(loop_s - at);
+            let dur = (gap * BASS_GATE).min(loop_s - at);
             out.push(Note { at, midi, vel, dur });
         }
     }
