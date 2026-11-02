@@ -14,7 +14,7 @@ use pixtuoid_lofi::audition::{
 };
 use pixtuoid_lofi::dsp::SAMPLE_RATE;
 
-use crate::batch::{Batch, Engine, MOODS, SOLO_SAFE_LUFS, Tier, lane_gains};
+use crate::batch::{Batch, Engine, MOODS, SOLO_SAFE_LUFS, Tier, heard_score, lane_gains};
 use crate::staging::median;
 use crate::{frames_lufs, mono_lufs, parse, staging};
 
@@ -160,8 +160,9 @@ fn unity_gap(batch: &Batch, seed: u64, lane: Lane) -> f64 {
     let mut stems = Stems::default();
     batch.perform_with(seed, |performance, out| stems.render(performance, out));
     let dry = &stems.lanes()[lane as usize];
-    let wet = audition::fold(&audition::plate_return(dry));
-    let loop_len = audition::samples_at(batch.score(seed).loop_secs(), SAMPLE_RATE);
+    let score = heard_score(seed, 0, batch.controls());
+    let wet = audition::fold(&audition::plate_return(&score, dry));
+    let loop_len = audition::samples_at(score.loop_secs(), SAMPLE_RATE);
     let second = loop_len..2 * loop_len;
     mono_lufs(&dry[second.clone()]) - mono_lufs(&wet[second])
 }

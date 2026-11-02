@@ -30,6 +30,11 @@ const KICK_FLOOR_HZ: f32 = 44.0;
 const KICK_SWEEP_HZ: f32 = 50.0;
 const KICK_SWEEP_RATE: f32 = 40.0;
 const KICK_DECAY_RATE: f32 = 27.0;
+/// The noise click on a kick's front: its length, its level over the body and
+/// how fast it falls.
+const KICK_CLICK_S: f32 = 0.006;
+const KICK_CLICK_LEVEL: f32 = 0.25;
+const KICK_CLICK_RATE: f32 = 300.0;
 
 fn kick(rng: &mut NoiseStream, sr: u32) -> Vec<f32> {
     let n = samples_at(KICK_S, sr);
@@ -44,9 +49,13 @@ fn kick(rng: &mut NoiseStream, sr: u32) -> Vec<f32> {
         })
         .collect();
     let white = white_noise_gain(sr);
-    for (i, slot) in buf.iter_mut().enumerate().take(samples_at(0.006, sr)) {
+    for (i, slot) in buf
+        .iter_mut()
+        .enumerate()
+        .take(samples_at(KICK_CLICK_S, sr))
+    {
         let t = i as f32 / sr as f32;
-        *slot += rng.norm() * white * 0.25 * (-t * 300.0).exp();
+        *slot += rng.norm() * white * KICK_CLICK_LEVEL * (-t * KICK_CLICK_RATE).exp();
     }
     buf
 }

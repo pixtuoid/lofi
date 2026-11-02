@@ -590,19 +590,10 @@ impl Batch {
     ) -> Vec<WholeSong> {
         (0..)
             .zip(self.timeline(seed).songs)
-            .map(|(k, (controls, len))| {
-                let score = audition::song_score(seed, k, controls);
-                // no kick sounds, so no lane ducks, as a stream song's doesn't
-                let silent = lane_gain(Lane::Drums, controls.intensity) == 0.0;
-                WholeSong {
-                    beds: render_take(&if silent {
-                        audition::unbeaten(&score)
-                    } else {
-                        score
-                    }),
-                    gains: gains(controls),
-                    len,
-                }
+            .map(|(k, (controls, len))| WholeSong {
+                beds: render_take(&heard_score(seed, k, controls)),
+                gains: gains(controls),
+                len,
             })
             .collect()
     }
@@ -670,6 +661,17 @@ pub(crate) fn lane_gains(controls: Controls) -> [f32; Lane::ALL.len()] {
     Lane::ALL.map(|lane| lane_gain(lane, controls.intensity))
 }
 
+/// Song `k` of `seed`'s run as `controls` hear it: with no drums sounding, no
+/// kick for a lane to duck under, as a stream song has none.
+pub(crate) fn heard_score(seed: u64, k: u64, controls: Controls) -> Score {
+    let score = audition::song_score(seed, k, controls);
+    if lane_gain(Lane::Drums, controls.intensity) > 0.0 {
+        score
+    } else {
+        audition::unbeaten(&score)
+    }
+}
+
 /// `take` faded in from silence and out to it over [`EDGE_FADE_S`].
 fn fade_edges(take: &mut [Frame]) {
     let n = (EDGE_FADE_S * f64::from(SAMPLE_RATE)) as usize;
@@ -694,6 +696,26 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
+
+    /// Inverted, a take and a plate's pin would duck under kicks nobody
+    /// hears, and lose the ones a room does.
+    #[test]
+    fn a_room_hears_its_drums_only_while_they_sound() {
+        for (tier, drums_sound) in [(Tier::Empty, false), (Tier::Moderate, true)] {
+            let batch = Batch {
+                tier: Some(tier),
+                ..Batch::default()
+            };
+            let controls = batch.controls();
+            let score = audition::song_score(0, 0, controls);
+            let expected = if drums_sound {
+                score
+            } else {
+                audition::unbeaten(&score)
+            };
+            assert_eq!(heard_score(0, 0, controls), expected, "{}", tier.name());
+        }
+    }
 
     /// A room whose drums don't sound ducks no lane, as a stream song's
     /// doesn't: its take renders the score with no drums, by day and by night.

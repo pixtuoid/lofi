@@ -260,12 +260,12 @@ fn every_seed_is_well_formed() {
                 );
             }
             let kinds = |k: DrumKind| s.drums.iter().any(|&Hit { kind, .. }| kind == k);
-            match mood {
-                Mood::Day => assert!(kinds(DrumKind::Snare), "seed {seed}: no backbeat"),
-                Mood::Night => assert!(
-                    !kinds(DrumKind::Snare) && !kinds(DrumKind::OpenHat),
-                    "seed {seed}: night grew a snare/open hat"
-                ),
+            assert!(kinds(DrumKind::Snare), "seed {seed}: no backbeat");
+            if mood == Mood::Night {
+                assert!(
+                    !kinds(DrumKind::OpenHat),
+                    "seed {seed}: night grew an open hat"
+                );
             }
         }
     }
@@ -650,7 +650,7 @@ fn a_seeded_groove_lays_every_hit_where_it_did() {
     assert_eq!(h, GOLDEN, "{h:#018x}");
 }
 
-const GOLDEN: u64 = 0x4f58_eafa_9f53_f6b3;
+const GOLDEN: u64 = 0xf07e_5f74_f00f_fbfc;
 
 /// Both moods' first eight seeds, every event and the harmonic timeline as f32
 /// bits. `compose` runs no transcendental function, so these bits hold on every
@@ -696,4 +696,4 @@ fn every_seed_composes_the_score_it_did() {
     assert_eq!(h, EVERY_SEED_GOLDEN, "{h:#018x}");
 }
 
-const EVERY_SEED_GOLDEN: u64 = 0xd35e_ee47_b931_5853;
+const EVERY_SEED_GOLDEN: u64 = 0xb1e7_3d74_e5bd_e2de;

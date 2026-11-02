@@ -181,14 +181,11 @@ pub(crate) fn sidechain_gain(since: usize, floor: f64, attack: usize, release: u
     }
 }
 
-/// `buf`, a loop of a generated lane, under `kicks`' sidechain: a late kick's
+/// `buf`, a loop of a lane, down to `db` under each of `kicks`: a late kick's
 /// dip wraps, since the loop repeats into it.
-fn sidechain(buf: &mut [f32], kicks: &[f32]) {
-    let floor = 10f64.powf(f64::from(SIDECHAIN_DB) / 20.0);
-    let (attack, release) = (
-        n_samples(SIDECHAIN_ATTACK_S),
-        n_samples(SIDECHAIN_RELEASE_S),
-    );
+fn duck(buf: &mut [f32], kicks: &[f32], db: f32, attack_s: f32, release_s: f32) {
+    let floor = 10f64.powf(f64::from(db) / 20.0);
+    let (attack, release) = (n_samples(attack_s), n_samples(release_s));
     let len = buf.len();
     for &kick in kicks {
         let at = n_samples(kick);
@@ -196,6 +193,17 @@ fn sidechain(buf: &mut [f32], kicks: &[f32]) {
             buf[(at + since) % len] *= sidechain_gain(since, floor, attack, release) as f32;
         }
     }
+}
+
+/// `buf`, a loop of a generated lane, under `kicks`' sidechain.
+fn sidechain(buf: &mut [f32], kicks: &[f32]) {
+    duck(
+        buf,
+        kicks,
+        SIDECHAIN_DB,
+        SIDECHAIN_ATTACK_S,
+        SIDECHAIN_RELEASE_S,
+    );
 }
 
 /// Loop-seam splice length: the night texture's buffer is the night loop length,
@@ -226,18 +234,7 @@ fn night_texture_core(loop_secs: f32, kick_times: &[f32], rng: &mut NoiseStream)
     // normalize BEFORE the duck: duck-then-normalize re-inflates the level by up
     // to the duck depth
     let gain = normalize(&mut buf, TEXTURE_PEAK);
-    let depth = 10f32.powf(DUCK_DB / 20.0);
-    let rel = n_samples(DUCK_RELEASE_S);
-    for &kt in kick_times {
-        let i0 = n_samples(kt);
-        for j in 0..rel {
-            let Some(slot) = buf.get_mut(i0 + j) else {
-                break;
-            };
-            let g = depth + (1.0 - depth) * (j as f32 / rel as f32);
-            *slot *= g;
-        }
-    }
+    duck(&mut buf, kick_times, DUCK_DB, 0.0, DUCK_RELEASE_S);
     Staged {
         buf,
         gains: [gain, 1.0],

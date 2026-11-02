@@ -604,7 +604,7 @@ impl Tape {
 
 /// A lane's dip under the kicks the form strikes.
 #[derive(Debug)]
-struct Duck {
+pub(crate) struct Duck {
     /// The kick onsets, in order, each with whether it sounded once the lane
     /// reached it: a kick struck while the drums are absent is silent, and a
     /// duck under it would pump the lane with no beat.
@@ -620,7 +620,7 @@ struct Duck {
 }
 
 impl Duck {
-    fn new(kicks: &[usize], db: f32, attack_s: f32, release_s: f32, sr: u32) -> Self {
+    pub(crate) fn new(kicks: &[usize], db: f32, attack_s: f32, release_s: f32, sr: u32) -> Self {
         Self {
             kicks: kicks.iter().map(|&kick| (kick, false)).collect(),
             reached: 0,
@@ -633,7 +633,7 @@ impl Duck {
 
     /// Marks the kicks before song frame `end` as sounded or not, which a
     /// step holds from one latch to the next.
-    fn reach(&mut self, end: usize, drums_present: bool) {
+    pub(crate) fn reach(&mut self, end: usize, drums_present: bool) {
         while let Some(kick) = self.kicks.get_mut(self.reached)
             && kick.0 < end
         {
@@ -644,7 +644,7 @@ impl Duck {
 
     /// The gain on frame `n`: each sounded kick's dip, multiplied where they
     /// overlap, as the whole-lane lanes duck.
-    fn gain(&mut self, n: usize) -> f64 {
+    pub(crate) fn gain(&mut self, n: usize) -> f64 {
         let span = self.attack + self.release;
         while self
             .kicks
