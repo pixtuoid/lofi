@@ -4,6 +4,19 @@ use super::{NoteVoice, env_ar, midi_freq, samples_at};
 use crate::compose::{DrumKind, LeadVoice, Mood};
 use crate::dsp::{NoiseStream, bandpass_at, highpass, white_noise_gain};
 
+/// An electric piano's three partials: each one's fall rate; the 3rd's weight
+/// and its ratio to the note, slightly sharp of a harmonic. The 2nd's weight is
+/// the caller's `h2`.
+const EP_RATE: f32 = 5.5;
+const EP_H2_RATE: f32 = 9.0;
+const EP_H3_LEVEL: f32 = 0.12;
+const EP_H3_RATIO: f32 = 3.01;
+const EP_H3_RATE: f32 = 14.0;
+/// The velocity-keyed 2nd harmonic: its weight at rest and what velocity
+/// squared adds.
+const EP_VEL_H2_BASE: f32 = 0.18;
+const EP_VEL_H2_GAIN: f32 = 0.45;
+
 /// One soft electric-piano note; `h2` is the 2nd-harmonic weight — the one axis
 /// the day and night voices differ on.
 pub(super) fn ep_pluck_h2(midi: u8, dur_s: f32, vel: f32, h2: f32, sr: u32) -> Vec<f32> {
@@ -13,9 +26,9 @@ pub(super) fn ep_pluck_h2(midi: u8, dur_s: f32, vel: f32, h2: f32, sr: u32) -> V
     (0..n)
         .map(|i| {
             let t = i as f32 / sr as f32;
-            let sig = (tau * f * t).sin() * (-t * 5.5).exp()
-                + h2 * (tau * 2.0 * f * t).sin() * (-t * 9.0).exp()
-                + 0.12 * (tau * 3.01 * f * t).sin() * (-t * 14.0).exp();
+            let sig = (tau * f * t).sin() * (-t * EP_RATE).exp()
+                + h2 * (tau * 2.0 * f * t).sin() * (-t * EP_H2_RATE).exp()
+                + EP_H3_LEVEL * (tau * EP_H3_RATIO * f * t).sin() * (-t * EP_H3_RATE).exp();
             sig * vel
         })
         .collect()
@@ -133,8 +146,12 @@ fn square(hz: f32, i: usize, sr: u32) -> f32 {
     naive + poly_blep(t, dt) - poly_blep((t + 0.5).fract(), dt)
 }
 
+/// A hat's length and how fast it falls, open and closed.
+const HAT_OPEN: (f32, f32) = (0.35, 9.0);
+const HAT_CLOSED: (f32, f32) = (0.06, 60.0);
+
 fn hat(open: bool, sr: u32) -> Vec<f32> {
-    let (dur, decay) = if open { (0.35, 9.0) } else { (0.06, 60.0) };
+    let (dur, decay) = if open { HAT_OPEN } else { HAT_CLOSED };
     let n = samples_at(dur, sr);
     let raw: Vec<f32> = (0..n)
         .map(|i| {
@@ -152,40 +169,79 @@ fn hat(open: bool, sr: u32) -> Vec<f32> {
 /// The velocity-keyed 2nd-harmonic EP voice (the Rhodes "bell vs bark"), shared
 /// by the night events AND the day takes' sparkle/keys.
 pub(super) fn ep_pluck_vel(midi: u8, dur_s: f32, vel: f32, sr: u32) -> Vec<f32> {
-    ep_pluck_h2(midi, dur_s, vel, 0.18 + 0.45 * vel * vel, sr)
+    ep_pluck_h2(
+        midi,
+        dur_s,
+        vel,
+        EP_VEL_H2_BASE + EP_VEL_H2_GAIN * vel * vel,
+        sr,
+    )
 }
+
+/// The plucked string's 2nd harmonic: its weight at rest and what velocity adds.
+const PLUCK_H2_BASE: f32 = 0.30;
+const PLUCK_H2_VEL: f32 = 0.30;
+/// The MIDI note whose decay is the string's base decay, and how much a
+/// semitone off it scales that decay.
+const PLUCK_REF_MIDI: f32 = 72.0;
+const PLUCK_PITCH_K: f32 = 0.02;
+/// The per-note decay jitter's floor, its span and the velocity multiplier
+/// that spreads velocities across it.
+const PLUCK_BREATH_BASE: f32 = 0.85;
+const PLUCK_BREATH_SPAN: f32 = 0.30;
+const PLUCK_BREATH_MIX: f32 = 137.5;
+/// The string's base decay rate, before pitch and breath.
+const PLUCK_DECAY: f32 = 3.4;
+/// The attack's length.
+const PLUCK_ATTACK_S: f32 = 0.004;
+/// The 2nd partial's fall relative to the fundamental's.
+const PLUCK_H2_DECAY_K: f32 = 1.76;
+/// The 3rd partial: its weight, its ratio to the note (slightly sharp of a
+/// harmonic) and its fall relative to the fundamental's.
+const PLUCK_H3_LEVEL: f32 = 0.18;
+const PLUCK_H3_RATIO: f32 = 3.004;
+const PLUCK_H3_DECAY_K: f32 = 2.94;
+/// The 4th partial: its weight, its inharmonic ratio and its fixed fall rate.
+const PLUCK_H4_LEVEL: f32 = 0.07;
+const PLUCK_H4_RATIO: f32 = 4.21;
+const PLUCK_H4_RATE: f32 = 22.0;
+/// The pick's noise click.
+const PLUCK_PICK: Strike = Strike {
+    salt: 0,
+    len_s: 0.006,
+    band: (2000.0, 5000.0),
+    decay: 700.0,
+    level: 0.10,
+};
 
 /// The plucked-string lead voice ("nylon" family).
 fn pluck_note(midi: u8, dur_s: f32, vel: f32, sr: u32) -> Vec<f32> {
     let n = samples_at(dur_s, sr);
     let f = midi_freq(f32::from(midi));
     let tau = std::f32::consts::TAU;
-    let h2 = 0.30 + 0.30 * vel;
+    let h2 = PLUCK_H2_BASE + PLUCK_H2_VEL * vel;
     // decay follows pitch (higher strings die faster) and breathes per note; the
     // velocity BITS are the jitter source, not an rng, so identical inputs still
     // render identical buffers (the purity contract)
-    let pitch_k = 1.0 + (f32::from(midi) - 72.0) * 0.02;
-    let breath = 0.85 + 0.30 * (vel * 137.5).fract();
-    let d = 3.4 * pitch_k * breath;
+    let pitch_k = 1.0 + (f32::from(midi) - PLUCK_REF_MIDI) * PLUCK_PITCH_K;
+    let breath = PLUCK_BREATH_BASE + PLUCK_BREATH_SPAN * (vel * PLUCK_BREATH_MIX).fract();
+    let d = PLUCK_DECAY * pitch_k * breath;
     let mut buf: Vec<f32> = (0..n)
         .map(|i| {
             let t = i as f32 / sr as f32;
-            let attack = (t / 0.004).min(1.0);
+            let attack = (t / PLUCK_ATTACK_S).min(1.0);
             let sig = (tau * f * t).sin() * (-t * d).exp()
-                + h2 * (tau * 2.0 * f * t).sin() * (-t * d * 1.76).exp()
-                + 0.18 * (tau * 3.004 * f * t).sin() * (-t * d * 2.94).exp()
-                + 0.07 * (tau * 4.21 * f * t).sin() * (-t * 22.0).exp();
+                + h2 * (tau * 2.0 * f * t).sin() * (-t * d * PLUCK_H2_DECAY_K).exp()
+                + PLUCK_H3_LEVEL
+                    * (tau * PLUCK_H3_RATIO * f * t).sin()
+                    * (-t * d * PLUCK_H3_DECAY_K).exp()
+                + PLUCK_H4_LEVEL
+                    * (tau * PLUCK_H4_RATIO * f * t).sin()
+                    * (-t * PLUCK_H4_RATE).exp();
             sig * attack * vel
         })
         .collect();
-    let pick = Strike {
-        salt: 0,
-        len_s: 0.006,
-        band: (2000.0, 5000.0),
-        decay: 700.0,
-        level: 0.10,
-    };
-    strike(&mut buf, pick, midi, vel, sr);
+    strike(&mut buf, PLUCK_PICK, midi, vel, sr);
     buf
 }
 
@@ -216,6 +272,18 @@ fn strike(buf: &mut [f32], strike: Strike, midi: u8, vel: f32, sr: u32) {
     }
 }
 
+/// The bass's attack length, and the share of the note its release takes.
+const BASS_ATTACK_S: f32 = 0.03;
+const BASS_RELEASE_SHARE: f32 = 0.5;
+/// The bass's drive into the tanh: at rest and what velocity adds.
+const BASS_DRIVE_BASE: f32 = 1.1;
+const BASS_DRIVE_VEL: f32 = 1.6;
+/// The level a note settles to after its onset, how far above that it starts
+/// and how fast it falls there.
+const BASS_BODY_SETTLED: f32 = 0.75;
+const BASS_BODY_ONSET: f32 = 0.25;
+const BASS_BODY_RATE: f32 = 2.0;
+
 /// The bass voice: sine + vel-keyed tanh harmonics, soft attack so the kick
 /// keeps the transient, held-note plateau envelope.
 pub(super) fn bass_note(midi: u8, dur_s: f32, vel: f32, sr: u32) -> Vec<f32> {
@@ -223,19 +291,50 @@ pub(super) fn bass_note(midi: u8, dur_s: f32, vel: f32, sr: u32) -> Vec<f32> {
     let f = midi_freq(f32::from(midi));
     let tau = std::f32::consts::TAU;
     // half-note release: a sub tail crossing into the next root reads as mud
-    let env = env_ar(n, 0.03, dur_s * 0.5, sr);
-    let drive = 1.1 + 1.6 * vel;
+    let env = env_ar(n, BASS_ATTACK_S, dur_s * BASS_RELEASE_SHARE, sr);
+    let drive = BASS_DRIVE_BASE + BASS_DRIVE_VEL * vel;
     let norm = drive.tanh();
     (0..n)
         .map(|i| {
             let t = i as f32 / sr as f32;
             // the note settles slightly after the onset, like a damped string
-            let body = 0.75 + 0.25 * (-t * 2.0).exp();
+            let body = BASS_BODY_SETTLED + BASS_BODY_ONSET * (-t * BASS_BODY_RATE).exp();
             let sig = ((tau * f * t).sin() * drive).tanh() / norm;
             sig * env(i) * body * vel
         })
         .collect()
 }
+
+/// The kalimba's decay: the MIDI note whose decay is the base, how much a
+/// semitone off it scales that, the floor of that scale, the per-note jitter's
+/// floor, span and velocity multiplier, and the base decay rate.
+const KALIMBA_REF_MIDI: f32 = 72.0;
+const KALIMBA_PITCH_K: f32 = 0.025;
+const KALIMBA_PITCH_K_MIN: f32 = 0.2;
+const KALIMBA_BREATH_BASE: f32 = 0.9;
+const KALIMBA_BREATH_SPAN: f32 = 0.2;
+const KALIMBA_BREATH_MIX: f32 = 91.7;
+const KALIMBA_DECAY: f32 = 2.6;
+/// The attack's length.
+const KALIMBA_ATTACK_S: f32 = 0.002;
+/// The 2nd partial: its weight, its ratio to the note, and how its fall
+/// scales with, and is offset from, the fundamental's.
+const KALIMBA_H2_LEVEL: f32 = 0.20;
+const KALIMBA_H2_RATIO: f32 = 5.9;
+const KALIMBA_H2_DECAY_K: f32 = 5.0;
+const KALIMBA_H2_DECAY_ADD: f32 = 14.0;
+/// The 3rd partial: its weight, its ratio and its fixed fall rate.
+const KALIMBA_H3_LEVEL: f32 = 0.08;
+const KALIMBA_H3_RATIO: f32 = 16.5;
+const KALIMBA_H3_RATE: f32 = 40.0;
+/// The resonator body's thump.
+const KALIMBA_THUMP: Strike = Strike {
+    salt: 0x4B41_4C49,
+    len_s: 0.010,
+    band: (120.0, 700.0),
+    decay: 350.0,
+    level: 0.12,
+};
 
 /// The kalimba lead voice: a plucked tine — inharmonic cantilever modes near
 /// 1 : 5.9 : 16.5, fast-dying overtones, a resonator-body thump.
@@ -246,29 +345,62 @@ fn kalimba_note(midi: u8, dur_s: f32, vel: f32, sr: u32) -> Vec<f32> {
     // higher tines die faster; the vel BITS jitter decay per note, not an rng,
     // so identical inputs still render identical buffers (the purity contract)
     // floored, so a low note still dies away
-    let pitch_k = (1.0 + (f32::from(midi) - 72.0) * 0.025).max(0.2);
-    let breath = 0.9 + 0.2 * (vel * 91.7).fract();
-    let d = 2.6 * pitch_k * breath;
+    let pitch_k =
+        (1.0 + (f32::from(midi) - KALIMBA_REF_MIDI) * KALIMBA_PITCH_K).max(KALIMBA_PITCH_K_MIN);
+    let breath = KALIMBA_BREATH_BASE + KALIMBA_BREATH_SPAN * (vel * KALIMBA_BREATH_MIX).fract();
+    let d = KALIMBA_DECAY * pitch_k * breath;
     let mut buf: Vec<f32> = (0..n)
         .map(|i| {
             let t = i as f32 / sr as f32;
-            let attack = (t / 0.002).min(1.0);
+            let attack = (t / KALIMBA_ATTACK_S).min(1.0);
             let sig = (tau * f * t).sin() * (-t * d).exp()
-                + 0.20 * (tau * 5.9 * f * t).sin() * (-t * (d * 5.0 + 14.0)).exp()
-                + 0.08 * (tau * 16.5 * f * t).sin() * (-t * 40.0).exp();
+                + KALIMBA_H2_LEVEL
+                    * (tau * KALIMBA_H2_RATIO * f * t).sin()
+                    * (-t * (d * KALIMBA_H2_DECAY_K + KALIMBA_H2_DECAY_ADD)).exp()
+                + KALIMBA_H3_LEVEL
+                    * (tau * KALIMBA_H3_RATIO * f * t).sin()
+                    * (-t * KALIMBA_H3_RATE).exp();
             sig * attack * vel
         })
         .collect();
-    let thump = Strike {
-        salt: 0x4B41_4C49,
-        len_s: 0.010,
-        band: (120.0, 700.0),
-        decay: 350.0,
-        level: 0.12,
-    };
-    strike(&mut buf, thump, midi, vel, sr);
+    strike(&mut buf, KALIMBA_THUMP, midi, vel, sr);
     buf
 }
+
+/// The vibraphone's decay: the MIDI note whose decay is the base, how much a
+/// semitone off it scales that, and the base decay rate.
+const VIBE_REF_MIDI: f32 = 69.0;
+const VIBE_PITCH_K: f32 = 0.015;
+const VIBE_DECAY: f32 = 1.3;
+/// The fan's rate: its floor and the span the velocity bits spread it over,
+/// and their multiplier.
+const VIBE_TREM_BASE_HZ: f32 = 4.2;
+const VIBE_TREM_SPAN_HZ: f32 = 0.8;
+const VIBE_TREM_MIX: f32 = 53.1;
+/// The fan's depth.
+const VIBE_TREM_DEPTH: f32 = 0.175;
+/// The attack's length.
+const VIBE_ATTACK_S: f32 = 0.008;
+/// The 2nd partial: its ratio to the note, its weight at rest and what
+/// velocity adds, and how its fall scales with, and is offset from, the
+/// fundamental's.
+const VIBE_H2_RATIO: f32 = 4.0;
+const VIBE_H2_BASE: f32 = 0.15;
+const VIBE_H2_VEL: f32 = 0.20;
+const VIBE_H2_DECAY_K: f32 = 3.0;
+const VIBE_H2_DECAY_ADD: f32 = 2.0;
+/// The 3rd partial: its weight, its ratio and its fixed fall rate.
+const VIBE_H3_LEVEL: f32 = 0.06;
+const VIBE_H3_RATIO: f32 = 9.8;
+const VIBE_H3_RATE: f32 = 18.0;
+/// The mallet's strike.
+const VIBE_MALLET: Strike = Strike {
+    salt: 0x5649_4245,
+    len_s: 0.008,
+    band: (600.0, 1800.0),
+    decay: 500.0,
+    level: 0.06,
+};
 
 /// The vibraphone lead voice: a struck bar tuned to 1 : 4 : ~9.8 partials,
 /// long ring, the rotating-fan tremolo baked in.
@@ -276,29 +408,24 @@ fn vibe_note(midi: u8, dur_s: f32, vel: f32, sr: u32) -> Vec<f32> {
     let n = samples_at(dur_s, sr);
     let f = midi_freq(f32::from(midi));
     let tau = std::f32::consts::TAU;
-    let pitch_k = 1.0 + (f32::from(midi) - 69.0) * 0.015;
-    let d = 1.3 * pitch_k;
+    let pitch_k = 1.0 + (f32::from(midi) - VIBE_REF_MIDI) * VIBE_PITCH_K;
+    let d = VIBE_DECAY * pitch_k;
     // the vel BITS detune the fan rate per note (purity contract, as above)
-    let trem_hz = 4.2 + 0.8 * (vel * 53.1).fract();
+    let trem_hz = VIBE_TREM_BASE_HZ + VIBE_TREM_SPAN_HZ * (vel * VIBE_TREM_MIX).fract();
     let mut buf: Vec<f32> = (0..n)
         .map(|i| {
             let t = i as f32 / sr as f32;
-            let attack = (t / 0.008).min(1.0);
-            let trem = 1.0 - 0.175 * (1.0 - (tau * trem_hz * t).cos());
+            let attack = (t / VIBE_ATTACK_S).min(1.0);
+            let trem = 1.0 - VIBE_TREM_DEPTH * (1.0 - (tau * trem_hz * t).cos());
             let sig = (tau * f * t).sin() * (-t * d).exp()
-                + (0.15 + 0.20 * vel) * (tau * 4.0 * f * t).sin() * (-t * (d * 3.0 + 2.0)).exp()
-                + 0.06 * (tau * 9.8 * f * t).sin() * (-t * 18.0).exp();
+                + (VIBE_H2_BASE + VIBE_H2_VEL * vel)
+                    * (tau * VIBE_H2_RATIO * f * t).sin()
+                    * (-t * (d * VIBE_H2_DECAY_K + VIBE_H2_DECAY_ADD)).exp()
+                + VIBE_H3_LEVEL * (tau * VIBE_H3_RATIO * f * t).sin() * (-t * VIBE_H3_RATE).exp();
             sig * attack * trem * vel
         })
         .collect();
-    let mallet = Strike {
-        salt: 0x5649_4245,
-        len_s: 0.008,
-        band: (600.0, 1800.0),
-        decay: 500.0,
-        level: 0.06,
-    };
-    strike(&mut buf, mallet, midi, vel, sr);
+    strike(&mut buf, VIBE_MALLET, midi, vel, sr);
     buf
 }
 
