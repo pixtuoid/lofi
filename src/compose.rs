@@ -165,8 +165,9 @@ pub struct Score {
     pub(super) sparkle: Vec<Note>,
     pub(super) keys: Vec<Note>,
     pub(super) drums: Vec<Hit>,
-    /// The bass lane: each bar's root, an answering root or fifth, and the
-    /// day's pickup a semitone under the next root.
+    /// The bass lane: the song's bar of rhythm in every bar, its root first,
+    /// then roots or fifths, and by day a pickup a semitone under the next
+    /// root.
     pub(super) bass: Vec<Note>,
     /// Which instrument sings the lead.
     pub(super) lead_voice: LeadVoice,
@@ -304,18 +305,15 @@ enum Grooves {
 }
 
 struct BassStyle {
-    /// The chance a bar answers its root.
-    answer_p: f32,
-    /// The beat the answer lands on.
-    answer_beat: f32,
-    /// The chance the answer is the fifth, not the root again.
+    /// The chance a note after the root is the fifth, not the root again.
     fifth_p: f32,
-    /// The chance a bar picks up into the next a semitone under its root,
-    /// where the mood picks up at all.
+    /// The chance a bar's last note, where it falls in the last beat, picks
+    /// up into the next bar a semitone under its root, where the mood picks
+    /// up at all.
     pickup_p: Option<f32>,
-    /// The root's velocity; the answer's is [`ANSWER_SOFTER`] under it.
+    /// The root's velocity; a later note's is [`ANSWER_SOFTER`] under it.
     velocity: Spread,
-    /// How long each note is held, in seconds.
+    /// The longest a note is held, in seconds.
     dur: f32,
 }
 
@@ -344,8 +342,6 @@ const DAY: Style = Style {
     },
     drums: Grooves::Drawn(&DAY_GROOVES),
     bass: BassStyle {
-        answer_p: 0.55,
-        answer_beat: 2.5,
         fifth_p: 0.4,
         pickup_p: Some(0.25),
         velocity: Spread {
@@ -389,9 +385,6 @@ const NIGHT: Style = Style {
     },
     drums: Grooves::Fixed(&NIGHT_GROOVE),
     bass: BassStyle {
-        answer_p: 0.7,
-        // the old baked sub's pulse
-        answer_beat: 2.0,
         fifth_p: 0.2,
         pickup_p: None,
         velocity: Spread {
@@ -1339,10 +1332,9 @@ const BASS_LAG: Spread = Spread {
     base: 0.014,
     span: 0.010,
 };
-/// The answer's velocity under the root's.
+/// A later note's velocity under the root's.
 const ANSWER_SOFTER: f32 = 0.14;
-/// The pickup's beat, lag and velocity.
-const PICKUP_BEAT: f32 = 3.5;
+/// The pickup's lag and velocity.
 const PICKUP_LAG: Spread = Spread {
     base: 0.012,
     span: 0.008,
@@ -1352,8 +1344,50 @@ const PICKUP_VELOCITY: Spread = Spread {
     span: 0.06,
 };
 
-/// The bass stage: the ONE on every bar, an optional answer, an occasional
-/// pickup — root/5th/leading-tone only, a floor, not a melody.
+/// Each 16th of a bar from its downbeat, the chance a song's bass starts a
+/// note there: the tracks' mean bass onsets a bar on each, `analyze.py`'s
+/// bass `steps`, as the commit that set it records.
+const BASS_STEP_P: [f32; 16] = [
+    0.392, 0.226, 0.122, 0.111, 0.191, 0.119, 0.163, 0.117, 0.210, 0.150, 0.128, 0.133, 0.191,
+    0.131, 0.130, 0.125,
+];
+
+/// The 16ths in a beat.
+const STEPS_PER_BEAT: usize = (1.0 / SIXTEENTH_BEATS) as usize;
+
+/// How much of the time to its next note a bass note is held (opinion; the
+/// card's `bass legato` reads it).
+const BASS_GATE: f32 = 0.9;
+
+/// A song's bar of bass, as 16ths from the downbeat: the root's in the first
+/// beat, picked as [`BASS_STEP_P`] weighs them, then each later 16th that
+/// sounds by its chance.
+fn bass_rhythm(rng: &mut NoiseStream) -> Vec<usize> {
+    let (first, rest) = BASS_STEP_P.split_at(STEPS_PER_BEAT);
+    // each step by its weight over the steps left, so each is picked by its
+    // share of them all
+    let mut left: f32 = first.iter().sum();
+    let mut root = 0;
+    for (step, &p) in first.iter().enumerate() {
+        root = step;
+        if chance(rng, p / left) {
+            break;
+        }
+        left -= p;
+    }
+    let later = (STEPS_PER_BEAT..).zip(rest);
+    std::iter::once(root)
+        .chain(
+            later
+                .filter(|&(_, &p)| chance(rng, p))
+                .map(|(step, _)| step),
+        )
+        .collect()
+}
+
+/// The bass stage: the song's bar of rhythm in every bar, the root on its
+/// first note, then the root or its fifth, and a pickup a semitone under the
+/// next bar's root on a last-beat last note — a floor, not a melody.
 fn bass(
     rng: &mut NoiseStream,
     bars: &[Chord; GEN_LOOP_BARS],
@@ -1361,6 +1395,14 @@ fn bass(
     beat_s: f32,
 ) -> Vec<Note> {
     let bar_s = beat_s * BEATS_PER_BAR;
+    let step_s = SIXTEENTH_BEATS * beat_s;
+    let loop_s = bar_s * GEN_LOOP_BARS as f32;
+    let steps = bass_rhythm(rng);
+    // the rhythm repeats, so the last note's next is the next bar's root
+    let next = (steps.iter().skip(1).copied()).chain([steps[0] + BASS_STEP_P.len()]);
+    let gaps: Vec<f32> = (steps.iter().zip(next))
+        .map(|(&step, next)| (next - step) as f32 * step_s)
+        .collect();
     let answer_velocity = Spread {
         base: style.velocity.base - ANSWER_SOFTER,
         span: style.velocity.span,
@@ -1369,41 +1411,32 @@ fn bass(
     for (bar, chord) in bars.iter().enumerate() {
         let b0 = bar as f32 * bar_s;
         let root = bass_pitch(chord.root_pc);
-        let at = BASS_LAG.after(b0, rng);
-        out.push(Note {
-            at,
-            midi: root,
-            vel: style.velocity.draw(rng),
-            dur: style.dur,
-        });
-        if chance(rng, style.answer_p) {
-            let note = if chance(rng, style.fifth_p) {
-                bass_pitch(chord.root_pc + FIFTH)
+        for (i, (&step, &gap)) in steps.iter().zip(&gaps).enumerate() {
+            let on = b0 + step as f32 * step_s;
+            let last_beat = step >= BASS_STEP_P.len() - STEPS_PER_BEAT;
+            let (at, midi, vel) = if i == 0 {
+                (BASS_LAG.after(on, rng), root, style.velocity.draw(rng))
+            } else if i == steps.len() - 1
+                && last_beat
+                && style.pickup_p.is_some_and(|p| chance(rng, p))
+                && let Some(next) = bars.get(bar + 1)
+            {
+                // literal semitone below the folded next root (pc-folding
+                // rendered an 11-semitone drop); no last-bar pickup, whose
+                // next root is the loop's first
+                let midi = bass_pitch(next.root_pc) - 1;
+                (PICKUP_LAG.after(on, rng), midi, PICKUP_VELOCITY.draw(rng))
             } else {
-                root
+                let midi = if chance(rng, style.fifth_p) {
+                    bass_pitch(chord.root_pc + FIFTH)
+                } else {
+                    root
+                };
+                (BASS_LAG.after(on, rng), midi, answer_velocity.draw(rng))
             };
-            let at = BASS_LAG.after(b0 + style.answer_beat * beat_s, rng);
-            out.push(Note {
-                at,
-                midi: note,
-                vel: answer_velocity.draw(rng),
-                dur: style.dur,
-            });
-        }
-        if style.pickup_p.is_some_and(|p| chance(rng, p))
-            && let Some(next) = bars.get(bar + 1)
-        {
-            // literal semitone below the folded next root (pc-folding rendered an
-            // 11-semitone drop); no last-bar pickup — place() clips at the seam
-            let at = PICKUP_LAG.after(b0 + PICKUP_BEAT * beat_s, rng);
-            let midi = bass_pitch(next.root_pc) - 1;
-            let vel = PICKUP_VELOCITY.draw(rng);
-            out.push(Note {
-                at,
-                midi,
-                vel,
-                dur: style.dur,
-            });
+            // place() clips at the loop end, so no note rings into the seam
+            let dur = (gap * BASS_GATE).min(style.dur).min(loop_s - at);
+            out.push(Note { at, midi, vel, dur });
         }
     }
     out

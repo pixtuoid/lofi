@@ -320,7 +320,13 @@ fn assert_well_formed(s: &Score, h: &Harmony, seed: u64) {
             "seed {seed}: the bass must sound bar {bar}'s root on its ONE"
         );
     }
-    for &Note { at, midi: note, .. } in &s.bass {
+    for &Note {
+        at,
+        midi: note,
+        dur,
+        ..
+    } in &s.bass
+    {
         // the window G1-F#2, a root an octave under it, and the leading-tone
         // pickup a step under that
         assert!(
@@ -340,10 +346,10 @@ fn assert_well_formed(s: &Score, h: &Harmony, seed: u64) {
             allowed.contains(&note),
             "seed {seed}: bass note {note} in bar {bar} is not root/5th/pickup {allowed:?}"
         );
-        // place() clips at the loop end — no onset may ring into the seam
+        // place() clips at the loop end — no note may ring into the seam
         assert!(
-            at < loop_s - 1.4 * (bar_s / 4.0),
-            "seed {seed}: bass onset {at}s rings into the loop seam"
+            dur > 0.0 && at + dur <= loop_s,
+            "seed {seed}: bass note at {at}s held {dur}s rings into the loop seam"
         );
     }
     for &Hit { at, gain, .. } in &s.drums {
@@ -684,4 +690,4 @@ fn every_seed_composes_the_score_it_did() {
     assert_eq!(h, EVERY_SEED_GOLDEN, "{h:#018x}");
 }
 
-const EVERY_SEED_GOLDEN: u64 = 0x9ba3_24ce_82e8_f4f7;
+const EVERY_SEED_GOLDEN: u64 = 0x422b_05d5_168a_34e1;
