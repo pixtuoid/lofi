@@ -11,8 +11,9 @@ reads a commit's measures, as `score.sh` leaves them in TAKES_DIR, against
 them. A row is off when our median leaves the tracks' interquartile range, and
 its gap counts those ranges from their median.
 
-The judge's panel and FAD read a mono fold, so the side rows are the card's
-alone. That they read harmony poorly is opinion, from #65's factor runs.
+The melody rows read the other stem's top line, lead and comp together, not
+our lead alone: its register follows LOFI-BIBLE R7. The judge's panel and FAD
+read a mono fold, so the side rows are the card's alone. That they read harmony poorly is opinion, from #65's factor runs.
 """
 
 import json
@@ -99,9 +100,9 @@ LAYERS = [
     ("3 melody", [
         ("pentatonic share", STUDY, path("melody", "pentatonic_share")),
         ("step share", STUDY, path("melody", "step_share")),
-        ("lead onsets /bar", STUDY, path("melody", "onsets_per_bar")),
+        ("top-line onsets /bar", STUDY, path("melody", "onsets_per_bar")),
         ("on eighth grid", STUDY, path("melody", "eighth_grid_share")),
-        ("lead median MIDI", STUDY, item(1, "melody", "register")),
+        ("top-line median MIDI", STUDY, item(1, "melody", "register")),
         ("repeat at 4 bars", STUDY, path("melody", "repeat_at_bars", "4")),
         ("repeat at 8 bars", STUDY, path("melody", "repeat_at_bars", "8")),
         ("polyphony", STUDY, path("polyphony")),
