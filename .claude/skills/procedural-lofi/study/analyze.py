@@ -59,6 +59,41 @@ MINOR = (6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17)
 OVERLAP_S = 0.03
 LEAD_MIN_S = 0.06
 PENTATONIC = {"major": {0, 2, 4, 7, 9}, "minor": {0, 3, 5, 7, 10}}
+CPU = 4.0
+MEMORY_MIB = 8192
+ERROR_CHARS = 300
+PITCH_CLASSES = 12
+BEATS_PER_BAR = 4
+STEPS_PER_BEAT = 4
+NMF_INIT_LO, NMF_INIT_HI = 0.5, 1.0
+NMF_FLOOR = 1e-9
+LEVEL_PERCENTILE = 99.5
+PEAK_MAX_FRAMES = 3
+PEAK_AVG_FRAMES = 10
+HIT_LEVEL_FRAMES = 4
+LEVEL_FLOOR = 1e-6
+LOG_FLOOR = 1e-12
+MIN_CLEAR_HITS = 4
+BEAT_TIGHTNESS = 400.0
+ON_BEAT_EARLY, ON_BEAT_LATE = 0.12, 0.88
+MIN_OFF_EIGHTHS = 8
+MIN_ON_BEATS = 8
+MIN_LINE_NOTES = 8
+NO_KEY_R = -2.0
+CYCLE_BARS = (1, 2, 3, 4, 6, 8, 12, 16)
+CYCLE_MARGIN = 0.03
+REPEAT_LAGS = (1, 2, 4, 8)
+REGISTER_PERCENTILES = [10, 50, 90]
+BASS_REGISTER_PERCENTILES = [5, 25, 50, 75, 95]
+INTERVAL_CAP = 13
+INTERVAL_BINS = 14
+STEP_SEMITONES = 2
+LEGATO_GAP_S = 2.0
+BASS_LOW_HZ, BASS_HIGH_HZ = 28.0, 400.0
+OTHER_LOW_HZ, OTHER_HIGH_HZ = 80.0, 2400.0
+KICK_LENGTH_S = 0.3
+SNARE_LENGTH_S = 0.3
+HAT_LENGTH_S = 0.12
 
 
 def stem(root, name):
@@ -80,16 +115,16 @@ def drum_hits(drums):
     spec = np.abs(librosa.stft(drums, n_fft=NMF_FFT, hop_length=HOP))
     freqs = librosa.fft_frequencies(sr=SR, n_fft=NMF_FFT)
     rng = np.random.default_rng(0)
-    templates = np.stack([((freqs >= lo) & (freqs < hi)) * rng.uniform(0.5, 1.0, freqs.size) for lo, hi in NMF_BANDS])
-    gains = rng.uniform(0.5, 1.0, (spec.shape[1], len(NMF_BANDS))) * spec.mean()
+    templates = np.stack([((freqs >= lo) & (freqs < hi)) * rng.uniform(NMF_INIT_LO, NMF_INIT_HI, freqs.size) for lo, hi in NMF_BANDS])
+    gains = rng.uniform(NMF_INIT_LO, NMF_INIT_HI, (spec.shape[1], len(NMF_BANDS))) * spec.mean()
     model = NMF(n_components=len(NMF_BANDS), init="custom", solver="mu", beta_loss="kullback-leibler", max_iter=NMF_ITER)
-    active = model.fit_transform((spec.T + 1e-9).astype(np.float64), W=gains, H=templates)
+    active = model.fit_transform((spec.T + NMF_FLOOR).astype(np.float64), W=gains, H=templates)
     rows = []
     for voice, track in zip((KICK, SNARE, HAT), active.T):
-        top = float(np.percentile(track, 99.5)) or 1.0
+        top = float(np.percentile(track, LEVEL_PERCENTILE)) or 1.0
         flux = np.maximum(0.0, np.diff(track, prepend=track[0]))
-        frames = librosa.util.peak_pick(flux, pre_max=3, post_max=3, pre_avg=10, post_avg=10, delta=HIT_DELTA * top, wait=WAIT_FRAMES)
-        rows += [(f * HOP / SR, voice, 20 * np.log10(track[f : f + 4].max() / top + 1e-6)) for f in frames]
+        frames = librosa.util.peak_pick(flux, pre_max=PEAK_MAX_FRAMES, post_max=PEAK_MAX_FRAMES, pre_avg=PEAK_AVG_FRAMES, post_avg=PEAK_AVG_FRAMES, delta=HIT_DELTA * top, wait=WAIT_FRAMES)
+        rows += [(f * HOP / SR, voice, 20 * np.log10(track[f : f + HIT_LEVEL_FRAMES].max() / top + LEVEL_FLOOR)) for f in frames]
     rows = np.array(sorted(rows)) if rows else np.zeros((0, 3))
     # a kick's click sounds in the snare's band too, and a kick under a snare
     # is rare: a hit with a kick on it is that kick
@@ -115,16 +150,16 @@ def beat_grid(mix, drums, times, voices, hint):
     if hint is None or abs(60.0 / ibi / hint - 1.0) <= TEMPO_AGREES:
         first = int(np.argmin(np.abs(beats - downbeats[0])))
         lengths = np.round(np.diff(downbeats) / ibi)
-        return beats, 60.0 / ibi, first, round(float(np.mean(lengths == 4)), 3) if lengths.size else 0.0, "beat-this"
+        return beats, 60.0 / ibi, first, round(float(np.mean(lengths == BEATS_PER_BAR)), 3) if lengths.size else 0.0, "beat-this"
     onset = librosa.onset.onset_strength(y=drums, sr=SR, hop_length=HOP)
-    _, frames = librosa.beat.beat_track(onset_envelope=onset, sr=SR, hop_length=HOP, bpm=hint, tightness=400.0, trim=False)
+    _, frames = librosa.beat.beat_track(onset_envelope=onset, sr=SR, hop_length=HOP, bpm=hint, tightness=BEAT_TIGHTNESS, trim=False)
     beats = librosa.frames_to_time(frames, sr=SR, hop_length=HOP)
     kicks, snares = times[voices == KICK], times[voices == SNARE]
 
     def landed(hits_at, where):
         return sum(float(np.min(np.abs(where - t))) < NEAR_S for t in hits_at) if where.size else 0
 
-    score = [landed(kicks, beats[p::4]) + landed(snares, beats[(p + 1) % 4 :: 2]) for p in range(4)]
+    score = [landed(kicks, beats[p::BEATS_PER_BAR]) + landed(snares, beats[(p + 1) % BEATS_PER_BAR :: 2]) for p in range(BEATS_PER_BAR)]
     return beats, 60.0 / float(np.median(np.diff(beats))), int(np.argmax(score)), None, "form"
 
 
@@ -135,7 +170,7 @@ def drum_grid(times, voices, levels, beats, downbeat):
     import numpy as np
 
     bars = beats[downbeat:]
-    n_bars = max(1, (bars.size - 1) // 4)
+    n_bars = max(1, (bars.size - 1) // BEATS_PER_BAR)
     out, offs, on_beat = {}, [], {KICK: [], SNARE: []}
     for code, name in ((KICK, "kick"), (SNARE, "snare"), (HAT, "hat")):
         grid = np.zeros(STEPS)
@@ -146,10 +181,10 @@ def drum_grid(times, voices, levels, beats, downbeat):
                 continue
             span = bars[at + 1] - bars[at]
             phase = (t - bars[at]) / span
-            grid[int(round((at % 4) * 4 + phase * 4)) % STEPS] += 1
+            grid[int(round((at % BEATS_PER_BAR) * STEPS_PER_BEAT + phase * STEPS_PER_BEAT)) % STEPS] += 1
             if OFF_EIGHTH[0] <= phase <= OFF_EIGHTH[1]:
                 offs.append(float(phase))
-            if code in on_beat and (phase < 0.12 or phase > 0.88):
+            if code in on_beat and (phase < ON_BEAT_EARLY or phase > ON_BEAT_LATE):
                 on_beat[code].append(float((phase if phase < 0.5 else phase - 1) * span * 1000))
         out[name] = {
             "steps": (grid / n_bars).round(3).tolist(),
@@ -157,8 +192,8 @@ def drum_grid(times, voices, levels, beats, downbeat):
             "level_sd_db": round(float(np.std(mine)), 2) if mine.size else None,
             "level_db": round(float(np.median(mine)), 1) if mine.size else None,
         }
-    out["off_eighth"] = round(float(np.median(offs)), 3) if len(offs) >= 8 else None
-    if len(on_beat[KICK]) >= 8 and len(on_beat[SNARE]) >= 8:
+    out["off_eighth"] = round(float(np.median(offs)), 3) if len(offs) >= MIN_OFF_EIGHTHS else None
+    if len(on_beat[KICK]) >= MIN_ON_BEATS and len(on_beat[SNARE]) >= MIN_ON_BEATS:
         out["snare_behind_kick_ms"] = round(float(np.median(on_beat[SNARE]) - np.median(on_beat[KICK])), 1)
     return out
 
@@ -175,14 +210,14 @@ def drum_sound(drums, times, voices, levels, code, length_s):
     alone = np.array([others.size == 0 or np.abs(others - t).min() > STACK_S for t in times], dtype=bool)
     picks = np.flatnonzero((voices == code) & (following > length_s) & alone)
     picks = picks[np.argsort(-levels[picks])][:HITS_AVERAGED]
-    if picks.size < 4:
+    if picks.size < MIN_CLEAR_HITS:
         return None
     takes = np.array([drums[int(times[i] * SR) :][:length] for i in picks if int(times[i] * SR) + length < drums.size])
     if not takes.size:
         return None
     spectrum = (np.abs(np.fft.rfft(takes * np.hanning(length), axis=1)) ** 2).mean(axis=0)
     freqs = np.fft.rfftfreq(length, 1 / SR)
-    env = librosa.power_to_db(np.convolve((takes**2).mean(axis=0), np.ones(ENV_N) / ENV_N, "same") + 1e-12)
+    env = librosa.power_to_db(np.convolve((takes**2).mean(axis=0), np.ones(ENV_N) / ENV_N, "same") + LOG_FLOOR)
     top = int(env.argmax())
     below = np.flatnonzero(env[top:] < env[top] - DECAY_DB)
     return {
@@ -203,23 +238,23 @@ def transcribe(path, low, high):
 def chroma_of(notes, edges):
     import numpy as np
 
-    chroma = np.zeros((len(edges) - 1, 12))
+    chroma = np.zeros((len(edges) - 1, PITCH_CLASSES))
     for start, end, pitch, amp in notes:
         first = max(np.searchsorted(edges, start, side="right") - 1, 0)
         last = min(np.searchsorted(edges, end, side="left"), len(edges) - 1)
         for i in range(first, last):
             overlap = min(end, edges[i + 1]) - max(start, edges[i])
             if overlap > 0:
-                chroma[i, pitch % 12] += overlap * amp
+                chroma[i, pitch % PITCH_CLASSES] += overlap * amp
     return chroma
 
 
 def key_of(total):
     import numpy as np
 
-    best = (-2.0, 0, "major")
+    best = (NO_KEY_R, 0, "major")
     for name, profile in (("major", MAJOR), ("minor", MINOR)):
-        for tonic in range(12):
+        for tonic in range(PITCH_CLASSES):
             r = float(np.corrcoef(np.roll(profile, tonic), total)[0, 1])
             if r > best[0]:
                 best = (r, tonic, name)
@@ -242,25 +277,25 @@ def chords_of(path, edges):
     return out
 
 
-def harmony(chords, tonic, per_bar=4):
+def harmony(chords, tonic, per_bar=BEATS_PER_BAR):
     """Chord tokens relative to the tonic: their share, what follows what, how
     long a chord lasts, and the shortest cycle the bars repeat on."""
     sounding = [c for c in chords if c]
     bars = [chords[i] for i in range(0, len(chords), per_bar)]
-    tokens = [f"{(c[0] - tonic) % 12}:{c[1]}" if c else "N" for c in bars]
+    tokens = [f"{(c[0] - tonic) % PITCH_CLASSES}:{c[1]}" if c else "N" for c in bars]
     roots = [c[0] if c else None for c in bars]
     changes = sum(a != b for a, b in zip(chords, chords[1:]))
     best_cycle, best_match = None, 0.0
-    for cycle in (1, 2, 3, 4, 6, 8, 12, 16):
+    for cycle in CYCLE_BARS:
         if len(roots) < 2 * cycle:
             continue
         # by root: one voicing's added 7th isn't a new chord in the cycle
         match = sum(a == b for a, b in zip(roots, roots[cycle:])) / (len(roots) - cycle)
-        if match > best_match + 0.03:
+        if match > best_match + CYCLE_MARGIN:
             best_cycle, best_match = cycle, match
     return {
         "qualities": Counter(q for _, q in sounding),
-        "roots": Counter((root - tonic) % 12 for root, _ in sounding),
+        "roots": Counter((root - tonic) % PITCH_CLASSES for root, _ in sounding),
         "bar_tokens": Counter(tokens),
         "bigrams": Counter(f"{a}>{b}" for a, b in zip(tokens, tokens[1:]) if a != b),
         "beats_per_chord": round(len(chords) / (changes + 1), 2),
@@ -287,12 +322,12 @@ def skyline(notes, edges):
 def melody(line, tonic, mode, n_bars):
     import numpy as np
 
-    if len(line) < 8:
+    if len(line) < MIN_LINE_NOTES:
         return None
     pitches = np.array([p for _, p in line])
     steps = np.array([s for s, _ in line])
     jumps = np.abs(np.diff(pitches))
-    degrees = Counter(int((p - tonic) % 12) for p in pitches)
+    degrees = Counter(int((p - tonic) % PITCH_CLASSES) for p in pitches)
     pent = sum(n for d, n in degrees.items() if d in PENTATONIC[mode]) / sum(degrees.values())
     by_bar = {}
     for step, pitch in line:
@@ -304,14 +339,14 @@ def melody(line, tonic, mode, n_bars):
 
     repeats = {
         str(lag): round(float(np.mean([alike(by_bar[b], by_bar[b - lag]) for b in by_bar if b - lag in by_bar] or [0.0])), 3)
-        for lag in (1, 2, 4, 8)
+        for lag in REPEAT_LAGS
     }
     return {
-        "register": np.percentile(pitches, [10, 50, 90]).round(1).tolist(),
+        "register": np.percentile(pitches, REGISTER_PERCENTILES).round(1).tolist(),
         "onsets_per_bar": round(len(line) / max(n_bars, 1), 2),
-        "interval_hist": np.bincount(np.minimum(jumps, 13), minlength=14).tolist(),
+        "interval_hist": np.bincount(np.minimum(jumps, INTERVAL_CAP), minlength=INTERVAL_BINS).tolist(),
         "pentatonic_share": round(float(pent), 3),
-        "step_share": round(float(np.mean(jumps <= 2)), 3),
+        "step_share": round(float(np.mean(jumps <= STEP_SEMITONES)), 3),
         "repeat_at_bars": repeats,
         "eighth_grid_share": round(float(np.mean(steps % 2 == 0)), 3),
     }
@@ -333,15 +368,15 @@ def bass_line(notes, n_bars):
     import numpy as np
 
     line = monophonic(notes)
-    if len(line) < 8:
+    if len(line) < MIN_LINE_NOTES:
         return None
     pitches = np.array([p for _, _, p, _ in line])
     starts = np.array([s for s, _, _, _ in line])
     lengths = np.array([e - s for s, e, _, _ in line])
     gaps = np.diff(starts)
-    near = gaps < 2.0
+    near = gaps < LEGATO_GAP_S
     return {
-        "register": np.percentile(pitches, [5, 25, 50, 75, 95]).round(1).tolist(),
+        "register": np.percentile(pitches, BASS_REGISTER_PERCENTILES).round(1).tolist(),
         "notes_per_bar": round(len(line) / max(n_bars, 1), 2),
         "legato": round(float(np.median(lengths[:-1][near] / gaps[near])), 3) if near.any() else None,
         "median_note_ms": round(float(np.median(lengths)) * 1000, 1),
@@ -362,7 +397,7 @@ def bounce(root, names, out):
 
 
 @app.function(
-    cpu=4.0, memory=8192, timeout=TIMEOUT_S, max_containers=CONCURRENT,
+    cpu=CPU, memory=MEMORY_MIB, timeout=TIMEOUT_S, max_containers=CONCURRENT,
     volumes={STUDY: study.with_mount_options(read_only=True)},
 )
 def one(job):
@@ -377,13 +412,13 @@ def one(job):
     times, voices, levels = drum_hits(drums)
     beats, tempo, downbeat, four_four, grid_from = beat_grid(mix, drums, times, voices, hint)
     bar_times = beats[downbeat:]
-    sixteenths = np.interp(np.arange(0, (bar_times.size - 1) * 4 + 1) / 4, np.arange(bar_times.size), bar_times)
-    bass_notes = transcribe(root / "bass.flac", 28.0, 400.0)
-    other_notes = transcribe(root / "other.flac", 80.0, 2400.0)
+    sixteenths = np.interp(np.arange(0, (bar_times.size - 1) * STEPS_PER_BEAT + 1) / STEPS_PER_BEAT, np.arange(bar_times.size), bar_times)
+    bass_notes = transcribe(root / "bass.flac", BASS_LOW_HZ, BASS_HIGH_HZ)
+    other_notes = transcribe(root / "other.flac", OTHER_LOW_HZ, OTHER_HIGH_HZ)
     beat_edges = bar_times.tolist()
     tonic, mode, confidence = key_of(chroma_of(other_notes + bass_notes, beat_edges).sum(axis=0))
     chords = chords_of(pitched, beat_edges)
-    n_bars = max(1, (bar_times.size - 1) // 4)
+    n_bars = max(1, (bar_times.size - 1) // BEATS_PER_BAR)
     return {
         "key": key,
         "powers": powers,
@@ -393,15 +428,15 @@ def one(job):
         "four_four": four_four,
         "grid_from": grid_from,
         "drums": drum_grid(times, voices, levels, beats, downbeat),
-        "kick": drum_sound(drums, times, voices, levels, KICK, 0.3),
-        "snare": drum_sound(drums, times, voices, levels, SNARE, 0.3),
-        "hat": drum_sound(drums, times, voices, levels, HAT, 0.12),
+        "kick": drum_sound(drums, times, voices, levels, KICK, KICK_LENGTH_S),
+        "snare": drum_sound(drums, times, voices, levels, SNARE, SNARE_LENGTH_S),
+        "hat": drum_sound(drums, times, voices, levels, HAT, HAT_LENGTH_S),
         "bass": bass_line(bass_notes, n_bars),
         "mode": mode,
         "tonic": tonic,
         "key_r": confidence,
         "harmony": harmony(chords, tonic),
-        "other_register": np.percentile([p for _, _, p, _ in other_notes] or [0], [10, 50, 90]).round(1).tolist(),
+        "other_register": np.percentile([p for _, _, p, _ in other_notes] or [0], REGISTER_PERCENTILES).round(1).tolist(),
         "polyphony": round(sum(e - s for s, e, _, _ in other_notes) / max(float(bar_times[-1] - bar_times[0]), 1.0), 2),
         "melody": melody(skyline(other_notes, sixteenths), tonic, mode, n_bars),
     }
@@ -427,7 +462,7 @@ def run(out: str, prefix: str = "", hints: str = ""):
     print(f"{len(good)} of {len(keys)} analysed")
     for key, row in zip(keys, rows):
         if not isinstance(row, dict):
-            print("failed:", key, repr(row)[:300])
+            print("failed:", key, repr(row)[:ERROR_CHARS])
     path = Path(out, f"study{'-' + prefix.strip('-') if prefix else ''}.json")
     previous = json.loads(path.read_text()) if path.exists() else {}
     previous.update({r["key"]: r for r in good})

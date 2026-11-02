@@ -21,6 +21,10 @@ MODEL = "htdemucs_ft"
 # `judge_local.py`'s SHARDS, for its reason: a job this GPU-bound queues past it
 CONCURRENT = 8
 TIMEOUT_S = 1800
+CPU = 4.0
+MEMORY_MIB = 16384
+SHIFTS = 1
+OVERLAP = 0.25
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
@@ -34,7 +38,7 @@ study = modal.Volume.from_name("lofi-study", create_if_missing=True)
 
 
 @app.function(
-    gpu="T4", cpu=4.0, memory=16384, timeout=TIMEOUT_S, max_containers=CONCURRENT,
+    gpu="T4", cpu=CPU, memory=MEMORY_MIB, timeout=TIMEOUT_S, max_containers=CONCURRENT,
     volumes={REFS: refs.with_mount_options(read_only=True), STUDY: study},
 )
 def split_one(job):
@@ -56,7 +60,7 @@ def split_one(job):
     ref = wav.mean(0)
     wav = (wav - ref.mean()) / ref.std()
     with torch.no_grad():
-        sources = apply_model(model, wav[None], device="cuda", shifts=1, split=True, overlap=0.25)[0]
+        sources = apply_model(model, wav[None], device="cuda", shifts=SHIFTS, split=True, overlap=OVERLAP)[0]
     sources = (sources * ref.std() + ref.mean()).cpu().numpy()
     out.mkdir(parents=True, exist_ok=True)
     powers = {}

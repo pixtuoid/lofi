@@ -26,6 +26,7 @@ MIDDLE_S = 60
 LEVEL_LUFS = -23.0
 HOLDOUT_EVERY = 9
 TIMEOUT_S = 1800
+COV_FLOOR = 1e-6
 
 app = modal.App("lofi-study-stemfad", image=image)
 study = modal.Volume.from_name("lofi-study")
@@ -87,7 +88,7 @@ def run(prefix: str, out: str):
 
     def distance(a, b):
         (mu1, cov1), (mu2, cov2) = a, b
-        mean = linalg.sqrtm((cov1 + np.eye(cov1.shape[0]) * 1e-6) @ (cov2 + np.eye(cov2.shape[0]) * 1e-6))
+        mean = linalg.sqrtm((cov1 + np.eye(cov1.shape[0]) * COV_FLOOR) @ (cov2 + np.eye(cov2.shape[0]) * COV_FLOOR))
         return float(((mu1 - mu2) ** 2).sum() + np.trace(cov1 + cov2 - 2 * mean.real))
 
     by_track = {}

@@ -17,6 +17,13 @@ MIDDLE_S = 60
 FRAME = 2048
 HOP = 512
 CONCURRENT = 8
+CPU = 2.0
+MEMORY_MIB = 4096
+TIMEOUT_S = 900
+LOG_FLOOR = 1e-12
+VOICED_DB = -30
+PITCH_LO_HZ, PITCH_HI_HZ = 30, 125
+OVERTONE_LO_HZ, OVERTONE_HI_HZ = 125, 2000
 
 app = modal.App("lofi-study-basstone")
 image = modal.Image.debian_slim(python_version="3.11").apt_install("libsndfile1").pip_install("numpy<2", "scipy", "soundfile==0.12.1")
@@ -24,7 +31,7 @@ study = modal.Volume.from_name("lofi-study")
 BANDS = ((20, 45), (45, 62), (62, 90), (90, 125), (125, 250), (250, 500), (500, 2000))
 
 
-@app.function(image=image, cpu=2.0, memory=4096, timeout=900, max_containers=CONCURRENT,
+@app.function(image=image, cpu=CPU, memory=MEMORY_MIB, timeout=TIMEOUT_S, max_containers=CONCURRENT,
               volumes={STUDY: study.with_mount_options(read_only=True)})
 def one(key):
     import numpy as np
@@ -40,15 +47,15 @@ def one(key):
     total = power.sum() or 1.0
     shares = {f"{lo}-{hi}": float(100 * power[(f >= lo) & (f < hi)].sum() / total) for lo, hi in BANDS}
     centroid = float((f[None].T * power).sum() / total)
-    env = np.sqrt(np.maximum(power.sum(axis=0), 1e-12))
+    env = np.sqrt(np.maximum(power.sum(axis=0), LOG_FLOOR))
     db = 20 * np.log10(env / env.max())
-    voiced = db > -30
-    pitch_band = (f >= 30) & (f < 125)
+    voiced = db > VOICED_DB
+    pitch_band = (f >= PITCH_LO_HZ) & (f < PITCH_HI_HZ)
     fundamental = power[pitch_band].sum()
-    overtones = power[(f >= 125) & (f < 2000)].sum()
+    overtones = power[(f >= OVERTONE_LO_HZ) & (f < OVERTONE_HI_HZ)].sum()
     return key, {
         "shares": shares, "centroid_hz": centroid, "occupancy": float(voiced.mean()),
-        "overtone_db": float(10 * np.log10((overtones + 1e-12) / (fundamental + 1e-12))),
+        "overtone_db": float(10 * np.log10((overtones + LOG_FLOOR) / (fundamental + LOG_FLOOR))),
     }
 
 
