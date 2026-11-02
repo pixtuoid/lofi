@@ -175,7 +175,7 @@ constraint and re-batch), and every taste axis is a data table or named const wi
 
 | Want to change…            | Edit (all in `compose.rs` unless noted)                  |
 |----------------------------|----------------------------------------------------------|
-| harmony vocabulary         | `DAY_PROGRESSIONS` / `NIGHT_PROGRESSIONS` (pre-voiced `chord`s + their roots + `scale_pcs`) |
+| harmony vocabulary         | `MAJOR_LOOPS` / `MINOR_LOOPS` (rows of `Degree`s), each chord's `triad_p`; a mood's lean: `Style`'s `major_share` |
 | a mood's tempo, lead register and density, comping, bass, voice weights | the `DAY` / `NIGHT` `Style` |
 | melody rules               | the lead stage's consts and its `Role`s (quote, close, peak, leap bound, grid) |
 | groove feel                | `DAY_GROOVES` / `NIGHT_GROOVE` templates + the swing consts |

@@ -1,6 +1,6 @@
 //! The theory-constrained COMPOSER — generative lofi as constrained sampling:
-//! a pure function `seed -> Score`. Harmony walks a vetted progression
-//! grammar, and the lead follows melody rules: chord tones on strong beats,
+//! a pure function `seed -> Score`. Harmony walks a measured loop grammar,
+//! and the lead follows melody rules: chord tones on strong beats,
 //! diatonic passing tones, leaps bounded to a fifth and resolved by a step,
 //! and two phrases, the answer quoting the statement, peaking, and closing
 //! the loop when its last bar sings. A quoted, peaking or closing note may
@@ -245,11 +245,9 @@ struct Style {
 }
 
 struct HarmonyStyle {
-    /// The grammar a song draws its template from.
-    progressions: &'static [Progression],
-    /// Whether the loop's last bar turns around to the dominant of its
-    /// first root.
-    turnaround: bool,
+    /// The share of its songs a mood writes over [`MAJOR_LOOPS`], the rest
+    /// over [`MINOR_LOOPS`].
+    major_share: f32,
 }
 
 struct LeadStyle {
@@ -282,9 +280,9 @@ enum Density {
 
 /// What the keys strike on an eighth.
 enum Comp {
-    /// A rolled rootless shell, the chord's 3rd and 7th, the 7th sometimes
-    /// lifted to the 9th: comping means chords, and the pad and bass own the
-    /// low end, so two voices keep 250-500 Hz controlled.
+    /// A rolled rootless shell, the chord's 3rd and [`shell_of`]'s upper
+    /// voice, sometimes lifted to the 9th: comping means chords, and the pad
+    /// and bass own the low end, so two voices keep 250-500 Hz controlled.
     Shell,
     /// One chord tone: the sleepy register must not thicken.
     Single,
@@ -313,10 +311,7 @@ struct BassStyle {
 }
 
 const DAY: Style = Style {
-    harmony: HarmonyStyle {
-        progressions: &DAY_PROGRESSIONS,
-        turnaround: true,
-    },
+    harmony: HarmonyStyle { major_share: 0.8 },
     bpm: Spread::between(70.0, 82.0),
     lead: LeadStyle {
         lo: 65,
@@ -355,10 +350,7 @@ const DAY: Style = Style {
 };
 
 const NIGHT: Style = Style {
-    harmony: HarmonyStyle {
-        progressions: &NIGHT_PROGRESSIONS,
-        turnaround: false,
-    },
+    harmony: HarmonyStyle { major_share: 0.42 },
     // the slow end of LOFI-BIBLE's MEASURED tempo
     bpm: Spread::between(68.0, 72.0),
     lead: LeadStyle {
@@ -507,274 +499,149 @@ struct Chord {
     root_pc: u8,
 }
 
-const fn chord(notes: [u8; 4], root_pc: u8) -> Chord {
-    Chord { notes, root_pc }
+/// Whether no two of a chord's voices sound muddy together.
+fn clear(notes: &[u8; 4]) -> bool {
+    (notes.iter()).all(|&a| notes.iter().all(|&b| !muddy(a, b)))
 }
 
-impl Chord {
-    /// The chord `t` semitones up.
-    fn transposed(self, t: i8) -> Self {
-        Self {
-            notes: self.notes.map(|n| (i16::from(n) + i16::from(t)) as u8),
-            root_pc: ((i16::from(self.root_pc) + i16::from(t)).rem_euclid(OCTAVE.into())) as u8,
-        }
-    }
-
-    /// Whether no two of the chord's voices sound muddy together.
-    fn clear(&self) -> bool {
-        (self.notes.iter()).all(|&a| self.notes.iter().all(|&b| !muddy(a, b)))
-    }
+/// Whether two neighbouring voices sit a semitone apart: clear above the low
+/// interval limits, but a major 7th under its root grinds in a closed hand.
+fn rubs(notes: &[u8; 4]) -> bool {
+    notes.windows(2).any(|pair| pair[1] - pair[0] == 1)
 }
 
-/// One vetted progression template, pre-voiced in C.
-#[derive(Debug)]
-struct Progression {
-    chords: [Chord; 4],
-    scale_pcs: [u8; 7],
-    /// Carries ONE deliberate out-of-scale color move — exempt from the
-    /// diatonic pin, which instead asserts the color tone EXISTS.
-    chromatic: bool,
-}
-
-impl Progression {
-    /// The template `t` semitones up, its scale's classes in order.
-    fn transposed(&self, t: i8) -> Self {
-        let mut scale_pcs = self
-            .scale_pcs
-            .map(|s| ((i16::from(s) + i16::from(t)).rem_euclid(OCTAVE.into())) as u8);
-        scale_pcs.sort_unstable();
-        Self {
-            chords: self.chords.map(|c| c.transposed(t)),
-            scale_pcs,
-            chromatic: self.chromatic,
-        }
-    }
-
-    /// Whether every chord of the template sounds clear.
-    fn clear(&self) -> bool {
-        self.chords.iter().all(Chord::clear)
-    }
-}
-
-/// C major pitch classes.
+/// C major pitch classes, the one scale [`MAJOR_LOOPS`] and [`MINOR_LOOPS`]
+/// are written in.
 const C_MAJOR: [u8; 7] = [0, 2, 4, 5, 7, 9, 11];
-/// F major pitch classes.
-const F_MAJOR: [u8; 7] = [0, 2, 4, 5, 7, 9, 10];
 
-/// The day grammar — every chord tone is in the template's scale unless the
-/// row sets `chromatic`.
-const DAY_PROGRESSIONS: [Progression; 10] = [
-    // royal road: Fmaj7 G7 Em7 Am7
-    Progression {
-        chords: [
-            chord([53, 57, 60, 64], 5),
-            chord([55, 59, 62, 65], 7),
-            chord([52, 55, 59, 62], 4),
-            chord([57, 60, 64, 67], 9),
-        ],
-        scale_pcs: C_MAJOR,
-        chromatic: false,
-    },
-    // I-vi-ii-V turnaround with voice-led inversions; bar 2 is Am7/C as a TRUE
-    // 7th-chord pc set — a voicing with no 7th breaks the shell derivation
-    Progression {
-        chords: [
-            chord([48, 52, 55, 59], 0),
-            chord([48, 52, 55, 57], 9),
-            chord([50, 53, 57, 60], 2),
-            chord([53, 55, 59, 62], 7),
-        ],
-        scale_pcs: C_MAJOR,
-        chromatic: false,
-    },
-    // modal set: Dm7 Gm7 B♭maj7 Am7
-    Progression {
-        chords: [
-            chord([50, 53, 57, 60], 2),
-            chord([55, 58, 62, 65], 7),
-            chord([58, 62, 65, 69], 10),
-            chord([57, 60, 64, 67], 9),
-        ],
-        scale_pcs: F_MAJOR,
-        chromatic: false,
-    },
-    // stepwise descent: Fmaj7 Em7 Dm7 Cmaj7
-    Progression {
-        chords: [
-            chord([53, 57, 60, 64], 5),
-            chord([52, 55, 59, 62], 4),
-            chord([50, 53, 57, 60], 2),
-            chord([48, 52, 55, 59], 0),
-        ],
-        scale_pcs: C_MAJOR,
-        chromatic: false,
-    },
-    // pop cadence: Am7 Fmaj7 Cmaj7 G7
-    Progression {
-        chords: [
-            chord([57, 60, 64, 67], 9),
-            chord([53, 57, 60, 64], 5),
-            chord([48, 52, 55, 59], 0),
-            chord([55, 59, 62, 65], 7),
-        ],
-        scale_pcs: C_MAJOR,
-        chromatic: false,
-    },
-    // gentle lift: Cmaj7 Fmaj7 Em7 Am7
-    Progression {
-        chords: [
-            chord([48, 52, 55, 59], 0),
-            chord([53, 57, 60, 64], 5),
-            chord([52, 55, 59, 62], 4),
-            chord([57, 60, 64, 67], 9),
-        ],
-        scale_pcs: C_MAJOR,
-        chromatic: false,
-    },
-    // V7/vi: Fmaj7 E7 Am7 G7 — the E7's G# pulls into Am
-    Progression {
-        chords: [
-            chord([53, 57, 60, 64], 5),
-            chord([52, 56, 59, 62], 4),
-            chord([57, 60, 64, 67], 9),
-            chord([55, 59, 62, 65], 7),
-        ],
-        scale_pcs: C_MAJOR,
-        chromatic: true,
-    },
-    // borrowed iv: Cmaj7 Fmaj7 Fm7 Cmaj7 — the minor-plagal fade
-    Progression {
-        chords: [
-            chord([48, 52, 55, 59], 0),
-            chord([53, 57, 60, 64], 5),
-            chord([53, 56, 60, 63], 5),
-            chord([48, 52, 55, 59], 0),
-        ],
-        scale_pcs: C_MAJOR,
-        chromatic: true,
-    },
-    // rhythm-changes turnaround: Cmaj7 A7 Dm7 G7 — the A7's C# leans into Dm
-    Progression {
-        chords: [
-            chord([48, 52, 55, 59], 0),
-            chord([49, 55, 57, 64], 9),
-            chord([50, 53, 57, 60], 2),
-            chord([55, 59, 62, 65], 7),
-        ],
-        scale_pcs: C_MAJOR,
-        chromatic: true,
-    },
-    // full jazz turnaround: Em7 A7 Dm7 G7 — iii-VI7-ii-V, the long way home
-    Progression {
-        chords: [
-            chord([52, 55, 59, 62], 4),
-            chord([55, 57, 61, 64], 9),
-            chord([50, 53, 57, 60], 2),
-            chord([55, 59, 62, 65], 7),
-        ],
-        scale_pcs: C_MAJOR,
-        chromatic: true,
-    },
+/// One chord of the grammar in C: the loops name no key or voicing, so a song
+/// draws those, and whether the 7th sounds.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Degree {
+    root_pc: u8,
+    third: u8,
+    seventh: u8,
+    /// The chance it sounds no 7th (LOFI-BIBLE R2).
+    triad_p: f32,
+}
+
+const C: Degree = Degree {
+    root_pc: 0,
+    third: MAJOR_THIRD,
+    seventh: MAJOR_SEVENTH,
+    triad_p: 0.78,
+};
+const D_MIN: Degree = Degree {
+    root_pc: 2,
+    third: MINOR_THIRD,
+    seventh: MINOR_SEVENTH,
+    triad_p: 0.37,
+};
+const E_MIN: Degree = Degree {
+    root_pc: 4,
+    third: MINOR_THIRD,
+    seventh: MINOR_SEVENTH,
+    triad_p: 0.45,
+};
+const F: Degree = Degree {
+    root_pc: 5,
+    third: MAJOR_THIRD,
+    seventh: MAJOR_SEVENTH,
+    triad_p: 0.42,
+};
+const G: Degree = Degree {
+    root_pc: 7,
+    third: MAJOR_THIRD,
+    seventh: MINOR_SEVENTH,
+    triad_p: 0.88,
+};
+const A_MIN: Degree = Degree {
+    root_pc: 9,
+    third: MINOR_THIRD,
+    seventh: MINOR_SEVENTH,
+    triad_p: 0.59,
+};
+
+/// The major loops, one bar a chord, every row as likely as the next: their
+/// lengths and roots hold the shares LOFI-BIBLE R3 measures.
+const MAJOR_LOOPS: [&[Degree]; 16] = [
+    &[C, F],
+    &[C, A_MIN],
+    &[C, C, F, F],
+    &[F, G, C, A_MIN],
+    &[C, A_MIN, F, G],
+    &[C, G, A_MIN, F],
+    &[C, D_MIN, F, C],
+    &[D_MIN, F, C, C],
+    &[C, E_MIN, F, C],
+    &[F, C, A_MIN, C],
+    &[F, E_MIN, D_MIN, C],
+    &[C, F, C, F, A_MIN, F, G, G],
+    &[C, D_MIN, F, C, C, E_MIN, F, G],
+    &[F, C, F, C, D_MIN, F, G, G],
+    &[C, C, F, F, D_MIN, D_MIN, G, G],
+    &[C, F, D_MIN, F, C, F, E_MIN, F],
 ];
 
-/// The night grammar — minor-leaning, root-position, the sleepy register.
-const NIGHT_PROGRESSIONS: [Progression; 8] = [
-    // Am7 F Cmaj7 Em7 — the frozen night take's loop, its F a triad
-    Progression {
-        chords: [
-            chord([57, 60, 64, 67], 9),
-            chord([53, 57, 60, 65], 5),
-            chord([48, 52, 55, 59], 0),
-            chord([52, 55, 59, 62], 4),
-        ],
-        scale_pcs: C_MAJOR,
-        chromatic: false,
-    },
-    // minor descent: Am7 G7 Fmaj7 Em7
-    Progression {
-        chords: [
-            chord([57, 60, 64, 67], 9),
-            chord([55, 59, 62, 65], 7),
-            chord([53, 57, 60, 64], 5),
-            chord([52, 55, 59, 62], 4),
-        ],
-        scale_pcs: C_MAJOR,
-        chromatic: false,
-    },
-    // suspended drift: Dm7 Am7 B♭maj7 Fmaj7
-    Progression {
-        chords: [
-            chord([50, 53, 57, 60], 2),
-            chord([57, 60, 64, 67], 9),
-            chord([58, 62, 65, 69], 10),
-            chord([53, 57, 60, 64], 5),
-        ],
-        scale_pcs: F_MAJOR,
-        chromatic: false,
-    },
-    // deep water: Am7 Em7 Fmaj7 Cmaj7
-    Progression {
-        chords: [
-            chord([57, 60, 64, 67], 9),
-            chord([52, 55, 59, 62], 4),
-            chord([53, 57, 60, 64], 5),
-            chord([48, 52, 55, 59], 0),
-        ],
-        scale_pcs: C_MAJOR,
-        chromatic: false,
-    },
-    // late round: Gm7 C7 Fmaj7 Dm7 — a ii-V that lands and settles on the vi
-    Progression {
-        chords: [
-            chord([55, 58, 62, 65], 7),
-            chord([48, 52, 55, 58], 0),
-            chord([53, 57, 60, 64], 5),
-            chord([50, 53, 57, 60], 2),
-        ],
-        scale_pcs: F_MAJOR,
-        chromatic: false,
-    },
-    // half-lit stairs: Dm7 Em7♭5 Fmaj7 B♭maj7 — a stepwise climb that never cadences
-    Progression {
-        chords: [
-            chord([50, 53, 57, 60], 2),
-            chord([52, 55, 58, 62], 4),
-            chord([53, 57, 60, 64], 5),
-            chord([58, 62, 65, 69], 10),
-        ],
-        scale_pcs: F_MAJOR,
-        chromatic: false,
-    },
-    // minor turnaround: Dm7 B♭maj7 Gm7 A7 — harmonic-minor color, the C# pulls home
-    Progression {
-        chords: [
-            chord([50, 53, 57, 60], 2),
-            chord([58, 62, 65, 69], 10),
-            chord([55, 58, 62, 65], 7),
-            chord([57, 61, 64, 67], 9),
-        ],
-        scale_pcs: F_MAJOR,
-        chromatic: true,
-    },
-    // slow orbit: Am7 Dm7 Fmaj7 G7 — vi-ii-IV-V, drifting without landing
-    Progression {
-        chords: [
-            chord([57, 60, 64, 67], 9),
-            chord([50, 53, 57, 60], 2),
-            chord([53, 57, 60, 64], 5),
-            chord([55, 59, 62, 65], 7),
-        ],
-        scale_pcs: C_MAJOR,
-        chromatic: false,
-    },
+/// The minor loops, on the same chords with A the home they turn on, by the
+/// same rule as [`MAJOR_LOOPS`].
+const MINOR_LOOPS: [&[Degree]; 15] = [
+    &[A_MIN, F],
+    &[A_MIN, D_MIN],
+    &[A_MIN, A_MIN, F, F],
+    &[A_MIN, F, D_MIN, A_MIN],
+    &[A_MIN, D_MIN, F, A_MIN],
+    &[A_MIN, F, G, A_MIN],
+    &[A_MIN, C, F, G],
+    &[A_MIN, D_MIN, F, G],
+    &[A_MIN, E_MIN, F, D_MIN],
+    &[F, G, A_MIN, A_MIN],
+    &[F, E_MIN, D_MIN, A_MIN],
+    &[A_MIN, F, A_MIN, F, D_MIN, F, G, G],
+    &[A_MIN, D_MIN, F, A_MIN, A_MIN, D_MIN, E_MIN, E_MIN],
+    &[A_MIN, F, D_MIN, A_MIN, F, C, G, E_MIN],
+    &[A_MIN, A_MIN, F, F, D_MIN, D_MIN, E_MIN, E_MIN],
 ];
 
-/// The semitones a template may move, so a song's key is drawn.
-const TRANSPOSE: RangeInclusive<i8> = -3..=2;
+/// The lowest a chord's lowest voice sits: as low as a minor third sounds
+/// clear. Every key folds into the octave above it, so a key moves no chord's
+/// register.
+const VOICING_FLOOR: u8 = LOW_INTERVAL_LIMITS[MINOR_THIRD as usize];
 
-/// Where the turnaround dominant's root sits: as low as its major 3rd sounds
-/// clear.
-const DOMINANT_ROOTS_FROM: u8 = LOW_INTERVAL_LIMITS[MAJOR_THIRD as usize];
+/// The note a loop's first chord centres on, the pad's middle.
+const VOICING_HOME: u8 = 57;
+
+impl Degree {
+    /// This chord in `key`, a triad or with its 7th, in the voicing that
+    /// moves least from `last` (LOFI-BIBLE R8).
+    fn voiced(self, key: u8, triad: bool, last: [u8; 4]) -> Chord {
+        let root_pc = (self.root_pc + key) % OCTAVE;
+        let tones = [0, self.third, FIFTH, self.seventh].map(|i| (root_pc + i) % OCTAVE);
+        let tones = if triad { &tones[..3] } else { &tones[..] };
+        let motion = |notes: &[u8; 4]| -> u8 {
+            let moves = notes.iter().zip(&last).map(|(a, b)| a.abs_diff(*b));
+            moves.sum()
+        };
+        let notes = (0..tones.len())
+            .map(|lowest| closed(tones, lowest))
+            .filter(|notes| clear(notes) && !rubs(notes))
+            .min_by_key(motion)
+            .expect("a root-position chord sits clear of its floor");
+        Chord { notes, root_pc }
+    }
+}
+
+/// `tones` stacked closed from tone `lowest` up, the lowest in the octave over
+/// [`VOICING_FLOOR`]: a triad's fourth voice doubles its lowest, so a chord
+/// keeps the voices the pad's level stands on.
+fn closed(tones: &[u8], lowest: usize) -> [u8; 4] {
+    let mut floor = VOICING_FLOOR;
+    std::array::from_fn(|voice| {
+        let note = in_octave_from(floor, tones[(lowest + voice) % tones.len()]);
+        floor = note + 1;
+        note
+    })
+}
 
 fn pick(rng: &mut NoiseStream, n: usize) -> usize {
     ((rng.unit() * n as f32) as usize).min(n.saturating_sub(1))
@@ -814,74 +681,63 @@ fn in_octave_from(lo: u8, pc: u8) -> u8 {
     lo + (pc + OCTAVE - lo % OCTAVE) % OCTAVE
 }
 
-/// A song's harmony: its template in the song's key, and the timeline every
-/// lane reads.
+/// A song's harmony: its key, and the bars every lane reads.
 #[derive(Debug)]
 struct Harmony {
-    template: Progression,
-    /// The 8-bar timeline: the template played twice, its last bar turned
-    /// around to the dominant where the style says so.
+    /// The key's pitch classes, in order.
+    scale_pcs: [u8; 7],
+    /// The drawn loop's chords, cycled.
     bars: [Chord; GEN_LOOP_BARS],
 }
 
-/// The harmony stage: a template from the mood's grammar, in a key drawn
-/// from those its voicings sound clear in.
+/// A loop of the grammar `style` weighs.
+fn drawn_loop(rng: &mut NoiseStream, style: &HarmonyStyle) -> &'static [Degree] {
+    let loops: &[&'static [Degree]] = if chance(rng, style.major_share) {
+        &MAJOR_LOOPS
+    } else {
+        &MINOR_LOOPS
+    };
+    loops[pick(rng, loops.len())]
+}
+
+/// The harmony stage: a loop in a drawn key, each chord drawing its 7th and
+/// voiced from the chord before.
 fn harmony(rng: &mut NoiseStream, style: &HarmonyStyle) -> Harmony {
-    let progs = style.progressions;
-    let prog = &progs[pick(rng, progs.len())];
-    let keys: Vec<i8> = TRANSPOSE.filter(|&t| prog.transposed(t).clear()).collect();
-    let template = prog.transposed(keys[pick(rng, keys.len())]);
-    let bars = timeline(&template, style.turnaround);
-    Harmony { template, bars }
+    let degrees = drawn_loop(rng, style);
+    let key = pick(rng, OCTAVE.into()) as u8;
+    // one draw a root, so a chord keeps its color through the song and a
+    // held one doesn't change under the hand
+    let colors: [f32; OCTAVE as usize] = std::array::from_fn(|_| rng.unit());
+    let mut last = [VOICING_HOME; 4];
+    let chords: Vec<Chord> = (degrees.iter())
+        .map(|degree| {
+            let triad = colors[usize::from(degree.root_pc)] < degree.triad_p;
+            let chord = degree.voiced(key, triad, last);
+            last = chord.notes;
+            chord
+        })
+        .collect();
+    let mut scale_pcs = C_MAJOR.map(|pc| (pc + key) % OCTAVE);
+    scale_pcs.sort_unstable();
+    let bars = std::array::from_fn(|bar| chords[bar % chords.len()]);
+    Harmony { scale_pcs, bars }
 }
 
-/// The 8-bar timeline: `template` twice, its last bar swapped for the
-/// dominant of the returning first root when it turns around.
-fn timeline(template: &Progression, turnaround: bool) -> [Chord; GEN_LOOP_BARS] {
-    let chords = &template.chords;
-    let mut bars = std::array::from_fn(|bar| chords[bar % chords.len()]);
-    if turnaround {
-        bars[GEN_LOOP_BARS - 1] = dominant7_of(chords[0].root_pc);
-    }
-    bars
-}
-
-/// The V7 of `target_root_pc`: a major triad and its minor seventh.
-fn dominant7_of(target_root_pc: u8) -> Chord {
-    let root_pc = (target_root_pc + FIFTH) % OCTAVE;
-    let r = in_octave_from(DOMINANT_ROOTS_FROM, root_pc);
-    chord([r, r + MAJOR_THIRD, r + FIFTH, r + MINOR_SEVENTH], root_pc)
-}
-
-/// The rootless comp shell: the chord's 3rd + 7th, found degree-aware from the
-/// harmonic root. Every day template chord is a 7th chord; the fallbacks only
-/// guard a future non-7th row.
+/// The rootless comp shell: the chord's 3rd and, degree-aware from the
+/// harmonic root, its 7th where it sounds one and its 5th where it doesn't.
 fn shell_of(chord: &Chord) -> (u8, u8) {
-    let find = |offsets: [u8; 2]| {
+    let find = |offsets: &[u8]| {
         (chord.notes.iter().copied()).find(|&n| {
             offsets
                 .iter()
                 .any(|&o| n % OCTAVE == (chord.root_pc + o) % OCTAVE)
         })
     };
-    let third = find([MINOR_THIRD, MAJOR_THIRD]).unwrap_or(chord.notes[1]);
-    let seventh = find([MINOR_SEVENTH, MAJOR_SEVENTH])
-        .or_else(|| (chord.notes.iter().copied()).find(|&n| n % OCTAVE != third % OCTAVE))
-        .unwrap_or(third.saturating_add(FIFTH));
-    (third, seventh)
-}
-
-/// The pitch with class `pc` nearest to `around`.
-fn nearest_with_pc(around: u8, pc: u8) -> u8 {
-    let a = i16::from(around);
-    for d in 0..=i16::from(OCTAVE / 2) {
-        for cand in [a - d, a + d] {
-            if cand > 0 && cand.rem_euclid(OCTAVE.into()) as u8 == pc {
-                return cand as u8;
-            }
-        }
-    }
-    around
+    let third = find(&[MINOR_THIRD, MAJOR_THIRD]).expect("every chord sounds its third");
+    let upper = find(&[MINOR_SEVENTH, MAJOR_SEVENTH])
+        .or_else(|| find(&[FIFTH]))
+        .expect("every chord sounds its fifth");
+    (third, upper)
 }
 
 fn chord_tones_in(chord: &[u8; 4], lo: u8, hi: u8) -> Vec<u8> {
@@ -1124,7 +980,7 @@ fn melody(
     style: &LeadStyle,
 ) -> Vec<LeadNote> {
     let (lo, hi) = (style.lo, style.hi);
-    let scale = &harmony.template.scale_pcs;
+    let scale = &harmony.scale_pcs;
     let start_pool = chord_tones_in(
         &harmony.bars[0].notes,
         lo.max(hi.saturating_sub(OCTAVE)),
@@ -1633,7 +1489,7 @@ const ROLL: Spread = Spread {
     span: 0.008,
 };
 const ROLLED_SOFTER: f32 = 0.9;
-/// The chance a shell's 7th lifts to the 9th.
+/// The chance a shell's upper voice lifts to the 9th.
 const NINTH_P: f32 = 0.2;
 
 /// The keys stage: the comp over each bar's chord.
@@ -1662,11 +1518,11 @@ fn keys(
             at += KEYS_LAG.draw(rng);
             match style.comp {
                 Comp::Shell => {
-                    let (third, seventh) = shell_of(chord);
+                    let (third, upper) = shell_of(chord);
                     let upper = if chance(rng, NINTH_P) {
-                        nearest_with_pc(seventh, (chord.root_pc + NINTH) % OCTAVE)
+                        in_octave_from(upper, (chord.root_pc + NINTH) % OCTAVE)
                     } else {
-                        seventh
+                        upper
                     };
                     let vel = style.velocity.draw(rng);
                     out.push(Note {
