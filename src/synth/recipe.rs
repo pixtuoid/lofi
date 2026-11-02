@@ -103,11 +103,11 @@ pub(crate) const KEYS: ByMood<NoteRecipe> = ByMood {
 pub(crate) const BASS: ByMood<NoteRecipe> = ByMood {
     night: NoteRecipe {
         cutoff_hz: 700.0,
-        peak: 0.8,
+        peak: 0.815,
     },
     day: NoteRecipe {
         cutoff_hz: 900.0,
-        peak: 0.8,
+        peak: 0.704,
     },
 };
 pub(crate) const DRUMS: ByMood<HitRecipe> = ByMood {
