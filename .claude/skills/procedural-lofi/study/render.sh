@@ -19,10 +19,10 @@ mkdir -p "$dir"
 # (https://mywiki.wooledge.org/BashFAQ/045)
 until mkdir "$dir/lock" 2>/dev/null; do
     if [ ! -d "$dir/lock" ]; then
-        # no run holds it, so not a wait, unless one let go just now: one more
-        # try takes it or says, in mkdir's own words, why not
+        # no run held it: one more try takes it, and if that fails with still no
+        # lock there, no run is in the way, and mkdir's own error says what is
         mkdir "$dir/lock" && break
-        exit 1
+        [ -d "$dir/lock" ] || exit 1
     fi
     [ -n "${waiting:-}" ] || echo "render.sh: waiting on $dir/lock" >&2
     waiting=1
