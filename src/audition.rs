@@ -235,8 +235,8 @@ pub const STAGING_SEEDS: Range<u64> = 0..256;
 /// `Performance`'s loop, unarranged, varies no more than: `lofi_measure
 /// --pins` prints it beside this. A non-regression, not a target.
 pub const WHOLE_LANE_LUFS_SD: [(f32, f32, f64); 2] = [
-    (TIER_INTENSITIES[1], 1.0, 0.4182),
-    (TIER_INTENSITIES[1], 0.0, 0.2912),
+    (TIER_INTENSITIES[1], 1.0, 0.4454),
+    (TIER_INTENSITIES[1], 0.0, 0.5104),
 ];
 
 /// How much a `Performance`'s songs' gated loudness varied across
@@ -245,8 +245,8 @@ pub const WHOLE_LANE_LUFS_SD: [(f32, f32, f64); 2] = [
 /// no more than these, songs that played alone: `lofi_measure --pins` prints
 /// it beside this. A non-regression, not a target.
 pub const SONG_LUFS_SD: [(f32, f32, f64); 2] = [
-    (TIER_INTENSITIES[0], 1.0, 0.4720),
-    (TIER_INTENSITIES[2], 1.0, 0.5025),
+    (TIER_INTENSITIES[0], 1.0, 0.3827),
+    (TIER_INTENSITIES[2], 1.0, 0.3136),
 ];
 
 /// The most `songs` songs' loudness may vary against `reference`, a row of

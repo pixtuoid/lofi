@@ -8,9 +8,6 @@ use crate::score;
 
 const SWEEP: u64 = 64;
 
-/// The furthest a voice moves between chords and still steps, in semitones.
-const LARGEST_VOICE_STEP: u8 = 5;
-
 const MOODS: [Mood; 2] = [Mood::Day, Mood::Night];
 
 /// Every loop a song can draw.
@@ -23,6 +20,13 @@ fn songs() -> impl Iterator<Item = (Mood, u64)> {
     MOODS
         .into_iter()
         .flat_map(|mood| (0..SWEEP).map(move |seed| (mood, seed)))
+}
+
+/// Whether two voices sound muddy together: the lower one under its
+/// interval's floor in [`LOW_INTERVAL_LIMITS`].
+fn muddy(a: u8, b: u8) -> bool {
+    let (lo, hi) = (a.min(b), a.max(b));
+    (LOW_INTERVAL_LIMITS.get(usize::from(hi - lo))).is_some_and(|&floor| lo < floor)
 }
 
 /// The pitch classes of `chord`'s notes.
@@ -38,22 +42,29 @@ fn a_whole_number_of_every_loop_fills_the_song_loop() {
     }
 }
 
-/// A song's bars are the loop it drew, cycled: one seam wrong and a 2-bar
-/// loop would change on the wrong bar.
+/// A song's bars are the loop it drew, cycled, in its key: one seam wrong and
+/// a 2-bar loop would change on the wrong bar.
 #[test]
 fn a_songs_bars_cycle_the_loop_it_drew() {
     for (mood, seed) in songs() {
         let style = &mood.style().harmony;
         let degrees = drawn_loop(&mut Stage::Harmony.stream(seed), style);
         let bars = composed(mood, seed).1.bars;
+        let above = |root_pc: u8, first: u8| (root_pc + OCTAVE - first) % OCTAVE;
         for (bar, chord) in bars.iter().enumerate() {
-            assert_eq!(*chord, bars[bar % degrees.len()], "{mood:?} seed {seed}");
+            let at = bar % degrees.len();
+            assert_eq!(*chord, bars[at], "{mood:?} seed {seed}");
+            assert_eq!(
+                above(chord.root_pc, bars[0].root_pc),
+                above(degrees[at].root_pc, degrees[0].root_pc),
+                "{mood:?} seed {seed} bar {bar}"
+            );
         }
     }
 }
 
-/// Lofi Girl's tracks stray from their key on a bar in forty, so a song
-/// doesn't: every note in its key, its root and third sounding.
+/// A song keeps to its key as the tracks do (LOFI-BIBLE R3): every note in
+/// it, its root, third and 7th sounding (R1).
 #[test]
 fn every_bar_keeps_to_its_songs_key() {
     for (mood, seed) in songs() {
@@ -66,13 +77,15 @@ fn every_bar_keeps_to_its_songs_key() {
                 chord.notes,
                 harmony.scale_pcs
             );
-            let third = [MINOR_THIRD, MAJOR_THIRD].map(|i| (chord.root_pc + i) % OCTAVE);
-            assert!(
-                sounding.contains(&chord.root_pc) && third.iter().any(|t| sounding.contains(t)),
-                "{mood:?} seed {seed}: {:?} over root {}",
-                chord.notes,
-                chord.root_pc
-            );
+            for offsets in [[MINOR_THIRD, MAJOR_THIRD], [MINOR_SEVENTH, MAJOR_SEVENTH]] {
+                let tone = offsets.map(|i| (chord.root_pc + i) % OCTAVE);
+                assert!(
+                    sounding.contains(&chord.root_pc) && tone.iter().any(|t| sounding.contains(t)),
+                    "{mood:?} seed {seed}: {:?} over root {}",
+                    chord.notes,
+                    chord.root_pc
+                );
+            }
         }
     }
 }
@@ -104,46 +117,29 @@ fn an_interval_under_its_floor_sounds_muddy() {
 fn every_chord_a_song_voices_sounds_clear() {
     for (mood, seed) in songs() {
         for notes in compose(mood, seed).bar_chords {
-            assert!(clear(&notes), "{mood:?} seed {seed}: {notes:?}");
-        }
-    }
-}
-
-/// A chord's voices sit in one register whatever its key and never rub a
-/// semitone, and nearly every chord steps from the last (LOFI-BIBLE R8): only
-/// a major 7th, which has one voicing that doesn't rub, may leap.
-#[test]
-fn a_songs_voices_step_from_chord_to_chord_in_one_register() {
-    let (mut changes, mut steps) = (0, 0);
-    for (mood, seed) in songs() {
-        let bars = composed(mood, seed).1.bars;
-        for (bar, chord) in bars.iter().enumerate() {
-            let notes = chord.notes;
-            assert!(notes.is_sorted(), "{notes:?}");
-            assert!(!rubs(&notes), "{mood:?} seed {seed}: {notes:?}");
             assert!(
-                (VOICING_FLOOR..VOICING_FLOOR + OCTAVE).contains(&notes[0]),
+                (notes.iter()).all(|&a| notes.iter().all(|&b| !muddy(a, b))),
                 "{mood:?} seed {seed}: {notes:?}"
             );
-            let next = bars[(bar + 1) % GEN_LOOP_BARS].notes;
-            let leap = notes.iter().zip(&next).map(|(a, b)| a.abs_diff(*b)).max();
-            changes += 1;
-            steps += usize::from(leap <= Some(LARGEST_VOICE_STEP));
         }
     }
-    let share = steps as f32 / changes as f32;
-    assert!(share > 0.95, "{share}");
 }
 
-/// The share of a sweep's chords that sound no 7th sits at the tracks'.
+/// A key moves no chord's register: its root stays in one octave, lowest.
 #[test]
-fn most_chords_sound_a_plain_triad() {
-    let bars: Vec<Chord> = songs().flat_map(|(m, s)| composed(m, s).1.bars).collect();
-    let triads = (bars.iter())
-        .filter(|chord| BTreeSet::from(pcs(&chord.notes)).len() == 3)
-        .count();
-    let share = triads as f32 / bars.len() as f32;
-    assert!((0.5..0.7).contains(&share), "{share}");
+fn every_chord_sits_in_root_position_in_one_octave() {
+    for (mood, seed) in songs() {
+        for chord in composed(mood, seed).1.bars {
+            let [root, ..] = chord.notes;
+            assert_eq!(root % OCTAVE, chord.root_pc, "{mood:?} seed {seed}");
+            assert!(chord.notes.is_sorted(), "{mood:?} seed {seed}");
+            assert!(
+                (VOICING_FLOOR..VOICING_FLOOR + OCTAVE).contains(&root),
+                "{mood:?} seed {seed}: {:?}",
+                chord.notes
+            );
+        }
+    }
 }
 
 /// A mood's loops are drawn from both grammars, at its share.
@@ -162,22 +158,6 @@ fn a_mood_draws_its_major_share_of_major_loops() {
             "{mood:?}: {share}"
         );
     }
-}
-
-/// The comp's dyad is a song's chord, with a 7th where it sounds one and a
-/// 5th where it doesn't.
-#[test]
-fn a_shell_is_a_third_over_the_chords_seventh_or_fifth() {
-    let c = Chord {
-        notes: [48, 52, 55, 60],
-        root_pc: 0,
-    };
-    assert_eq!(shell_of(&c), (52, 55));
-    let cmaj7 = Chord {
-        notes: [48, 52, 55, 59],
-        root_pc: 0,
-    };
-    assert_eq!(shell_of(&cmaj7), (52, 59));
 }
 
 /// The lead's register is the span its mood's frozen take sings, and its
@@ -716,4 +696,4 @@ fn every_seed_composes_the_score_it_did() {
     assert_eq!(h, EVERY_SEED_GOLDEN, "{h:#018x}");
 }
 
-const EVERY_SEED_GOLDEN: u64 = 0x8b61_dc2a_3f3c_9254;
+const EVERY_SEED_GOLDEN: u64 = 0xfa9d_d651_5bce_6c66;

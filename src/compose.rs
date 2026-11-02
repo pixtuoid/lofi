@@ -280,9 +280,9 @@ enum Density {
 
 /// What the keys strike on an eighth.
 enum Comp {
-    /// A rolled rootless shell, the chord's 3rd and [`shell_of`]'s upper
-    /// voice, sometimes lifted to the 9th: comping means chords, and the pad
-    /// and bass own the low end, so two voices keep 250-500 Hz controlled.
+    /// A rolled rootless shell, the chord's 3rd and 7th, the 7th sometimes
+    /// lifted to the 9th: comping means chords, and the pad and bass own the
+    /// low end, so two voices keep 250-500 Hz controlled.
     Shell,
     /// One chord tone: the sleepy register must not thicken.
     Single,
@@ -460,13 +460,6 @@ const LOW_INTERVAL_LIMITS: [u8; 17] = [
     0, 52, 51, 48, 46, 46, 46, 34, 41, 41, 41, 41, 0, 40, 39, 36, 34,
 ];
 
-/// Whether two voices sound muddy together: the lower one under its
-/// interval's floor in [`LOW_INTERVAL_LIMITS`].
-fn muddy(a: u8, b: u8) -> bool {
-    let (lo, hi) = (a.min(b), a.max(b));
-    (LOW_INTERVAL_LIMITS.get(usize::from(hi - lo))).is_some_and(|&floor| lo < floor)
-}
-
 /// The stages a song is composed in. Each draws from its own stream, keyed
 /// by its fixed id, so a change to one stage's draws moves no other stage's,
 /// and a stage can join, leave or move without re-rolling the rest.
@@ -491,75 +484,55 @@ impl Stage {
     }
 }
 
-/// One chord: its voicing, and its root's pitch class, which an inversion's
-/// lowest note is not.
+/// One chord: its notes and its root's pitch class, which the bass and the
+/// comp read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Chord {
     notes: [u8; 4],
     root_pc: u8,
 }
 
-/// Whether no two of a chord's voices sound muddy together.
-fn clear(notes: &[u8; 4]) -> bool {
-    (notes.iter()).all(|&a| notes.iter().all(|&b| !muddy(a, b)))
-}
-
-/// Whether two neighbouring voices sit a semitone apart: clear above the low
-/// interval limits, but a major 7th under its root grinds in a closed hand.
-fn rubs(notes: &[u8; 4]) -> bool {
-    notes.windows(2).any(|pair| pair[1] - pair[0] == 1)
-}
-
 /// C major pitch classes, the one scale [`MAJOR_LOOPS`] and [`MINOR_LOOPS`]
 /// are written in.
 const C_MAJOR: [u8; 7] = [0, 2, 4, 5, 7, 9, 11];
 
-/// One chord of the grammar in C: the loops name no key or voicing, so a song
-/// draws those, and whether the 7th sounds.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// One chord of the grammar in C: the loops name no key, so a song draws one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Degree {
     root_pc: u8,
     third: u8,
     seventh: u8,
-    /// The chance it sounds no 7th (LOFI-BIBLE R2).
-    triad_p: f32,
 }
 
 const C: Degree = Degree {
     root_pc: 0,
     third: MAJOR_THIRD,
     seventh: MAJOR_SEVENTH,
-    triad_p: 0.78,
 };
 const D_MIN: Degree = Degree {
     root_pc: 2,
     third: MINOR_THIRD,
     seventh: MINOR_SEVENTH,
-    triad_p: 0.37,
 };
 const E_MIN: Degree = Degree {
     root_pc: 4,
     third: MINOR_THIRD,
     seventh: MINOR_SEVENTH,
-    triad_p: 0.45,
 };
 const F: Degree = Degree {
     root_pc: 5,
     third: MAJOR_THIRD,
     seventh: MAJOR_SEVENTH,
-    triad_p: 0.42,
 };
 const G: Degree = Degree {
     root_pc: 7,
     third: MAJOR_THIRD,
     seventh: MINOR_SEVENTH,
-    triad_p: 0.88,
 };
 const A_MIN: Degree = Degree {
     root_pc: 9,
     third: MINOR_THIRD,
     seventh: MINOR_SEVENTH,
-    triad_p: 0.59,
 };
 
 /// The major loops, one bar a chord, every row as likely as the next: their
@@ -603,44 +576,21 @@ const MINOR_LOOPS: [&[Degree]; 15] = [
     &[A_MIN, A_MIN, F, F, D_MIN, D_MIN, E_MIN, E_MIN],
 ];
 
-/// The lowest a chord's lowest voice sits: as low as a minor third sounds
-/// clear. Every key folds into the octave above it, so a key moves no chord's
+/// The lowest a chord's root sits: as low as a minor third sounds clear.
+/// Every key folds into the octave above it, so a key moves no chord's
 /// register.
 const VOICING_FLOOR: u8 = LOW_INTERVAL_LIMITS[MINOR_THIRD as usize];
 
-/// The note a loop's first chord centres on, the pad's middle.
-const VOICING_HOME: u8 = 57;
-
 impl Degree {
-    /// This chord in `key`, a triad or with its 7th, in the voicing that
-    /// moves least from `last` (LOFI-BIBLE R8).
-    fn voiced(self, key: u8, triad: bool, last: [u8; 4]) -> Chord {
+    /// This chord in `key`, in root position with its 7th (LOFI-BIBLE R1, R8).
+    fn voiced(self, key: u8) -> Chord {
         let root_pc = (self.root_pc + key) % OCTAVE;
-        let tones = [0, self.third, FIFTH, self.seventh].map(|i| (root_pc + i) % OCTAVE);
-        let tones = if triad { &tones[..3] } else { &tones[..] };
-        let motion = |notes: &[u8; 4]| -> u8 {
-            let moves = notes.iter().zip(&last).map(|(a, b)| a.abs_diff(*b));
-            moves.sum()
-        };
-        let notes = (0..tones.len())
-            .map(|lowest| closed(tones, lowest))
-            .filter(|notes| clear(notes) && !rubs(notes))
-            .min_by_key(motion)
-            .expect("a root-position chord sits clear of its floor");
-        Chord { notes, root_pc }
+        let root = in_octave_from(VOICING_FLOOR, root_pc);
+        Chord {
+            notes: [root, root + self.third, root + FIFTH, root + self.seventh],
+            root_pc,
+        }
     }
-}
-
-/// `tones` stacked closed from tone `lowest` up, the lowest in the octave over
-/// [`VOICING_FLOOR`]: a triad's fourth voice doubles its lowest, so a chord
-/// keeps the voices the pad's level stands on.
-fn closed(tones: &[u8], lowest: usize) -> [u8; 4] {
-    let mut floor = VOICING_FLOOR;
-    std::array::from_fn(|voice| {
-        let note = in_octave_from(floor, tones[(lowest + voice) % tones.len()]);
-        floor = note + 1;
-        note
-    })
 }
 
 fn pick(rng: &mut NoiseStream, n: usize) -> usize {
@@ -700,44 +650,32 @@ fn drawn_loop(rng: &mut NoiseStream, style: &HarmonyStyle) -> &'static [Degree] 
     loops[pick(rng, loops.len())]
 }
 
-/// The harmony stage: a loop in a drawn key, each chord drawing its 7th and
-/// voiced from the chord before.
+/// The harmony stage: a loop in a drawn key.
 fn harmony(rng: &mut NoiseStream, style: &HarmonyStyle) -> Harmony {
     let degrees = drawn_loop(rng, style);
     let key = pick(rng, OCTAVE.into()) as u8;
-    // one draw a root, so a chord keeps its color through the song and a
-    // held one doesn't change under the hand
-    let colors: [f32; OCTAVE as usize] = std::array::from_fn(|_| rng.unit());
-    let mut last = [VOICING_HOME; 4];
-    let chords: Vec<Chord> = (degrees.iter())
-        .map(|degree| {
-            let triad = colors[usize::from(degree.root_pc)] < degree.triad_p;
-            let chord = degree.voiced(key, triad, last);
-            last = chord.notes;
-            chord
-        })
-        .collect();
     let mut scale_pcs = C_MAJOR.map(|pc| (pc + key) % OCTAVE);
     scale_pcs.sort_unstable();
-    let bars = std::array::from_fn(|bar| chords[bar % chords.len()]);
+    let bars = std::array::from_fn(|bar| degrees[bar % degrees.len()].voiced(key));
     Harmony { scale_pcs, bars }
 }
 
-/// The rootless comp shell: the chord's 3rd and, degree-aware from the
-/// harmonic root, its 7th where it sounds one and its 5th where it doesn't.
+/// The rootless comp shell: the chord's 3rd and 7th, found degree-aware from
+/// the harmonic root.
 fn shell_of(chord: &Chord) -> (u8, u8) {
-    let find = |offsets: &[u8]| {
-        (chord.notes.iter().copied()).find(|&n| {
-            offsets
-                .iter()
-                .any(|&o| n % OCTAVE == (chord.root_pc + o) % OCTAVE)
-        })
+    let find = |offsets: [u8; 2]| {
+        (chord.notes.iter().copied())
+            .find(|&n| {
+                offsets
+                    .iter()
+                    .any(|&o| n % OCTAVE == (chord.root_pc + o) % OCTAVE)
+            })
+            .expect("every chord sounds its third and seventh")
     };
-    let third = find(&[MINOR_THIRD, MAJOR_THIRD]).expect("every chord sounds its third");
-    let upper = find(&[MINOR_SEVENTH, MAJOR_SEVENTH])
-        .or_else(|| find(&[FIFTH]))
-        .expect("every chord sounds its fifth");
-    (third, upper)
+    (
+        find([MINOR_THIRD, MAJOR_THIRD]),
+        find([MINOR_SEVENTH, MAJOR_SEVENTH]),
+    )
 }
 
 fn chord_tones_in(chord: &[u8; 4], lo: u8, hi: u8) -> Vec<u8> {
@@ -1489,7 +1427,7 @@ const ROLL: Spread = Spread {
     span: 0.008,
 };
 const ROLLED_SOFTER: f32 = 0.9;
-/// The chance a shell's upper voice lifts to the 9th.
+/// The chance a shell's 7th lifts to the 9th.
 const NINTH_P: f32 = 0.2;
 
 /// The keys stage: the comp over each bar's chord.
@@ -1518,11 +1456,11 @@ fn keys(
             at += KEYS_LAG.draw(rng);
             match style.comp {
                 Comp::Shell => {
-                    let (third, upper) = shell_of(chord);
+                    let (third, seventh) = shell_of(chord);
                     let upper = if chance(rng, NINTH_P) {
-                        in_octave_from(upper, (chord.root_pc + NINTH) % OCTAVE)
+                        in_octave_from(seventh, (chord.root_pc + NINTH) % OCTAVE)
                     } else {
-                        upper
+                        seventh
                     };
                     let vel = style.velocity.draw(rng);
                     out.push(Note {
