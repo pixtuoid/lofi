@@ -15,6 +15,8 @@ on:
       # sin and exp round by toolchain, so a bump can move the render
       - rust-toolchain.toml
       - .github/workflows/judge.yml
+      # the render it runs
+      - .claude/skills/procedural-lofi/study/render.sh
 
 permissions: {}
 
@@ -47,21 +49,19 @@ jobs:
         env:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: echo "sha=$(git merge-base "origin/$BASE_REF" HEAD)" >> "$GITHUB_OUTPUT"
+      # through the render study/ab.sh and score.sh take, so a local verdict
+      # renders what this one does
       - name: Render the judge batch at the merge-base and at the head
         env:
           MERGE_BASE: ${{ steps.merge-base.outputs.sha }}
         run: |
           set -euo pipefail
-          git worktree add --detach "$RUNNER_TEMP/base-tree" "$MERGE_BASE"
-          for side in base cand; do
-            if [ "$side" = base ]; then tree="$RUNNER_TEMP/base-tree"; else tree="$GITHUB_WORKSPACE"; fi
-            out="$RUNNER_TEMP/batch/$side"
-            # a dirty tree would render a take no commit names
-            test -z "$(git -C "$tree" status --porcelain)"
-            (cd "$tree" && cargo run --locked --release --example lofi_audition -- --batch judge --out "$out" > /dev/null)
-            test -z "$(git -C "$tree" status --porcelain)"
-            git -C "$tree" rev-parse HEAD > "$out/COMMIT"
-          done
+          render=.claude/skills/procedural-lofi/study/render.sh
+          base=$("$render" . "$MERGE_BASE" "$RUNNER_TEMP/renders")
+          cand=$("$render" . HEAD "$RUNNER_TEMP/renders")
+          mkdir -p "$RUNNER_TEMP/batch/base" "$RUNNER_TEMP/batch/cand"
+          ln "$base"/* "$RUNNER_TEMP/batch/base/"
+          ln "$cand"/* "$RUNNER_TEMP/batch/cand/"
       # the judge's own validator pairs the batch: a take on one side only, as
       # a grown matrix or a rename leaves, is listed new or gone and left
       # unscored, never read as "no sound change"; a byte-identical pair can
