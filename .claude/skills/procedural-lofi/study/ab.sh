@@ -46,5 +46,13 @@ status=0
 echo "== ${cand_sha:0:12} exit $status"
 grep -E '^(group|day |night |rain|twilight|all )|verdict:|invalid|takes: base' "$work/judge.log" |
     grep -vE '^(day|night|rain|twilight)_' | sed -E 's/^FAD calibration.*takes: /  /' | cut -c1-120 || true
-# a REGRESSION is this experiment's result; a judge that never scored isn't one
+# `modal run` exited 1 when the workspace's spend limit refused it (observed),
+# as the judge does for a REGRESSION, so a run with no verdict line never scored
+if ! grep -q '^verdict: ' "$work/judge.log"; then
+    echo "ab.sh: no verdict; see $work/judge.log" >&2
+    tail -3 "$work/judge.log" >&2
+    exit $((status == 0 ? 1 : status))
+fi
+# a REGRESSION is this experiment's result; `judge_local.py`'s NOT_A_SCORE, an
+# infra failure among them, is not
 exit $((status == 1 ? 0 : status))
