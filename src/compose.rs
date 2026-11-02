@@ -252,7 +252,7 @@ struct HarmonyStyle {
 
 struct LeadStyle {
     /// The lowest and highest notes the lead sings (MIDI): the span of the
-    /// mood's frozen take's lead.
+    /// mood's frozen take's lead, which LOFI-BIBLE R7's judging held.
     lo: u8,
     hi: u8,
     /// The chance a statement bar rests, where the mood rests at all.

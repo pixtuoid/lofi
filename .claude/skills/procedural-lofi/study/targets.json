@@ -104,7 +104,7 @@
    0.351,
    0.396
   ],
-  "lead onsets /bar": [
+  "top-line onsets /bar": [
    6.132,
    7.39,
    8.915
@@ -114,7 +114,7 @@
    0.536,
    0.618
   ],
-  "lead median MIDI": [
+  "top-line median MIDI": [
    60.0,
    62.0,
    64.0
