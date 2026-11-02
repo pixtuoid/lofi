@@ -135,7 +135,7 @@ pub(super) enum DrumKind {
 /// One note a lane plays: when it sounds, in seconds into the loop, its
 /// pitch (MIDI), its velocity and how long it's held, in seconds. A note's
 /// end is the score's, as MIDI's Note Off is a message of its own
-/// (https://midi.org/summary-of-midi-1-0-messages), so a line can articulate.
+/// (<https://midi.org/summary-of-midi-1-0-messages>), so a line can articulate.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct Note {
     pub(super) at: f32,
