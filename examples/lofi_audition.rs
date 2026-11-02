@@ -261,8 +261,7 @@ fn levelled(mut take: Vec<Frame>, target: f64) -> Vec<Frame> {
         gated_lufs(&[&scaled(&left), &scaled(&right)], SAMPLE_RATE)
     };
     // the absolute gate counts a block by its level, so a gain moves which
-    // blocks count and one pass can land off target: night drums' solo, 0.12
-    // LU loud
+    // blocks count and one pass can land off target
     let mut to_target = 10f64.powf((target - gated_lufs(&[&left, &right], SAMPLE_RATE)) / 20.0);
     for _ in 1..LEVEL_PASSES {
         let lufs = lufs_at(to_target);
