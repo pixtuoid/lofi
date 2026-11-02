@@ -257,9 +257,9 @@ struct LeadStyle {
     hi: u8,
     /// The chance a statement bar rests, where the mood rests at all.
     rest_p: Option<f32>,
-    /// The most notes a statement bar draws: the most the mood's frozen
-    /// takes sing in a bar.
-    max_per_bar: usize,
+    /// The chance each slot of [`LEAD_GRID`] sounds in a bar that doesn't
+    /// rest (LOFI-BIBLE R10).
+    note_p: f32,
     velocity: Spread,
 }
 
@@ -317,7 +317,7 @@ const DAY: Style = Style {
         lo: 65,
         hi: 81,
         rest_p: None,
-        max_per_bar: 3,
+        note_p: 0.45,
         velocity: Spread {
             base: 0.34,
             span: 0.10,
@@ -356,8 +356,8 @@ const NIGHT: Style = Style {
     lead: LeadStyle {
         lo: 60,
         hi: 79,
-        rest_p: Some(0.5),
-        max_per_bar: 1,
+        rest_p: Some(0.25),
+        note_p: 0.35,
         velocity: Spread {
             base: 0.25,
             span: 0.12,
@@ -739,19 +739,14 @@ fn scale_step(note: u8, k: i8, scale: &[u8; 7], lo: u8, hi: u8) -> u8 {
 }
 
 /// The friendly beat grid a lead note may land on (0.0 is the kick's).
-const LEAD_GRID: [f32; 6] = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0];
-
-/// The chances a statement bar draws a second note, then a third, where its
-/// mood's density allows.
-const SECOND_NOTE_P: f32 = 0.6;
-const THIRD_NOTE_P: f32 = 0.25;
+const LEAD_GRID: [f32; 7] = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5];
 
 /// The lofi push: the chance an on-beat note lands a 16th ahead.
 const PUSH_P: f32 = 0.15;
 const SIXTEENTH_BEATS: f32 = 0.25;
 
 /// Two of a bar's notes closer than this, in beats, merge into the first.
-const MIN_GAP_BEATS: f32 = 0.75;
+const MIN_GAP_BEATS: f32 = 0.5;
 
 /// The answer's variations on its statement bar: the chance a note shifts an
 /// eighth either way, and the chance one is dropped.
@@ -825,7 +820,7 @@ struct LeadNote {
 /// The lead stage: a melody over `harmony`, as played behind the grid.
 fn lead(rng: &mut NoiseStream, harmony: &Harmony, style: &LeadStyle, beat_s: f32) -> Vec<Note> {
     let statement = statement(rng, style);
-    let answer = answer(rng, &statement, style);
+    let answer = answer(rng, &statement);
     let line = melody(rng, &[statement, answer].concat(), harmony, style);
     let bar_s = beat_s * BEATS_PER_BAR;
     (line.into_iter())
@@ -842,20 +837,16 @@ fn lead(rng: &mut NoiseStream, harmony: &Harmony, style: &LeadStyle, beat_s: f32
 
 /// The statement's rhythm: each of its bars' beats.
 fn statement(rng: &mut NoiseStream, style: &LeadStyle) -> Vec<Vec<f32>> {
-    let max = style.max_per_bar;
     let mut bars: Vec<Vec<f32>> = (0..PHRASE_BARS)
         .map(|_| {
             if style.rest_p.is_some_and(|p| chance(rng, p)) {
                 return Vec::new();
             }
-            let n = 1
-                + usize::from(max > 1 && chance(rng, SECOND_NOTE_P))
-                + usize::from(max > 2 && chance(rng, THIRD_NOTE_P));
-            let mut beats: Vec<f32> = (0..n)
-                .map(|_| LEAD_GRID[pick(rng, LEAD_GRID.len())])
+            let mut beats: Vec<f32> = (LEAD_GRID.iter().copied())
+                .filter(|_| chance(rng, style.note_p))
                 .collect();
             for b in &mut beats {
-                push(rng, b, style);
+                push(rng, b);
             }
             settle(&mut beats);
             beats
@@ -872,7 +863,7 @@ fn statement(rng: &mut NoiseStream, style: &LeadStyle) -> Vec<Vec<f32>> {
 }
 
 /// The answer's rhythm: each statement bar's, varied.
-fn answer(rng: &mut NoiseStream, statement: &[Vec<f32>], style: &LeadStyle) -> Vec<Vec<f32>> {
+fn answer(rng: &mut NoiseStream, statement: &[Vec<f32>]) -> Vec<Vec<f32>> {
     let grid = LEAD_GRID[0]..=LEAD_GRID[LEAD_GRID.len() - 1];
     (statement.iter())
         .map(|bar| {
@@ -886,7 +877,7 @@ fn answer(rng: &mut NoiseStream, statement: &[Vec<f32>], style: &LeadStyle) -> V
                     };
                     *b = (*b + shift).clamp(*grid.start(), *grid.end());
                 }
-                push(rng, b, style);
+                push(rng, b);
             }
             if !beats.is_empty() && chance(rng, DROP_P) {
                 beats.remove(pick(rng, beats.len()));
@@ -897,9 +888,9 @@ fn answer(rng: &mut NoiseStream, statement: &[Vec<f32>], style: &LeadStyle) -> V
         .collect()
 }
 
-/// The lofi push, where the mood sings more than a note a bar.
-fn push(rng: &mut NoiseStream, beat: &mut f32, style: &LeadStyle) {
-    if style.max_per_bar > 1 && beat.fract() == 0.0 && chance(rng, PUSH_P) {
+/// The lofi push.
+fn push(rng: &mut NoiseStream, beat: &mut f32) {
+    if beat.fract() == 0.0 && chance(rng, PUSH_P) {
         *beat -= SIXTEENTH_BEATS;
     }
 }

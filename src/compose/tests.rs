@@ -160,11 +160,9 @@ fn a_mood_draws_its_major_share_of_major_loops() {
     }
 }
 
-/// The lead's register is the span its mood's frozen take sings, and its
-/// density the most notes any of its mood's frozen takes sings in a bar: the
-/// authorities its bounds were read from.
+/// The lead's register is the span its mood's frozen take sings.
 #[test]
-fn each_moods_lead_register_and_density_are_its_frozen_takes() {
+fn each_moods_lead_register_is_its_frozen_takes() {
     let day = score::SPARKLE_SCORE.map(|(_, midi, _)| midi);
     let night = score::NIGHT_SPARKLE.map(|n| n.midi);
     for (mood, take) in [(Mood::Day, &day[..]), (Mood::Night, &night[..])] {
@@ -172,26 +170,21 @@ fn each_moods_lead_register_and_density_are_its_frozen_takes() {
         let lead = &mood.style().lead;
         assert_eq!(span, (Some(lead.lo), Some(lead.hi)), "{mood:?}");
     }
-    let most = |bars: Vec<usize>| {
-        (bars.iter())
-            .map(|b| bars.iter().filter(|&c| c == b).count())
-            .max()
+}
+
+/// A lead sparser than LOFI-BIBLE R10's lets the keys take the top line, which
+/// then hops between them; the night sings under the day, its sleepy register.
+#[test]
+fn a_lead_sings_at_r10s_density_and_less_by_night() {
+    let per_bar = |mood| {
+        let notes: usize = (0..SWEEP)
+            .map(|seed| compose(mood, seed).sparkle.len())
+            .sum();
+        notes as f32 / (SWEEP as usize * GEN_LOOP_BARS) as f32
     };
-    let in_bars =
-        |notes: &[Note], bar_s: f32| notes.iter().map(|n| (n.at / bar_s) as usize).collect();
-    let day1 = score::SPARKLE_SCORE.map(|(beats, ..)| (beats / BEATS_PER_BAR) as usize);
-    let day = [
-        most(day1.to_vec()),
-        most(in_bars(score::DAY2.sparkle, score::DAY2.bar_s())),
-        most(in_bars(score::DAY3.sparkle, score::DAY3.bar_s())),
-    ];
-    let night_bar_s = score::night_loop_secs() / score::NIGHT_LOOP_BARS as f32;
-    let night = most(in_bars(&score::NIGHT_SPARKLE, night_bar_s));
-    assert_eq!(
-        day.into_iter().max().flatten(),
-        Some(Mood::Day.style().lead.max_per_bar)
-    );
-    assert_eq!(night, Some(Mood::Night.style().lead.max_per_bar));
+    let (day, night) = (per_bar(Mood::Day), per_bar(Mood::Night));
+    assert!((2.0..=4.0).contains(&day), "{day}");
+    assert!((1.0..day).contains(&night), "{night} against {day}");
 }
 
 #[test]
@@ -357,7 +350,6 @@ fn assert_well_formed(s: &Score, h: &Harmony, seed: u64) {
         s.sparkle.len() >= 2,
         "seed {seed}: the lead lost its identity"
     );
-    let max_per_bar = s.mood.style().lead.max_per_bar;
     for bar in 0..GEN_LOOP_BARS {
         let n = (s.sparkle.iter())
             .filter(|&&Note { at, .. }| (at / bar_s) as usize == bar)
@@ -365,8 +357,8 @@ fn assert_well_formed(s: &Score, h: &Harmony, seed: u64) {
         // the humanization lag can push a bar-boundary event into the
         // next bar's count, so allow one over
         assert!(
-            n <= max_per_bar + 1,
-            "seed {seed}: bar {bar} lead density {n} > {max_per_bar}"
+            n <= LEAD_GRID.len() + 1,
+            "seed {seed}: bar {bar} lead density {n}"
         );
     }
 }
@@ -676,4 +668,4 @@ fn every_seed_composes_the_score_it_did() {
     assert_eq!(h, EVERY_SEED_GOLDEN, "{h:#018x}");
 }
 
-const EVERY_SEED_GOLDEN: u64 = 0xfa9d_d651_5bce_6c66;
+const EVERY_SEED_GOLDEN: u64 = 0x8d28_a471_a5c1_030a;
