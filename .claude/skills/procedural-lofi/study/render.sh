@@ -18,10 +18,11 @@ if [ ! -f "$all/COMMIT" ]; then
     src=$(mktemp -d "$out/src.XXXXXX")
     trap 'rm -rf "$src"' EXIT
     git -C "$tree" archive "$sha" | tar -x -C "$src"
-    # one target for every commit's build: only the crate itself rebuilds
-    (cd "$src" && CARGO_TARGET_DIR="$out/target" cargo build --locked --release --example lofi_audition)
+    # a target of its own: `git archive` stamps the commit's time, and a target
+    # another commit built later than that read as fresh, its binary rendered
+    (cd "$src" && cargo build --locked --release --example lofi_audition)
     rm -rf "$all.partial"
-    "$out/target/release/examples/lofi_audition" --batch judge --out "$all.partial" \
+    "$src/target/release/examples/lofi_audition" --batch judge --out "$all.partial" \
         >"$out/g${sha:0:12}/render.log" 2>&1
     printf '%s\n' "$sha" >"$all.partial/COMMIT"
     mv "$all.partial" "$all"
