@@ -296,8 +296,9 @@ fn assert_well_formed(s: &Score, h: &Harmony, seed: u64) {
         // the floor: the root, sounding in the bar's first beat
         let one = (bar as f32 * bar_s)..(bar as f32 * bar_s + s.beat_s());
         assert!(
-            (s.bass.iter()).any(|&Note { at, midi, .. }| one.contains(&at)
-                && midi == bass_pitch(chord.root_pc, chord)),
+            (s.bass.iter()).any(
+                |&Note { at, midi, .. }| one.contains(&at) && midi == bass_pitch(chord.root_pc)
+            ),
             "seed {seed}: the bass must sound bar {bar}'s root on its ONE"
         );
     }
@@ -311,14 +312,11 @@ fn assert_well_formed(s: &Score, h: &Harmony, seed: u64) {
         // closed vocabulary: root/5th/pickup — anything else is a wrong join
         let bar = bar_of(at);
         let chord = &h.bars[bar];
-        let mut allowed = vec![
-            bass_pitch(chord.root_pc, chord),
-            bass_pitch(chord.root_pc + 7, chord),
-        ];
+        let mut allowed = vec![bass_pitch(chord.root_pc), bass_pitch(chord.root_pc + 7)];
         if let Some(next) = h.bars.get(bar + 1) {
             // a semitone under the next root as its bar folds it, not that
             // pitch class folded in
-            allowed.push(bass_pitch(next.root_pc, next) - 1);
+            allowed.push(bass_pitch(next.root_pc) - 1);
         }
         assert!(
             allowed.contains(&note),
@@ -543,22 +541,30 @@ fn no_bass_note_sounds_within_a_fifth_of_a_chord_voice_below_48() {
 }
 
 #[test]
-fn a_bass_note_drops_an_octave_only_where_it_would_clash() {
-    let over = |low: u8| Chord {
-        notes: [low, 52, 55, 59],
-        root_pc: 0,
-    };
-    // (pitch class, the bar's lowest chord voice, the bass note)
-    for (pc, low, want) in [
-        (7, 45, 31),
-        (2, 45, 38),
-        (3, 45, 27),
-        (4, 45, 28),
-        (6, 47, 30),
-        (6, 48, 42),
-        (6 + 12, 48, 42),
+fn a_bass_note_folds_into_its_window() {
+    for pc in 0..2 * OCTAVE {
+        let note = bass_pitch(pc);
+        assert_eq!(note % OCTAVE, pc % OCTAVE, "pc {pc}");
+        assert!((BASS_LOW..BASS_LOW + OCTAVE).contains(&note), "pc {pc}");
+    }
+}
+
+/// A comp without a chord's 3rd and 7th would stop saying which chord it is:
+/// the other tests pass any two of its tones.
+#[test]
+fn a_shell_is_a_chords_third_and_seventh() {
+    for (degree, third, seventh) in [
+        (C, MAJOR_THIRD, MAJOR_SEVENTH),
+        (A_MIN, MINOR_THIRD, MINOR_SEVENTH),
+        (G, MAJOR_THIRD, MINOR_SEVENTH),
     ] {
-        assert_eq!(bass_pitch(pc, &over(low)), want, "pc {pc} over {low}");
+        let chord = degree.voiced(0);
+        let root = chord.notes[0];
+        assert_eq!(
+            shell_of(&chord),
+            (root + third, root + seventh),
+            "{degree:?}"
+        );
     }
 }
 

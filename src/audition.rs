@@ -10,7 +10,7 @@ mod loudness;
 pub use loudness::{channels, fold, gated_lufs};
 
 pub use crate::compose::Lane;
-pub use crate::compose::{BASS_CLASH_BELOW, BASS_LOW, Form, Score, spans_a_form};
+pub use crate::compose::{BASS_LOW, Form, Score, spans_a_form};
 pub use crate::stream::master::{TIER_INTENSITIES, lane_gain};
 pub use crate::stream::schedule::{bar_frames, song_bars, song_form, song_score};
 pub use crate::synth::{render_lane, samples_at};
@@ -216,8 +216,9 @@ pub fn transform(buf: &[f32]) -> (Vec<f64>, Vec<f64>) {
     (re, im)
 }
 
-/// The gated loudness `lofi_audition` renders a mix take at, so a blind A/B
-/// compares takes, not gain: inside LOFI-BIBLE.md §4's loudness target.
+/// The gated loudness `lofi_audition` renders a mix take at, its peak allowing,
+/// so a blind A/B compares takes, not gain: inside LOFI-BIBLE.md §4's loudness
+/// target.
 pub const TARGET_LUFS: f64 = -16.0;
 
 /// The seeds [`WHOLE_LANE_LUFS_SD`] and [`SONG_LUFS_SD`] were measured over,
