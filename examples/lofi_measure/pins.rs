@@ -14,7 +14,7 @@ use pixtuoid_lofi::audition::{
 };
 use pixtuoid_lofi::dsp::SAMPLE_RATE;
 
-use crate::batch::{Batch, Engine, MOODS, SOLO_SAFE_LUFS, Tier, lane_gains};
+use crate::batch::{Batch, Engine, MOODS, SOLO_SAFE_LUFS, Tier, heard_score, lane_gains};
 use crate::staging::median;
 use crate::{frames_lufs, mono_lufs, parse, staging};
 
@@ -142,9 +142,7 @@ fn plate() {
         let mut gaps = Vec::new();
         for (mood, _) in MOODS {
             let batch = batch(Engine::Stream, tier, mood, PLATE_SEEDS);
-            gaps.extend(over(PLATE_SEEDS, |seed| {
-                unity_gap(&batch, seed, lane, tier)
-            }));
+            gaps.extend(over(PLATE_SEEDS, |seed| unity_gap(&batch, seed, lane)));
         }
         let gap = median(gaps);
         println!(
@@ -158,19 +156,13 @@ fn plate() {
 /// How far under `lane`'s dry stem its plate return at unity reads on the
 /// fold, over `seed`'s first song's second loop, the first one its own tails
 /// ring into.
-fn unity_gap(batch: &Batch, seed: u64, lane: Lane, tier: Tier) -> f64 {
+fn unity_gap(batch: &Batch, seed: u64, lane: Lane) -> f64 {
     let mut stems = Stems::default();
     batch.perform_with(seed, |performance, out| stems.render(performance, out));
     let dry = &stems.lanes()[lane as usize];
-    // a tier with no drums dips nothing, as a stream song's return doesn't
-    let score = batch.score(seed);
-    let score = if audition::lane_gain(Lane::Drums, tier.intensity()) > 0.0 {
-        score
-    } else {
-        audition::unbeaten(&score)
-    };
+    let score = heard_score(seed, 0, batch.controls());
     let wet = audition::fold(&audition::plate_return(&score, dry));
-    let loop_len = audition::samples_at(batch.score(seed).loop_secs(), SAMPLE_RATE);
+    let loop_len = audition::samples_at(score.loop_secs(), SAMPLE_RATE);
     let second = loop_len..2 * loop_len;
     mono_lufs(&dry[second.clone()]) - mono_lufs(&wet[second])
 }
