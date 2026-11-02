@@ -425,12 +425,17 @@ impl Batch {
                         tier: Some(Tier::Empty),
                         ..at
                     };
+                    // the louder tiers past the pool that bounds empty's seeds,
+                    // so the mood's group holds each seed once: not at empty's
+                    // end, which a lead voice's weight moves, renaming them all
+                    let louder = VOICE_POOL_SEEDS;
                     [
-                        (Tier::Empty, empty.lead_floor_seeds()),
-                        (Tier::Moderate, JUDGE_TIER_SEEDS),
-                        (Tier::Busy, JUDGE_TIER_SEEDS),
+                        (Tier::Empty, 0, empty.lead_floor_seeds()),
+                        (Tier::Moderate, louder, JUDGE_TIER_SEEDS),
+                        (Tier::Busy, louder + JUDGE_TIER_SEEDS, JUDGE_TIER_SEEDS),
                     ]
-                    .map(|(tier, seeds)| Batch {
+                    .map(|(tier, start, seeds)| Batch {
+                        start,
                         seeds,
                         tier: Some(tier),
                         ..empty
@@ -877,7 +882,7 @@ mod tests {
     }
 
     #[test]
-    fn the_judge_batch_plays_each_of_its_sweeps_over_its_own_seeds() {
+    fn the_judge_batch_plays_every_start_of_each_of_its_sweeps() {
         let judge = parsed("--batch", "judge").expect("the batch parses").runs();
         for sweep in JUDGE_SWEEPS {
             let runs: Vec<&Batch> = (judge.iter())
@@ -888,17 +893,33 @@ mod tests {
                 (runs.iter()).all(|run| run.seeds().count() as u64 == JUDGE_SWEEP_SEEDS),
                 "{sweep:?}'s seeds per take"
             );
-            let mut seeds: Vec<u64> = runs.iter().flat_map(|run| run.seeds()).collect();
-            let all = seeds.len();
-            seeds.sort_unstable();
-            seeds.dedup();
-            assert_eq!(seeds.len(), all, "{sweep:?} plays a seed twice");
         }
         assert!(
             judge
                 .iter()
                 .all(|run| run.sweep.is_none_or(|s| JUDGE_SWEEPS.contains(&s)))
         );
+    }
+
+    /// The sign test's pairs must be independent
+    /// (https://en.wikipedia.org/wiki/Sign_test), and one song's takes at two
+    /// tiers or two starts move together.
+    #[test]
+    fn every_group_of_the_judge_batch_plays_a_seed_once() {
+        let judge = parsed("--batch", "judge").expect("the batch parses").runs();
+        let mut seeds: BTreeMap<&str, Vec<u64>> = BTreeMap::new();
+        for run in &judge {
+            seeds
+                .entry(run.mood_name())
+                .or_default()
+                .extend(run.seeds());
+        }
+        for (group, mut seeds) in seeds {
+            let all = seeds.len();
+            seeds.sort_unstable();
+            seeds.dedup();
+            assert_eq!(seeds.len(), all, "{group} plays a seed twice");
+        }
     }
 
     #[test]
