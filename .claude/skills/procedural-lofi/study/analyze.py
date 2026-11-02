@@ -17,6 +17,8 @@ from pathlib import Path
 
 import modal
 
+from grid import BEATS_PER_BAR, STEPS, STEPS_PER_BEAT, placed, placement
+
 STUDY = "/study"
 CONCURRENT = 24
 TIMEOUT_S = 1200
@@ -26,13 +28,15 @@ image = (
     .apt_install("ffmpeg", "libsndfile1")
     .pip_install("torch==2.5.1", "torchaudio==2.5.1", index_url="https://download.pytorch.org/whl/cpu")
     .pip_install("basic-pitch==0.4.0", "soundfile==0.12.1", "numpy<2", "beat-this==1.1.0", "lv-chordia==1.1.0")
+    # Modal 1.0 mounts the App's own module alone
+    # (https://modal.com/docs/guide/modal-1-0-migration)
+    .add_local_python_source("grid")
 )
 app = modal.App("lofi-study-analyze", image=image)
 study = modal.Volume.from_name("lofi-study", create_if_missing=True)
 
 SR = 22050
 HOP = 256
-STEPS = 16
 KICK, SNARE, HAT = 0, 1, 2
 NMF_FFT, NMF_ITER = 1024, 120
 # where each voice may sit: a kick's click and a snare's rattle overlap the
@@ -61,8 +65,6 @@ CPU = 4.0
 MEMORY_MIB = 8192
 ERROR_CHARS = 300
 PITCH_CLASSES = 12
-BEATS_PER_BAR = 4
-STEPS_PER_BEAT = 4
 NMF_INIT_LO, NMF_INIT_HI = 0.5, 1.0
 NMF_FLOOR = 1e-9
 LEVEL_PERCENTILE = 99.5
@@ -159,19 +161,6 @@ def beat_grid(mix, drums, times, voices, hint):
 
     score = [landed(kicks, beats[p::BEATS_PER_BAR]) + landed(snares, beats[(p + 1) % BEATS_PER_BAR :: 2]) for p in range(BEATS_PER_BAR)]
     return beats, 60.0 / float(np.median(np.diff(beats))), int(np.argmax(score)), None, "form"
-
-
-def placed(t, beats):
-    """Where `t` falls on the grid `beats` lays from a downbeat: its 16th in
-    its bar, its phase in its beat and that beat's length; None off the grid."""
-    import numpy as np
-
-    at = int(np.searchsorted(beats, t, side="right")) - 1
-    if at < 0 or at + 1 >= beats.size:
-        return None
-    span = beats[at + 1] - beats[at]
-    phase = (t - beats[at]) / span
-    return int(round((at % BEATS_PER_BAR) * STEPS_PER_BEAT + phase * STEPS_PER_BEAT)) % STEPS, phase, span
 
 
 def drum_grid(times, voices, levels, beats, downbeat):
@@ -375,9 +364,8 @@ def monophonic(notes):
 
 
 def bass_line(notes, n_bars, beats, kicks):
-    """The bass's line, and where on the grid `beats` lays its notes start:
-    each 16th's share of bars, the share on a beat and on an off-eighth, and
-    the share with one of `kicks`, as near as `beat_grid` lands a hit."""
+    """The bass's line, and where on the grid `beats` lays its notes start,
+    a note with one of `kicks` as near as `beat_grid` lands a hit."""
     import numpy as np
 
     line = monophonic(notes)
@@ -388,18 +376,12 @@ def bass_line(notes, n_bars, beats, kicks):
     lengths = np.array([e - s for s, e, _, _ in line])
     gaps = np.diff(starts)
     near = gaps < LEGATO_GAP_S
-    steps = np.array([where[0] for where in (placed(t, beats) for t in starts) if where], dtype=int)
-    with_kick = [kicks.size > 0 and float(np.abs(kicks - t).min()) < NEAR_S for t in starts]
-    share = lambda held: round(float(np.mean(held)), 3) if steps.size else None
     return {
         "register": np.percentile(pitches, BASS_REGISTER_PERCENTILES).round(1).tolist(),
         "notes_per_bar": round(len(line) / max(n_bars, 1), 2),
         "legato": round(float(np.median(lengths[:-1][near] / gaps[near])), 3) if near.any() else None,
         "median_note_ms": round(float(np.median(lengths)) * 1000, 1),
-        "steps": (np.bincount(steps, minlength=STEPS) / max(n_bars, 1)).round(3).tolist(),
-        "on_beat_share": share(steps % STEPS_PER_BEAT == 0),
-        "off_eighth_share": share(steps % STEPS_PER_BEAT == STEPS_PER_BEAT // 2),
-        "with_kick_share": round(float(np.mean(with_kick)), 3),
+        **placement(starts.tolist(), beats.tolist(), kicks.tolist(), NEAR_S, n_bars),
     }
 
 
