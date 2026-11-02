@@ -61,7 +61,7 @@ fn run() -> io::Result<()> {
     // rendered in file-name order, so the files' times don't give the seeds away
     order.sort_by_key(|&(file, _)| file);
     on_threads(args.threads(), &order, |&(file, take)| {
-        write_wav(&args.out.join(file), &args.render(&take.run, take.seed)?)
+        write_wav(&args.out.join(file), &args.render(&take.run, take.seed))
     })?;
     if args.key.is_none() {
         for &(file, take) in &order {
@@ -218,22 +218,10 @@ impl Args {
         }
     }
 
-    /// `seed`'s take in `run` at its target loudness; an error if that clips
-    /// it, which would write a different take.
-    fn render(&self, run: &Batch, seed: u64) -> io::Result<Vec<Frame>> {
-        let mut take = run.take(seed, self.solo);
-        let target = self.target_lufs();
-        let [left, right] = channels(&take);
-        let gain = 10f64.powf((target - gated_lufs(&[&left, &right], SAMPLE_RATE)) / 20.0) as f32;
-        for v in take.iter_mut().flatten() {
-            *v *= gain;
-        }
-        if take.iter().flatten().any(|v| v.abs() > 1.0) {
-            return Err(io::Error::other(format!(
-                "seed {seed} clips at {target} LUFS"
-            )));
-        }
-        Ok(take)
+    /// `seed`'s take in `run` at its target loudness, as near as its peak lets
+    /// it.
+    fn render(&self, run: &Batch, seed: u64) -> Vec<Frame> {
+        levelled(run.take(seed, self.solo), self.target_lufs())
     }
 
     /// One thread under `--shuffle`, since threads finish a take when its
@@ -253,6 +241,21 @@ impl Args {
             None => TARGET_LUFS,
         }
     }
+}
+
+/// `take` turned to `target` LUFS, or only as far as full scale: a normalizer
+/// weighs a track's headroom against its target
+/// (<https://support.spotify.com/us/artists/article/loudness-normalization/>),
+/// and a clipped take would be a different take.
+fn levelled(mut take: Vec<Frame>, target: f64) -> Vec<Frame> {
+    let [left, right] = channels(&take);
+    let to_target = 10f64.powf((target - gated_lufs(&[&left, &right], SAMPLE_RATE)) / 20.0) as f32;
+    let peak = take.iter().flatten().fold(0.0f32, |m, v| m.max(v.abs()));
+    let gain = to_target.min(peak.recip());
+    for v in take.iter_mut().flatten() {
+        *v *= gain;
+    }
+    take
 }
 
 /// `count` opaque file names in a random order, seeded from a [`RandomState`],
@@ -380,7 +383,7 @@ mod tests {
     }
 
     /// `seed`'s take in the run's one batch.
-    fn rendered(args: &[&str], seed: u64) -> io::Result<Vec<Frame>> {
+    fn rendered(args: &[&str], seed: u64) -> Vec<Frame> {
         let args = parsed(args);
         args.render(&args.batch, seed)
     }
@@ -501,12 +504,38 @@ mod tests {
         );
     }
 
+    /// One peak over the target's reach costs that take a little level, not
+    /// the batch: a refused take would leave the judge nothing to score.
+    #[test]
+    fn a_take_levels_to_its_target_or_to_full_scale() {
+        let lufs = |take: &[Frame]| {
+            let [left, right] = channels(take);
+            gated_lufs(&[&left, &right], SAMPLE_RATE)
+        };
+        let peak = |take: &[Frame]| take.iter().flatten().fold(0.0f32, |m, v| m.max(v.abs()));
+        let second = usize::try_from(SAMPLE_RATE).expect("a rate fits");
+        let tone: Vec<Frame> = (0..4 * second)
+            .map(|i| [0.01 * (i as f32 * 0.05).sin(); 2])
+            .collect();
+        let reached = levelled(tone.clone(), TARGET_LUFS);
+        assert!(
+            (lufs(&reached) - TARGET_LUFS).abs() < 0.1,
+            "{}",
+            lufs(&reached)
+        );
+        let mut spiked = tone;
+        spiked[second] = [0.5; 2];
+        let held = levelled(spiked, TARGET_LUFS);
+        assert!((0.999..=1.001).contains(&peak(&held)), "{}", peak(&held));
+        assert!(lufs(&held) < TARGET_LUFS - 1.0, "{}", lufs(&held));
+    }
+
     #[test]
     fn both_engines_write_a_take_as_long_and_at_the_target_loudness() {
         let seed = 1;
         let [whole, stream] = ["whole", "stream"].map(|engine| {
             let take = rendered(&["--engine", engine], seed);
-            let written: Vec<Frame> = (take.expect("the take renders").iter())
+            let written: Vec<Frame> = (take.iter())
                 .map(|frame| frame.map(|x| f32::from(pcm(x)) / f32::from(i16::MAX)))
                 .collect();
             let [left, right] = channels(&written);
@@ -524,10 +553,8 @@ mod tests {
     fn both_engines_write_a_take_from_silence_to_silence() {
         for engine in ["whole", "stream"] {
             let take = rendered(&["--engine", engine], 2);
-            let edges = take
-                .map(|t| [t[0], t[t.len() - 1]].map(|frame| frame.map(pcm)))
-                .ok();
-            assert_eq!(edges, Some([[0; 2]; 2]), "{engine}'s first and last frames");
+            let edges = [take[0], take[take.len() - 1]].map(|frame| frame.map(pcm));
+            assert_eq!(edges, [[0; 2]; 2], "{engine}'s first and last frames");
         }
     }
 
@@ -543,8 +570,8 @@ mod tests {
             for engine in ["whole", "stream"] {
                 let args = parsed(&["--engine", engine, "--sweep", sweep.name(), "--seeds", "1"]);
                 for (run, &len) in args.batch.runs().iter().zip(&lens) {
-                    let take = args.render(run, 0).expect("the sweep renders");
-                    let again = args.render(run, 0).expect("the sweep renders");
+                    let take = args.render(run, 0);
+                    let again = args.render(run, 0);
                     assert!(take == again, "{sweep:?} under {engine} renders apart");
                     assert_eq!(take.len(), len, "{sweep:?} under {engine}");
                 }
@@ -566,10 +593,7 @@ mod tests {
                 0,
             );
             let held = rendered(&["--engine", engine, "--tier", "empty", "--songs", "2"], 0);
-            assert!(
-                swept.is_ok() && swept.ok() != held.ok(),
-                "{engine} played no call"
-            );
+            assert!(swept != held, "{engine} played no call");
         }
     }
 
@@ -578,7 +602,7 @@ mod tests {
         let want = take_len(&parsed(&["--songs", "2"]).batch, 3);
         for engine in ["whole", "stream"] {
             let take = rendered(&["--engine", engine, "--songs", "2"], 3);
-            assert_eq!(take.map(|t| t.len()).ok(), want, "{engine}");
+            assert_eq!(Some(take.len()), want, "{engine}");
         }
     }
 
@@ -621,12 +645,19 @@ mod tests {
         assert!(parsed(&["--sweep", "twilight"]).takes().is_ok());
     }
 
+    /// [`SOLO_TARGET_LUFS`] sits under every lane's peak: a solo stopped short
+    /// of it would compare at another level.
     #[test]
-    fn every_lane_writes_a_solo_take() {
+    fn every_lane_writes_a_solo_take_at_the_solo_target() {
         for mood in ["day", "night"] {
             for lane in Lane::NAMES {
                 let take = rendered(&["--engine", "whole", "--mood", mood, "--solo", lane], 0);
-                assert!(take.is_ok(), "{mood} {lane}: {:?}", take.err());
+                let [left, right] = channels(&take);
+                let lufs = gated_lufs(&[&left, &right], SAMPLE_RATE);
+                assert!(
+                    (lufs - SOLO_TARGET_LUFS).abs() <= 0.1,
+                    "{mood} {lane}: {lufs:.3} LUFS"
+                );
             }
         }
     }

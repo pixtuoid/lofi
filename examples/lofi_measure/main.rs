@@ -643,19 +643,14 @@ mod tests {
     }
 
     #[test]
-    fn the_bass_window_and_its_limit_are_lofi_bibles_r7() {
+    fn the_bass_window_is_lofi_bibles_r7() {
         let bible = include_str!("../../.claude/skills/procedural-lofi/reference/LOFI-BIBLE.md");
         let low = audition::BASS_LOW;
-        let r7 = [
-            format!("bass root **{low}–{}**", low + 11),
-            format!(
-                "a chord voice under {} sits within a P5",
-                audition::BASS_CLASH_BELOW
-            ),
-        ];
-        for row in &r7 {
-            assert!(bible.contains(row), "LOFI-BIBLE.md no longer reads {row:?}");
-        }
+        let row = format!("bass root **{low}–{}**", low + 11);
+        assert!(
+            bible.contains(&row),
+            "LOFI-BIBLE.md no longer reads {row:?}"
+        );
     }
 
     #[test]

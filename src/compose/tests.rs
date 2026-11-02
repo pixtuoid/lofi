@@ -1,6 +1,8 @@
 //! The seed-sweep property suite: frozen takes pin ONE realization
 //! (checksums); these pin the RULES — any seed must be musically well-formed.
 
+use std::collections::BTreeSet;
+
 use super::*;
 use crate::score;
 
@@ -8,12 +10,23 @@ const SWEEP: u64 = 64;
 
 const MOODS: [Mood; 2] = [Mood::Day, Mood::Night];
 
-/// Every template of every mood's grammar, with its mood and index.
-fn templates() -> impl Iterator<Item = (Mood, usize, &'static Progression)> {
-    MOODS.into_iter().flat_map(|mood| {
-        let progs = mood.style().harmony.progressions;
-        progs.iter().enumerate().map(move |(i, p)| (mood, i, p))
-    })
+/// Every loop a song can draw.
+fn loops() -> impl Iterator<Item = &'static [Degree]> {
+    MAJOR_LOOPS.iter().chain(&MINOR_LOOPS).copied()
+}
+
+/// The mood and seed of every song the sweep composes.
+fn songs() -> impl Iterator<Item = (Mood, u64)> {
+    MOODS
+        .into_iter()
+        .flat_map(|mood| (0..SWEEP).map(move |seed| (mood, seed)))
+}
+
+/// Whether two voices sound muddy together: the lower one under its
+/// interval's floor in [`LOW_INTERVAL_LIMITS`].
+fn muddy(a: u8, b: u8) -> bool {
+    let (lo, hi) = (a.min(b), a.max(b));
+    (LOW_INTERVAL_LIMITS.get(usize::from(hi - lo))).is_some_and(|&floor| lo < floor)
 }
 
 /// The pitch classes of `chord`'s notes.
@@ -22,37 +35,70 @@ fn pcs(chord: &[u8; 4]) -> [u8; 4] {
 }
 
 #[test]
-fn template_chords_and_roots_are_diatonic_or_deliberately_chromatic() {
-    for (mood, i, p) in templates() {
-        let color_tones = (p.chords.iter())
-            .flat_map(|c| c.notes)
-            .filter(|&n| !p.scale_pcs.contains(&(n % 12)))
-            .count();
-        if p.chromatic {
-            // at most one chord's worth of color, so it stays in the key
-            assert!(
-                (1..=4).contains(&color_tones),
-                "{mood:?}[{i}]: chromatic template carries {color_tones} color tones"
-            );
-        } else {
+fn a_whole_number_of_every_loop_fills_the_song_loop() {
+    for degrees in loops() {
+        assert!(degrees.len() > 1, "{degrees:?} never moves");
+        assert_eq!(GEN_LOOP_BARS % degrees.len(), 0, "{degrees:?}");
+    }
+}
+
+/// A song's bars are the loop it drew, cycled, in its key: one seam wrong and
+/// a 2-bar loop would change on the wrong bar.
+#[test]
+fn a_songs_bars_cycle_the_loop_it_drew() {
+    for (mood, seed) in songs() {
+        let style = &mood.style().harmony;
+        let degrees = drawn_loop(&mut Stage::Harmony.stream(seed), style);
+        let bars = composed(mood, seed).1.bars;
+        let above = |root_pc: u8, first: u8| (root_pc + OCTAVE - first) % OCTAVE;
+        for (bar, chord) in bars.iter().enumerate() {
+            let at = bar % degrees.len();
+            assert_eq!(*chord, bars[at], "{mood:?} seed {seed}");
             assert_eq!(
-                color_tones, 0,
-                "{mood:?}[{i}]: diatonic template leaked a color tone"
+                above(chord.root_pc, bars[0].root_pc),
+                above(degrees[at].root_pc, degrees[0].root_pc),
+                "{mood:?} seed {seed} bar {bar}"
             );
         }
-        for c in &p.chords {
+    }
+}
+
+/// A song keeps to its key as the tracks do (LOFI-BIBLE R3): every note in
+/// it, its root, third and 7th sounding (R1).
+#[test]
+fn every_bar_keeps_to_its_songs_key() {
+    for (mood, seed) in songs() {
+        let harmony = composed(mood, seed).1;
+        for chord in &harmony.bars {
+            let sounding = pcs(&chord.notes);
             assert!(
-                p.scale_pcs.contains(&c.root_pc),
-                "{mood:?}[{i}]: root pc {} outside its scale",
-                c.root_pc
+                (sounding.iter()).all(|pc| harmony.scale_pcs.contains(pc)),
+                "{mood:?} seed {seed}: {:?} leaves {:?}",
+                chord.notes,
+                harmony.scale_pcs
             );
-            assert!(
-                pcs(&c.notes).contains(&c.root_pc),
-                "{mood:?}[{i}]: {:?} doesn't sound its root {}",
-                c.notes,
-                c.root_pc
-            );
+            for offsets in [[MINOR_THIRD, MAJOR_THIRD], [MINOR_SEVENTH, MAJOR_SEVENTH]] {
+                let tone = offsets.map(|i| (chord.root_pc + i) % OCTAVE);
+                assert!(
+                    sounding.contains(&chord.root_pc) && tone.iter().any(|t| sounding.contains(t)),
+                    "{mood:?} seed {seed}: {:?} over root {}",
+                    chord.notes,
+                    chord.root_pc
+                );
+            }
         }
+    }
+}
+
+/// A key a mood never reaches would narrow what hours of songs can sound
+/// like: the tracks sit in all twelve.
+#[test]
+fn every_mood_reaches_every_key() {
+    for mood in MOODS {
+        let keys: BTreeSet<[u8; 7]> = (0..SWEEP)
+            .map(|seed| composed(mood, seed).1.scale_pcs)
+            .collect();
+        assert_eq!(keys.len(), usize::from(OCTAVE), "{mood:?}");
     }
 }
 
@@ -66,87 +112,51 @@ fn an_interval_under_its_floor_sounds_muddy() {
     assert!(!muddy(24, 24) && !muddy(24, 36));
 }
 
-/// Every chord a song voices sounds clear: each template only in the keys it
-/// sounds clear in, its own among them so the draw has one, and the
-/// turnaround's dominant.
+/// Every chord a song voices sounds clear, whatever its key.
 #[test]
 fn every_chord_a_song_voices_sounds_clear() {
-    for (mood, i, p) in templates() {
-        assert!(p.clear(), "{mood:?}[{i}] in its own key");
-    }
-    for mood in [Mood::Day, Mood::Night] {
-        for seed in 0..SWEEP {
-            for notes in compose(mood, seed).bar_chords {
-                assert!(chord(notes, 0).clear(), "{mood:?} seed {seed}: {notes:?}");
-            }
+    for (mood, seed) in songs() {
+        for notes in compose(mood, seed).bar_chords {
+            assert!(
+                (notes.iter()).all(|&a| notes.iter().all(|&b| !muddy(a, b))),
+                "{mood:?} seed {seed}: {notes:?}"
+            );
         }
     }
 }
 
+/// A key moves no chord's register: its root stays in one octave, lowest.
 #[test]
-fn every_shift_keeps_a_template_in_its_own_key() {
-    for (mood, i, p) in templates() {
-        let colors = |p: &Progression| {
-            (p.chords.iter())
-                .flat_map(|c| c.notes)
-                .filter(|&n| !p.scale_pcs.contains(&(n % 12)))
-                .count()
-        };
-        for t in TRANSPOSE {
-            let q = p.transposed(t);
-            assert_eq!(colors(&q), colors(p), "{mood:?}[{i}] shifted {t}");
-            for (a, b) in p.chords.iter().zip(&q.chords) {
-                let moved = |from: u8, to: u8| i16::from(to) - i16::from(from) == i16::from(t);
-                assert!(a.notes.iter().zip(&b.notes).all(|(&x, &y)| moved(x, y)));
-                assert_eq!(
-                    (i16::from(a.root_pc) + i16::from(t)).rem_euclid(12),
-                    i16::from(b.root_pc)
-                );
-            }
-            assert!(q.scale_pcs.is_sorted(), "{mood:?}[{i}] shifted {t}");
+fn every_chord_sits_in_root_position_in_one_octave() {
+    for (mood, seed) in songs() {
+        for chord in composed(mood, seed).1.bars {
+            let [root, ..] = chord.notes;
+            assert_eq!(root % OCTAVE, chord.root_pc, "{mood:?} seed {seed}");
+            assert!(chord.notes.is_sorted(), "{mood:?} seed {seed}");
+            assert!(
+                (VOICING_FLOOR..VOICING_FLOOR + OCTAVE).contains(&root),
+                "{mood:?} seed {seed}: {:?}",
+                chord.notes
+            );
         }
     }
 }
 
+/// A mood's loops are drawn from both grammars, at its share.
 #[test]
-fn a_timeline_plays_its_template_twice_and_a_turnaround_ends_on_the_dominant() {
-    for (mood, i, p) in templates() {
-        for turnaround in [false, true] {
-            let bars = timeline(p, turnaround);
-            for (bar, chord) in bars.iter().enumerate().take(GEN_LOOP_BARS - 1) {
-                assert_eq!(*chord, p.chords[bar % 4], "{mood:?}[{i}] bar {bar}");
-            }
-            let last = bars[GEN_LOOP_BARS - 1];
-            if turnaround {
-                // the hinge: a dominant 7th of the returning bar-1 root
-                let dom = (p.chords[0].root_pc + 7) % 12;
-                let want = [0u8, 4, 7, 10].map(|o| (dom + o) % 12);
-                assert_eq!(pcs(&last.notes), want, "{mood:?}[{i}]: not V7 of the root");
-                assert_eq!(last.root_pc, dom);
-            } else {
-                assert_eq!(last, p.chords[3], "{mood:?}[{i}]: the plain cycle");
-            }
-        }
-    }
-    assert!(Mood::Day.style().harmony.turnaround);
-    // the sleepy loop keeps the plain cycle
-    assert!(!Mood::Night.style().harmony.turnaround);
-}
-
-#[test]
-fn every_shell_comping_template_chord_carries_a_third_and_seventh() {
-    // the shell voicings are only well-defined over true 7th chords
-    for (mood, i, p) in templates() {
-        if !matches!(mood.style().keys.comp, Comp::Shell) {
-            continue;
-        }
-        for (bar, c) in p.chords.iter().enumerate() {
-            let has = |offs: [u8; 2]| {
-                (c.notes.iter()).any(|&n| offs.iter().any(|&o| n % 12 == (c.root_pc + o) % 12))
-            };
-            assert!(has([3, 4]), "{mood:?}[{i}] bar {bar}: no third");
-            assert!(has([10, 11]), "{mood:?}[{i}] bar {bar}: no seventh");
-        }
+fn a_mood_draws_its_major_share_of_major_loops() {
+    let draws = 4000;
+    for mood in MOODS {
+        let style = &mood.style().harmony;
+        let mut rng = NoiseStream::new(1);
+        let major = (0..draws)
+            .filter(|_| MAJOR_LOOPS.contains(&drawn_loop(&mut rng, style)))
+            .count();
+        let share = major as f32 / draws as f32;
+        assert!(
+            (share - style.major_share).abs() < 0.03,
+            "{mood:?}: {share}"
+        );
     }
 }
 
@@ -286,8 +296,9 @@ fn assert_well_formed(s: &Score, h: &Harmony, seed: u64) {
         // the floor: the root, sounding in the bar's first beat
         let one = (bar as f32 * bar_s)..(bar as f32 * bar_s + s.beat_s());
         assert!(
-            (s.bass.iter()).any(|&Note { at, midi, .. }| one.contains(&at)
-                && midi == bass_pitch(chord.root_pc, chord)),
+            (s.bass.iter()).any(
+                |&Note { at, midi, .. }| one.contains(&at) && midi == bass_pitch(chord.root_pc)
+            ),
             "seed {seed}: the bass must sound bar {bar}'s root on its ONE"
         );
     }
@@ -301,14 +312,11 @@ fn assert_well_formed(s: &Score, h: &Harmony, seed: u64) {
         // closed vocabulary: root/5th/pickup — anything else is a wrong join
         let bar = bar_of(at);
         let chord = &h.bars[bar];
-        let mut allowed = vec![
-            bass_pitch(chord.root_pc, chord),
-            bass_pitch(chord.root_pc + 7, chord),
-        ];
+        let mut allowed = vec![bass_pitch(chord.root_pc), bass_pitch(chord.root_pc + 7)];
         if let Some(next) = h.bars.get(bar + 1) {
             // a semitone under the next root as its bar folds it, not that
             // pitch class folded in
-            allowed.push(bass_pitch(next.root_pc, next) - 1);
+            allowed.push(bass_pitch(next.root_pc) - 1);
         }
         assert!(
             allowed.contains(&note),
@@ -340,11 +348,9 @@ fn assert_well_formed(s: &Score, h: &Harmony, seed: u64) {
         );
     }
     for &Note { at, midi: note, .. } in &s.sparkle {
-        let bar = bar_of(at);
-        let in_turnaround = pcs(&s.bar_chords[bar]).contains(&(note % 12));
         assert!(
-            h.template.scale_pcs.contains(&(note % 12)) || in_turnaround,
-            "seed {seed}: lead note {note} at {at}s outside key AND bar chord"
+            h.scale_pcs.contains(&(note % 12)),
+            "seed {seed}: lead note {note} at {at}s outside its key"
         );
     }
     assert!(
@@ -508,46 +514,31 @@ fn the_peak_and_the_close_land_on_chord_tones_and_the_close_comes_home() {
     assert!(peaks > 0 && closes > 0);
 }
 
-/// R7's low-interval limit, checked against every voice the pad and keys
-/// sound in the bass's bar.
 #[test]
-fn no_bass_note_sounds_within_a_fifth_of_a_chord_voice_below_48() {
-    for mood in MOODS {
-        for seed in 0..200 {
-            let s = compose(mood, seed);
-            let bar_s = s.bar_s();
-            let bar_of = |at: f32| ((at / bar_s) as usize).min(GEN_LOOP_BARS - 1);
-            for bass in &s.bass {
-                let bar = bar_of(bass.at);
-                let keys = (s.keys.iter())
-                    .filter(|k| bar_of(k.at) == bar)
-                    .map(|k| k.midi);
-                for voice in s.bar_chords[bar].into_iter().chain(keys) {
-                    assert!(
-                        voice >= 48 || voice.abs_diff(bass.midi) >= 7,
-                        "{mood:?} seed {seed} bar {bar}: bass {} under {voice}",
-                        bass.midi
-                    );
-                }
-            }
-        }
+fn a_bass_note_folds_into_its_window() {
+    for pc in 0..2 * OCTAVE {
+        let note = bass_pitch(pc);
+        assert_eq!(note % OCTAVE, pc % OCTAVE, "pc {pc}");
+        assert!((BASS_LOW..BASS_LOW + OCTAVE).contains(&note), "pc {pc}");
     }
 }
 
+/// A comp without a chord's 3rd and 7th would stop saying which chord it is:
+/// the other tests pass any two of its tones.
 #[test]
-fn a_bass_note_drops_an_octave_only_where_it_would_clash() {
-    let over = |low: u8| chord([low, 52, 55, 59], 0);
-    // (pitch class, the bar's lowest chord voice, the bass note)
-    for (pc, low, want) in [
-        (7, 45, 31),
-        (2, 45, 38),
-        (3, 45, 27),
-        (4, 45, 28),
-        (6, 47, 30),
-        (6, 48, 42),
-        (6 + 12, 48, 42),
+fn a_shell_is_a_chords_third_and_seventh() {
+    for (degree, third, seventh) in [
+        (C, MAJOR_THIRD, MAJOR_SEVENTH),
+        (A_MIN, MINOR_THIRD, MINOR_SEVENTH),
+        (G, MAJOR_THIRD, MINOR_SEVENTH),
     ] {
-        assert_eq!(bass_pitch(pc, &over(low)), want, "pc {pc} over {low}");
+        let chord = degree.voiced(0);
+        let root = chord.notes[0];
+        assert_eq!(
+            shell_of(&chord),
+            (root + third, root + seventh),
+            "{degree:?}"
+        );
     }
 }
 
@@ -618,17 +609,6 @@ fn the_answer_quotes_the_statements_opening() {
     }
 }
 
-#[test]
-fn adopted_color_templates_actually_rotate_in() {
-    for mood in MOODS {
-        let seen_color = (0..SWEEP).any(|seed| composed(mood, seed).1.template.chromatic);
-        assert!(
-            seen_color,
-            "{mood:?}: no chromatic template across the sweep"
-        );
-    }
-}
-
 /// Every hit a seeded groove lays, bit for bit: the drums the generator
 /// writes, which no frozen take pins. A change to a hit's time, gain or the
 /// order its noise is drawn in moves this.
@@ -696,4 +676,4 @@ fn every_seed_composes_the_score_it_did() {
     assert_eq!(h, EVERY_SEED_GOLDEN, "{h:#018x}");
 }
 
-const EVERY_SEED_GOLDEN: u64 = 0xb1e7_3d74_e5bd_e2de;
+const EVERY_SEED_GOLDEN: u64 = 0xfa9d_d651_5bce_6c66;
