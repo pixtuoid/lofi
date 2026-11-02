@@ -1316,8 +1316,10 @@ fn groove(rng: &mut NoiseStream, g: &GrooveTemplate, beat_s: f32) -> Vec<Hit> {
 /// both sides.
 pub const BASS_LOW: u8 = 31;
 
-/// Fold a pitch class into the bass window, which [`VOICING_FLOOR`] keeps under
-/// every chord — the ONE bass-register authority.
+/// A chord that reached into the bass window would muddy both.
+const _: () = assert!(BASS_LOW + OCTAVE <= VOICING_FLOOR);
+
+/// Fold a pitch class into the bass window — the ONE bass-register authority.
 fn bass_pitch(pc: u8) -> u8 {
     in_octave_from(BASS_LOW, pc)
 }

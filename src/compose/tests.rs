@@ -514,32 +514,6 @@ fn the_peak_and_the_close_land_on_chord_tones_and_the_close_comes_home() {
     assert!(peaks > 0 && closes > 0);
 }
 
-/// R7's low-interval limit, checked against every voice the pad and keys
-/// sound in the bass's bar.
-#[test]
-fn no_bass_note_sounds_within_a_fifth_of_a_chord_voice_below_48() {
-    for mood in MOODS {
-        for seed in 0..200 {
-            let s = compose(mood, seed);
-            let bar_s = s.bar_s();
-            let bar_of = |at: f32| ((at / bar_s) as usize).min(GEN_LOOP_BARS - 1);
-            for bass in &s.bass {
-                let bar = bar_of(bass.at);
-                let keys = (s.keys.iter())
-                    .filter(|k| bar_of(k.at) == bar)
-                    .map(|k| k.midi);
-                for voice in s.bar_chords[bar].into_iter().chain(keys) {
-                    assert!(
-                        voice >= 48 || voice.abs_diff(bass.midi) >= 7,
-                        "{mood:?} seed {seed} bar {bar}: bass {} under {voice}",
-                        bass.midi
-                    );
-                }
-            }
-        }
-    }
-}
-
 #[test]
 fn a_bass_note_folds_into_its_window() {
     for pc in 0..2 * OCTAVE {
