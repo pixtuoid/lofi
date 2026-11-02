@@ -196,7 +196,7 @@ const PLUCK_DECAY: f32 = 3.4;
 const PLUCK_ATTACK_S: f32 = 0.004;
 /// The 2nd partial's fall relative to the fundamental's.
 const PLUCK_H2_DECAY_K: f32 = 1.76;
-/// The 3rd partial: its weight, its ratio to the note (slightly flat of a
+/// The 3rd partial: its weight, its ratio to the note (slightly sharp of a
 /// harmonic) and its fall relative to the fundamental's.
 const PLUCK_H3_LEVEL: f32 = 0.18;
 const PLUCK_H3_RATIO: f32 = 3.004;
@@ -317,16 +317,16 @@ const KALIMBA_BREATH_MIX: f32 = 91.7;
 const KALIMBA_DECAY: f32 = 2.6;
 /// The attack's length.
 const KALIMBA_ATTACK_S: f32 = 0.002;
-/// The first overtone: its weight, its ratio to the note, and how its fall
+/// The 2nd partial: its weight, its ratio to the note, and how its fall
 /// scales with, and is offset from, the fundamental's.
-const KALIMBA_H1_LEVEL: f32 = 0.20;
-const KALIMBA_H1_RATIO: f32 = 5.9;
-const KALIMBA_H1_DECAY_K: f32 = 5.0;
-const KALIMBA_H1_DECAY_ADD: f32 = 14.0;
-/// The second overtone: its weight, its ratio and its fixed fall rate.
-const KALIMBA_H2_LEVEL: f32 = 0.08;
-const KALIMBA_H2_RATIO: f32 = 16.5;
-const KALIMBA_H2_RATE: f32 = 40.0;
+const KALIMBA_H2_LEVEL: f32 = 0.20;
+const KALIMBA_H2_RATIO: f32 = 5.9;
+const KALIMBA_H2_DECAY_K: f32 = 5.0;
+const KALIMBA_H2_DECAY_ADD: f32 = 14.0;
+/// The 3rd partial: its weight, its ratio and its fixed fall rate.
+const KALIMBA_H3_LEVEL: f32 = 0.08;
+const KALIMBA_H3_RATIO: f32 = 16.5;
+const KALIMBA_H3_RATE: f32 = 40.0;
 /// The resonator body's thump.
 const KALIMBA_THUMP: Strike = Strike {
     salt: 0x4B41_4C49,
@@ -354,12 +354,12 @@ fn kalimba_note(midi: u8, dur_s: f32, vel: f32, sr: u32) -> Vec<f32> {
             let t = i as f32 / sr as f32;
             let attack = (t / KALIMBA_ATTACK_S).min(1.0);
             let sig = (tau * f * t).sin() * (-t * d).exp()
-                + KALIMBA_H1_LEVEL
-                    * (tau * KALIMBA_H1_RATIO * f * t).sin()
-                    * (-t * (d * KALIMBA_H1_DECAY_K + KALIMBA_H1_DECAY_ADD)).exp()
                 + KALIMBA_H2_LEVEL
                     * (tau * KALIMBA_H2_RATIO * f * t).sin()
-                    * (-t * KALIMBA_H2_RATE).exp();
+                    * (-t * (d * KALIMBA_H2_DECAY_K + KALIMBA_H2_DECAY_ADD)).exp()
+                + KALIMBA_H3_LEVEL
+                    * (tau * KALIMBA_H3_RATIO * f * t).sin()
+                    * (-t * KALIMBA_H3_RATE).exp();
             sig * attack * vel
         })
         .collect();
@@ -384,15 +384,15 @@ const VIBE_ATTACK_S: f32 = 0.008;
 /// The 2nd partial: its ratio to the note, its weight at rest and what
 /// velocity adds, and how its fall scales with, and is offset from, the
 /// fundamental's.
-const VIBE_H1_RATIO: f32 = 4.0;
-const VIBE_H1_BASE: f32 = 0.15;
-const VIBE_H1_VEL: f32 = 0.20;
-const VIBE_H1_DECAY_K: f32 = 3.0;
-const VIBE_H1_DECAY_ADD: f32 = 2.0;
+const VIBE_H2_RATIO: f32 = 4.0;
+const VIBE_H2_BASE: f32 = 0.15;
+const VIBE_H2_VEL: f32 = 0.20;
+const VIBE_H2_DECAY_K: f32 = 3.0;
+const VIBE_H2_DECAY_ADD: f32 = 2.0;
 /// The 3rd partial: its weight, its ratio and its fixed fall rate.
-const VIBE_H2_LEVEL: f32 = 0.06;
-const VIBE_H2_RATIO: f32 = 9.8;
-const VIBE_H2_RATE: f32 = 18.0;
+const VIBE_H3_LEVEL: f32 = 0.06;
+const VIBE_H3_RATIO: f32 = 9.8;
+const VIBE_H3_RATE: f32 = 18.0;
 /// The mallet's strike.
 const VIBE_MALLET: Strike = Strike {
     salt: 0x5649_4245,
@@ -418,10 +418,10 @@ fn vibe_note(midi: u8, dur_s: f32, vel: f32, sr: u32) -> Vec<f32> {
             let attack = (t / VIBE_ATTACK_S).min(1.0);
             let trem = 1.0 - VIBE_TREM_DEPTH * (1.0 - (tau * trem_hz * t).cos());
             let sig = (tau * f * t).sin() * (-t * d).exp()
-                + (VIBE_H1_BASE + VIBE_H1_VEL * vel)
-                    * (tau * VIBE_H1_RATIO * f * t).sin()
-                    * (-t * (d * VIBE_H1_DECAY_K + VIBE_H1_DECAY_ADD)).exp()
-                + VIBE_H2_LEVEL * (tau * VIBE_H2_RATIO * f * t).sin() * (-t * VIBE_H2_RATE).exp();
+                + (VIBE_H2_BASE + VIBE_H2_VEL * vel)
+                    * (tau * VIBE_H2_RATIO * f * t).sin()
+                    * (-t * (d * VIBE_H2_DECAY_K + VIBE_H2_DECAY_ADD)).exp()
+                + VIBE_H3_LEVEL * (tau * VIBE_H3_RATIO * f * t).sin() * (-t * VIBE_H3_RATE).exp();
             sig * attack * trem * vel
         })
         .collect();
