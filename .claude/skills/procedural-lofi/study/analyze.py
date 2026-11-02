@@ -17,6 +17,8 @@ from pathlib import Path
 
 import modal
 
+from grid import BEATS_PER_BAR, STEPS, STEPS_PER_BEAT, placed, placement
+
 STUDY = "/study"
 CONCURRENT = 24
 TIMEOUT_S = 1200
@@ -26,13 +28,15 @@ image = (
     .apt_install("ffmpeg", "libsndfile1")
     .pip_install("torch==2.5.1", "torchaudio==2.5.1", index_url="https://download.pytorch.org/whl/cpu")
     .pip_install("basic-pitch==0.4.0", "soundfile==0.12.1", "numpy<2", "beat-this==1.1.0", "lv-chordia==1.1.0")
+    # Modal 1.0 mounts the App's own module alone
+    # (https://modal.com/docs/guide/modal-1-0-migration)
+    .add_local_python_source("grid")
 )
 app = modal.App("lofi-study-analyze", image=image)
 study = modal.Volume.from_name("lofi-study", create_if_missing=True)
 
 SR = 22050
 HOP = 256
-STEPS = 16
 KICK, SNARE, HAT = 0, 1, 2
 NMF_FFT, NMF_ITER = 1024, 120
 # where each voice may sit: a kick's click and a snare's rattle overlap the
@@ -61,8 +65,6 @@ CPU = 4.0
 MEMORY_MIB = 8192
 ERROR_CHARS = 300
 PITCH_CLASSES = 12
-BEATS_PER_BAR = 4
-STEPS_PER_BEAT = 4
 NMF_INIT_LO, NMF_INIT_HI = 0.5, 1.0
 NMF_FLOOR = 1e-9
 LEVEL_PERCENTILE = 99.5
@@ -174,12 +176,11 @@ def drum_grid(times, voices, levels, beats, downbeat):
         grid = np.zeros(STEPS)
         mine = levels[voices == code]
         for t in times[voices == code]:
-            at = int(np.searchsorted(bars, t, side="right")) - 1
-            if at < 0 or at + 1 >= bars.size:
+            where = placed(t, bars)
+            if where is None:
                 continue
-            span = bars[at + 1] - bars[at]
-            phase = (t - bars[at]) / span
-            grid[int(round((at % BEATS_PER_BAR) * STEPS_PER_BEAT + phase * STEPS_PER_BEAT)) % STEPS] += 1
+            step, phase, span = where
+            grid[step] += 1
             if OFF_EIGHTH[0] <= phase <= OFF_EIGHTH[1]:
                 offs.append(float(phase))
             if code in on_beat and (phase < ON_BEAT_EARLY or phase > ON_BEAT_LATE):
@@ -362,7 +363,9 @@ def monophonic(notes):
     return line
 
 
-def bass_line(notes, n_bars):
+def bass_line(notes, n_bars, beats, kicks):
+    """The bass's line, and where on the grid `beats` lays its notes start,
+    a note with one of `kicks` as near as `beat_grid` lands a hit."""
     import numpy as np
 
     line = monophonic(notes)
@@ -378,6 +381,7 @@ def bass_line(notes, n_bars):
         "notes_per_bar": round(len(line) / max(n_bars, 1), 2),
         "legato": round(float(np.median(lengths[:-1][near] / gaps[near])), 3) if near.any() else None,
         "median_note_ms": round(float(np.median(lengths)) * 1000, 1),
+        **placement(starts.tolist(), beats.tolist(), kicks.tolist(), NEAR_S, n_bars),
     }
 
 
@@ -429,7 +433,7 @@ def one(job):
         "kick": drum_sound(drums, times, voices, levels, KICK, KICK_LENGTH_S),
         "snare": drum_sound(drums, times, voices, levels, SNARE, SNARE_LENGTH_S),
         "hat": drum_sound(drums, times, voices, levels, HAT, HAT_LENGTH_S),
-        "bass": bass_line(bass_notes, n_bars),
+        "bass": bass_line(bass_notes, n_bars, bar_times, times[voices == KICK]),
         "mode": mode,
         "tonic": tonic,
         "key_r": confidence,
