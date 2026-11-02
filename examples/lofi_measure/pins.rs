@@ -10,7 +10,7 @@ use std::thread;
 
 use pixtuoid_lofi::Frame;
 use pixtuoid_lofi::audition::{
-    self, LUFS_SEEDS, Lane, SONG_LUFS_SD, Stems, TIER_INTENSITIES, WHOLE_LANE_LUFS_SD,
+    self, LUFS_SEEDS, Lane, Stems, TIER_INTENSITIES, WHOLE_LANE_LUFS_SD,
 };
 use pixtuoid_lofi::dsp::SAMPLE_RATE;
 
@@ -32,8 +32,7 @@ const PLATE_TIERS: [(Lane, Tier); 3] = [
 
 /// Prints each pinned constant as the source holds it, from a run.
 pub(crate) fn print() {
-    spreads("WHOLE_LANE_LUFS_SD", Engine::WholeLane, &WHOLE_LANE_LUFS_SD);
-    spreads("SONG_LUFS_SD", Engine::Stream, &SONG_LUFS_SD);
+    spreads();
     solo();
     plate();
     staging::print();
@@ -78,24 +77,22 @@ fn over<T: Send>(seeds: Range<u64>, f: impl Fn(u64) -> T + Sync) -> Vec<T> {
         .collect()
 }
 
-/// A `(intensity, daylight, LU)` table's rows, each measured over
-/// [`LUFS_SEEDS`] through `engine` at its tier and mood.
-fn spreads(name: &str, engine: Engine, rows: &[(f32, f32, f64)]) {
+/// [`WHOLE_LANE_LUFS_SD`]'s rows, each measured over [`LUFS_SEEDS`] through
+/// the whole engine at its tier and mood.
+fn spreads() {
     println!(
-        "// {name}: each row's loudness sd over LUFS_SEEDS through the {} engine",
-        engine.name()
+        "// WHOLE_LANE_LUFS_SD: each row's loudness sd over LUFS_SEEDS through the whole engine"
     );
-    for &(intensity, daylight, held) in rows {
+    for &(intensity, daylight, held) in &WHOLE_LANE_LUFS_SD {
         let index = (TIER_INTENSITIES.iter())
             .position(|&i| i == intensity)
             .expect("a pinned row's intensity is a tier's");
         let (mood, _) = (MOODS.into_iter())
             .find(|&(_, d)| d == daylight)
             .expect("a pinned row's daylight is a mood's");
-        let batch = batch(engine, Tier::ALL[index], mood, LUFS_SEEDS);
-        let lufs = over(LUFS_SEEDS, |seed| match engine {
-            Engine::WholeLane => mono_lufs(&batch.whole(seed, lane_gains).remove(0).mix()),
-            Engine::Stream => frames_lufs(&batch.perform(seed)),
+        let batch = batch(Engine::WholeLane, Tier::ALL[index], mood, LUFS_SEEDS);
+        let lufs = over(LUFS_SEEDS, |seed| {
+            mono_lufs(&batch.whole(seed, lane_gains).remove(0).mix())
         });
         println!(
             "(TIER_INTENSITIES[{index}], {daylight:.1}, {:.4}), // held {held:.4}",
