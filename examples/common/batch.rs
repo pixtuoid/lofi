@@ -882,7 +882,7 @@ mod tests {
     }
 
     #[test]
-    fn the_judge_batch_plays_each_of_its_sweeps_over_its_own_seeds() {
+    fn the_judge_batch_plays_every_start_of_each_of_its_sweeps() {
         let judge = parsed("--batch", "judge").expect("the batch parses").runs();
         for sweep in JUDGE_SWEEPS {
             let runs: Vec<&Batch> = (judge.iter())
