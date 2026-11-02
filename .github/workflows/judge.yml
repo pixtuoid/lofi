@@ -15,6 +15,8 @@ on:
       # sin and exp round by toolchain, so a bump can move the render
       - rust-toolchain.toml
       - .github/workflows/judge.yml
+      # the render it runs
+      - .claude/skills/procedural-lofi/study/render.sh
 
 permissions: {}
 
