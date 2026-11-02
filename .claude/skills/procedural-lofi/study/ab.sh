@@ -34,7 +34,7 @@ status=0
     >"$work/judge.log" 2>&1 </dev/null || status=$?
 
 echo "== ${cand_sha:0:12} exit $status"
-grep -E '^(group|day |night |rain|twilight|all )|verdict:|invalid|takes: base' "$work/judge.log" |
+grep -E '^(group|day |night |rain|twilight|all )|^(new|gone) at cand|verdict:|invalid|takes: base' "$work/judge.log" |
     grep -vE '^(day|night|rain|twilight)_' | sed -E 's/^FAD calibration.*takes: /  /' | cut -c1-120 || true
 # `modal run` exited 1 when the workspace's spend limit refused it (observed),
 # as the judge does for a REGRESSION, so a run with no verdict line never scored
