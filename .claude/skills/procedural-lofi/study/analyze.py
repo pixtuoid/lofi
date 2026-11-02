@@ -35,7 +35,6 @@ HOP = 256
 STEPS = 16
 KICK, SNARE, HAT = 0, 1, 2
 KICK_HZ, SNARE_HZ, HAT_HZ = (30, 150), (150, 5000), (5000, 11000)
-HIT_N = int(0.06 * SR)
 NMF_FFT, NMF_ITER = 1024, 120
 # where each voice may sit: a kick's click and a snare's rattle overlap the
 # hat's floor, but a hat holds nothing under it
@@ -441,10 +440,6 @@ def one(job):
         "melody": melody(skyline(other_notes, sixteenths), tonic, mode, n_bars),
     }
 
-
-RESPONSE_MS = list(range(-50, 410, 10))
-ISOLATED_S = 0.4
-PRE_S = (0.09, 0.01)
 
 
 @app.local_entrypoint()
