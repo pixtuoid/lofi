@@ -232,7 +232,7 @@ const LANE_SEED: u64 = 9;
 /// The loudest gated level at which every lane's solo take, both moods and
 /// [`audition::LUFS_SEEDS`], keeps its peak under full scale, rounded down:
 /// `lofi_measure --pins` prints it beside this.
-pub(crate) const SOLO_SAFE_LUFS: f64 = -27.6;
+pub(crate) const SOLO_SAFE_LUFS: f64 = -29.9;
 
 /// How long, in seconds, a take fades in and out under a raised cosine: cut
 /// from a stream or a loop, it starts and ends mid-waveform, and the click

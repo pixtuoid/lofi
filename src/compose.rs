@@ -351,8 +351,8 @@ const DAY: Style = Style {
 
 const NIGHT: Style = Style {
     harmony: HarmonyStyle { major_share: 0.42 },
-    // the slow end of LOFI-BIBLE's MEASURED tempo
-    bpm: Spread::between(68.0, 72.0),
+    // the slower half of the scorecard's `tempo bpm` quartiles
+    bpm: Spread::between(73.0, 77.0),
     lead: LeadStyle {
         lo: 60,
         hi: 79,

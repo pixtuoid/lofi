@@ -39,6 +39,13 @@ const SOLO_TARGET_LUFS: f64 = SOLO_SAFE_LUFS - SOLO_MARGIN_DB;
 /// Room for a seed past [`SOLO_SAFE_LUFS`]'s sweep to peak higher (opinion).
 const SOLO_MARGIN_DB: f64 = 1.0;
 
+/// The gains a take's levelling tries at most, each moving fewer blocks
+/// across the gate than the last (opinion).
+const LEVEL_PASSES: usize = 4;
+
+/// How near its target a levelled take lands, in LU (opinion).
+const LEVEL_TOLERANCE_LU: f64 = 0.01;
+
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
@@ -249,9 +256,23 @@ impl Args {
 /// and a clipped take would be a different take.
 fn levelled(mut take: Vec<Frame>, target: f64) -> Vec<Frame> {
     let [left, right] = channels(&take);
-    let to_target = 10f64.powf((target - gated_lufs(&[&left, &right], SAMPLE_RATE)) / 20.0) as f32;
+    let lufs_at = |gain: f64| {
+        let scaled = |side: &[f32]| side.iter().map(|v| v * gain as f32).collect::<Vec<_>>();
+        gated_lufs(&[&scaled(&left), &scaled(&right)], SAMPLE_RATE)
+    };
+    // the absolute gate counts a block by its level, so a gain moves which
+    // blocks count and one pass can land off target: night drums' solo, 0.12
+    // LU loud
+    let mut to_target = 10f64.powf((target - gated_lufs(&[&left, &right], SAMPLE_RATE)) / 20.0);
+    for _ in 1..LEVEL_PASSES {
+        let lufs = lufs_at(to_target);
+        if (target - lufs).abs() <= LEVEL_TOLERANCE_LU {
+            break;
+        }
+        to_target *= 10f64.powf((target - lufs) / 20.0);
+    }
     let peak = take.iter().flatten().fold(0.0f32, |m, v| m.max(v.abs()));
-    let gain = to_target.min(peak.recip());
+    let gain = (to_target as f32).min(peak.recip());
     for v in take.iter_mut().flatten() {
         *v *= gain;
     }
