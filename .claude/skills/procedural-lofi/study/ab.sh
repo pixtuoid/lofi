@@ -46,5 +46,10 @@ status=0
 echo "== ${cand_sha:0:12} exit $status"
 grep -E '^(group|day |night |rain|twilight|all )|verdict:|invalid|takes: base' "$work/judge.log" |
     grep -vE '^(day|night|rain|twilight)_' | sed -E 's/^FAD calibration.*takes: /  /' | cut -c1-120 || true
-# a REGRESSION is this experiment's result; a judge that never scored isn't one
-exit $((status == 1 ? 0 : status))
+# a REGRESSION is this experiment's result, but the judge exits 1 for it and
+# modal for its own failures alike, so only a verdict line tells them apart
+if ! grep -q '^verdict: ' "$work/judge.log"; then
+    echo "ab.sh: no verdict; see $work/judge.log" >&2
+    tail -3 "$work/judge.log" >&2
+    exit $((status == 0 ? 1 : status))
+fi
