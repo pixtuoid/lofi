@@ -1,7 +1,7 @@
 """What a track's spectrum doesn't show: stereo, transients, drum weight, the
 noise floor, crackle and swing, the same way for a reference and for a take.
 
-usage: timbre.py OUT.json FILE...
+usage: timbre.py OUT.json FILE...   in the judge's venv
 """
 
 import json
@@ -12,6 +12,9 @@ from pathlib import Path
 import librosa
 import numpy as np
 from scipy import signal
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+from ab_judge import clicks_per_min
 
 SR = 44100
 HOP = 441  # 10 ms
@@ -34,31 +37,6 @@ def env_db(x, win_s):
     win = int(win_s * SR)
     smooth = signal.fftconvolve(x**2, np.ones(win) / win, mode="same")
     return 10 * np.log10(np.maximum(smooth[::HOP], 1e-12))
-
-
-def clicks_per_min(mid):
-    sos = signal.butter(CLICK_ORDER, CLICK_HZ, "highpass", fs=SR, output="sos")
-    high = signal.sosfilt(sos, mid)
-    mad = np.median(np.abs(high - np.median(high)))
-    over = np.flatnonzero(np.abs(high) > CLICK_MADS * mad)
-    starts = over[np.insert(np.diff(over) > CLICK_GAP_S * SR, 0, True)] if over.size else over
-    return starts.size / (mid.size / SR / 60)
-
-
-def swing(perc, bpm):
-    """Where the off-eighth sits in a beat, from the percussive onset strength
-    folded on the beat grid; 0.5 is straight."""
-    onset = librosa.onset.onset_strength(y=perc, sr=SR, hop_length=512, aggregate=np.median)
-    _, beats = librosa.beat.beat_track(onset_envelope=onset, sr=SR, hop_length=512, start_bpm=bpm, tightness=400)
-    bins = np.zeros(48)
-    for a, b in zip(beats[:-1], beats[1:]):
-        if b - a < 8:
-            continue
-        for i in range(a, b):
-            bins[int((i - a) / (b - a) * 48) % 48] += onset[i]
-    lo, hi = int(0.42 * 48), int(0.72 * 48)
-    peak = lo + int(np.argmax(bins[lo:hi]))
-    return (peak + 0.5) / 48, float(bins[peak] / (bins.max() + 1e-12))
 
 
 def features(path):
@@ -92,16 +70,13 @@ def features(path):
     for name, (lo, hi) in {"<200": (0, 200), ">2k": (2000, 22050)}.items():
         keep = (freqs >= lo) & (freqs < hi)
         out[f"perc_share_pct {name}"] = 100 * float(p_perc[keep].sum() / (p_all[keep].sum() + 1e-20))
-    out["flatness"] = float(np.median(librosa.feature.spectral_flatness(S=np.abs(stft))))
 
     hiss = env_db(band(mid, 4000, 12000), 0.05)
     out["hiss_floor_db_re_rms"] = float(np.percentile(hiss, 10) - 20 * np.log10(rms))
-    out["clicks_per_min"] = float(clicks_per_min(mid))
+    out["clicks_per_min"] = float(clicks_per_min(mid, SR))
     out["onsets_per_s"] = float(
         librosa.onset.onset_detect(y=mid.astype(np.float32), sr=SR, hop_length=512, units="time").size / (mid.size / SR)
     )
-    tempo = float(librosa.feature.tempo(y=librosa.istft(perc, length=mid.size), sr=SR, start_bpm=76)[0])
-    out["swing"], out["swing_peak"] = swing(librosa.istft(perc, length=mid.size), tempo)
     return {k: float(v) for k, v in out.items()}
 
 

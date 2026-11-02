@@ -12,6 +12,7 @@ from pathlib import Path
 import modal
 
 STUDY = "/study"
+# as `stemfad.py`'s, so a track's rows read the same minute
 MIDDLE_S = 60
 FRAME = 2048
 HOP = 512
@@ -42,19 +43,12 @@ def one(key):
     env = np.sqrt(np.maximum(power.sum(axis=0), 1e-12))
     db = 20 * np.log10(env / env.max())
     voiced = db > -30
-    frame_s = HOP / sr
-    # how far a note falls in its first half second: a held sub stays flat, a pluck drops
-    onsets = signal.find_peaks(np.diff(np.pad(db, (1, 0))), height=2.0, distance=int(0.15 / frame_s))[0]
-    drops = [float(db[o + 2 : o + 6].max() - db[o + int(0.4 / frame_s) : o + int(0.5 / frame_s)].mean())
-             for o in onsets if o + int(0.5 / frame_s) < len(db)]
     pitch_band = (f >= 30) & (f < 125)
     fundamental = power[pitch_band].sum()
     overtones = power[(f >= 125) & (f < 2000)].sum()
     return key, {
         "shares": shares, "centroid_hz": centroid, "occupancy": float(voiced.mean()),
-        "note_drop_db": float(np.median(drops)) if drops else None,
         "overtone_db": float(10 * np.log10((overtones + 1e-12) / (fundamental + 1e-12))),
-        "sway_db": float(np.percentile(db[voiced], 95) - np.percentile(db[voiced], 25)) if voiced.any() else None,
     }
 
 

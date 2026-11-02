@@ -50,8 +50,8 @@ method of https://arxiv.org/abs/2311.01616 (ICASSP 2024):
 - A distance no listener trained, so it guards the genre and never votes
   (`verdict.judged`).
 - The corpus is the most viewed of Lofi Girl's own playlist (its manifest), so
-  it guards against drifting away from real lofi and is never a target to
-  chase.
+  this distance guards against drifting away from real lofi. A change steers by
+  the corpus's measures on `study/scorecard.py`'s rows, never by the distance.
 - FAD is biased by its sample size (§3.3 of
   https://arxiv.org/abs/2311.01616), so both takes of a pair are scored on
   equally many frames.

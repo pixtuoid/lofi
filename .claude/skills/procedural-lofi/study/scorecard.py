@@ -1,23 +1,24 @@
 #!/usr/bin/env python3
-"""Every dimension of Lofi Girl's sound against a set of our takes, in the
-order the signal chain makes them, so what to work on next reads off the top
-of the card: a row means little to tune until the layers above it hold.
+"""Lofi Girl's sound against a set of our takes, row by row, in the order the
+signal chain makes them, so what to work on next reads off the top of the card.
 
   scorecard.py targets OUT.json STUDY TIMBRE BASS STEMFAD
   scorecard.py score TAKES_DIR PREFIX
 
-`targets` turns the references' per-track measures into `targets.json`, the
-tracks' quartiles and nothing of any one track. `score` reads a take set's
-measures, as `score.sh` leaves them in TAKES_DIR, against those quartiles. A
-row is off when our median leaves the tracks' interquartile range, and its
-gap counts those ranges from their median. FAD and CE hear neither stereo nor
-harmony (`ab_judge.py`'s header), which is why the card outranks them there.
+`targets` turns the references' per-track measures into `targets.json`, each
+row's quartiles and nothing else, so no track is in this public repo. `score`
+reads a commit's measures, as `score.sh` leaves them in TAKES_DIR, against
+them. A row is off when our median leaves the tracks' interquartile range, and
+its gap counts those ranges from their median.
+
+The judge reads a mono fold, so the stereo rows are the card's alone. That it
+reads harmony poorly is opinion, from #65's factor runs.
 """
 
 import json
 import sys
 from pathlib import Path
-from statistics import median
+from statistics import median, quantiles
 
 HERE = Path(__file__).resolve().parent
 TARGETS = HERE / "targets.json"
@@ -28,8 +29,6 @@ MINOR_SCALE = (0, 2, 3, 5, 7, 8, 10)
 
 
 def path(*keys):
-    """The number at `keys`, or None where a row has none."""
-
     def read(row):
         for key in keys:
             if not isinstance(row, dict) or key not in row:
@@ -41,8 +40,6 @@ def path(*keys):
 
 
 def item(index, *keys):
-    """Element `index` of the list at `keys`."""
-
     def read(row):
         for key in keys:
             row = row.get(key) if isinstance(row, dict) else None
@@ -151,22 +148,10 @@ LAYERS = [
 
 
 def quartiles(values):
-    ordered = sorted(values)
-    at = lambda p: ordered[round(p * (len(ordered) - 1))]
-    return at(0.25), at(0.5), at(0.75)
-
-
-def by_track(stems):
-    """`stemfad.py`'s stem → track → distance as track → stem → distance."""
-    tracks = {}
-    for stem, rows in stems.items():
-        for key, distance in rows.items():
-            tracks.setdefault(key, {})[stem] = distance
-    return tracks
+    return quantiles(values, n=4, method="inclusive")
 
 
 def targets(sources):
-    """Each row's quartiles over the tracks `sources` holds, by layer."""
     out = {}
     for layer, rows in LAYERS:
         out[layer] = {}
@@ -178,15 +163,16 @@ def targets(sources):
 
 
 def row(quartile, values):
-    """One card row: our median, whether it holds, its gap in ranges."""
+    """Our median, whether it holds, and its gap: None where the tracks' range
+    is flat, which has no width to count in."""
     low, mid, high = quartile
     ours = median(values)
-    return ours, low <= ours <= high, abs(ours - mid) / ((high - low) or 1)
+    return ours, low <= ours <= high, abs(ours - mid) / (high - low) if high > low else None
 
 
 def card(target, sources):
-    """Every row with a target: `(layer, label, quartiles, ours)`, `ours`
-    being `row`'s result, or None where the takes hold no such measure."""
+    """`(layer, label, quartiles, ours)` a row, `ours` None where the takes
+    hold no such measure."""
     for layer, rows in LAYERS:
         for label, source, read in rows:
             if label in target.get(layer, {}):
@@ -208,12 +194,13 @@ def show(lines):
         value, holds, gap = ours
         total += 1
         held += holds
-        print(f"{label:24}{low:9.2f}{mid:9.2f}{high:9.2f}{value:9.2f}  {'ok ' if holds else 'OFF'} {gap:4.1f}")
+        width = "flat" if gap is None else f"{gap:4.1f}"
+        print(f"{label:24}{low:9.2f}{mid:9.2f}{high:9.2f}{value:9.2f}  {'ok ' if holds else 'OFF'} {width}")
     print(f"\n{held} of {total} rows inside the tracks' interquartile range")
 
 
-def load(path_):
-    return json.loads(Path(path_).read_text())
+def load(file):
+    return json.loads(Path(file).read_text())
 
 
 def main(args):
@@ -221,17 +208,18 @@ def main(args):
         study, timbre, bass, stemfad = map(load, args[2:])
         refs = lambda rows: [v for k, v in rows.items() if not k.startswith("take")]
         made = targets({
-            STUDY: refs(study), TIMBRE: refs(timbre), BASS: refs(bass), STEMFAD: refs(by_track(stemfad)),
+            STUDY: refs(study), TIMBRE: refs(timbre), BASS: refs(bass), STEMFAD: refs(stemfad),
         })
         Path(args[1]).write_text(json.dumps(made, indent=1) + "\n")
     elif args[:1] == ["score"] and len(args) == 3:
         taken, prefix = Path(args[1]), args[2]
         mine = lambda rows: [v for k, v in rows.items() if k.startswith(prefix)]
+        # a commit's own: `timbre.json` keys its rows by path, not by prefix
         show(card(load(TARGETS), {
             STUDY: list(load(taken / f"study-{prefix.strip('-')}.json").values()),
             TIMBRE: list(load(taken / "timbre.json").values()),
             BASS: mine(load(taken / "basstone.json")),
-            STEMFAD: mine(by_track(load(taken / "stemfad.json"))),
+            STEMFAD: mine(load(taken / "stemfad.json")),
         }))
     else:
         sys.exit(__doc__)

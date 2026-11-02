@@ -15,22 +15,24 @@ from pathlib import Path
 import modal
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "judge") if modal.is_local() else "/root/judge")
-from modal_judge import MODELS, REMOTE_SCRIPTS, image, models
+from judge_local import SHARDS
+from modal_judge import CPU, MEMORY_MIB, MODELS, REMOTE_SCRIPTS, image, models
 
 STUDY = "/study"
 STEMS = ("drums", "bass", "other")
-# the middle of a track: every stem playing, and a third of the embedding's cost
+# the middle of a track, where every stem plays, for a fraction of the whole
+# track's embedding cost
 MIDDLE_S = 60
 LEVEL_LUFS = -23.0
 HOLDOUT_EVERY = 9
-CONCURRENT = 8
+TIMEOUT_S = 1800
 
 app = modal.App("lofi-study-stemfad", image=image)
 study = modal.Volume.from_name("lofi-study")
 
 
 @app.function(
-    gpu="T4", cpu=2.0, memory=12288, timeout=1800, max_containers=CONCURRENT,
+    gpu="T4", cpu=CPU, memory=MEMORY_MIB, timeout=TIMEOUT_S, max_containers=SHARDS,
     volumes={MODELS: models.with_mount_options(read_only=True), STUDY: study.with_mount_options(read_only=True)},
 )
 def embed(keys):
@@ -72,7 +74,7 @@ def run(prefix: str, out: str):
 
     keys = sorted(e.path.rsplit("/", 1)[1] for e in study.listdir("/stems"))
     keys = [k for k in keys if k.startswith(prefix) or not k.startswith("take-")]
-    batches = [keys[i::CONCURRENT] for i in range(CONCURRENT)]
+    batches = [keys[i::SHARDS] for i in range(SHARDS)]
     frames = {}
     for part in embed.map(batches):
         frames.update(part)
@@ -88,12 +90,13 @@ def run(prefix: str, out: str):
         mean = linalg.sqrtm((cov1 + np.eye(cov1.shape[0]) * 1e-6) @ (cov2 + np.eye(cov2.shape[0]) * 1e-6))
         return float(((mu1 - mu2) ** 2).sum() + np.trace(cov1 + cov2 - 2 * mean.real))
 
-    rows_by_stem = {}
+    by_track = {}
     for name in STEMS:
         target = stats(np.concatenate([np.array(frames[k][name]) for k in train if name in frames[k]]))
         rows = {k: distance(target, stats(np.array(frames[k][name]))) for k in frames if k not in train and name in frames[k]}
-        rows_by_stem[name] = rows
+        for key, value in rows.items():
+            by_track.setdefault(key, {})[name] = value
         groups = {"held": [v for k, v in rows.items() if k in held],
                   "takes": [v for k, v in rows.items() if k.startswith(prefix)]}
         print(name, {g: (round(float(np.median(v)), 3), len(v)) for g, v in groups.items() if v})
-    Path(out, "stemfad.json").write_text(json.dumps(rows_by_stem, indent=0) + "\n")
+    Path(out, "stemfad.json").write_text(json.dumps(by_track, indent=0) + "\n")

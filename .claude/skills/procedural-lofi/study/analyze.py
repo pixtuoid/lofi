@@ -2,13 +2,16 @@
 bass, the harmony, the top line. A take of our own goes through the same code,
 so its known score is this measure's control.
 
-  modal run analyze.py::run --out DIR [--limit N] [--prefix take-] [--hints JSON]
+  modal run analyze.py::run --out DIR --prefix take-NAME_
+  modal run analyze.py::run --out DIR --hints JSON      the references
 
-Each track's statistics come home in study.json. Its notes stay on the Volume:
-what's kept here is how the genre behaves, never what one track plays.
+Each track's statistics, its drum grid and chord counts among them, come home
+in DIR's study*.json, which stays private: only their quartiles are committed,
+in targets.json. Its notes are discarded.
 """
 
 import json
+import sys
 from collections import Counter
 from pathlib import Path
 
@@ -99,10 +102,9 @@ def drum_hits(drums):
 def beat_grid(mix, drums, times, voices, hint):
     """Beats, tempo, the first downbeat's index, the share of 4-beat bars and
     who said so. Beat This! (Foscarin et al., ISMIR 2024) unless it disagrees
-    with `hint`, form-corpus.py's tempo, whose controls passed: on swung beats
-    Beat This! reads 2/3 or 3/2 of the tempo on 3 of the 8 tracks tried. Then
-    librosa's tracker follows `hint`, and the downbeat puts the kicks on 1 and
-    the snares on 2 and 4."""
+    with `hint`, a tempo from a measure whose controls passed: on swung beats
+    Beat This! reads 2/3 or 3/2 of it. Then librosa's tracker follows `hint`,
+    and the downbeat puts the kicks on 1 and the snares on 2 and 4."""
     import librosa
     import numpy as np
     from beat_this.inference import File2Beats
@@ -346,23 +348,6 @@ def bass_line(notes, n_bars):
     }
 
 
-def layers(root, beats, downbeat, n_sections=16):
-    """Each stem's level across the track, in dB under its own loudest
-    section: what enters and leaves, and when."""
-    import numpy as np
-
-    out = {}
-    bars = beats[downbeat::4]
-    if bars.size < 3:
-        return out
-    for name in ("drums", "bass", "other"):
-        y = stem(root, name)
-        edges = np.linspace(0, y.size, n_sections + 1).astype(int)
-        power = np.array([np.mean(y[a:b] ** 2) + 1e-12 for a, b in zip(edges[:-1], edges[1:])])
-        out[name] = (10 * np.log10(power / power.max())).round(1).tolist()
-    return out
-
-
 def bounce(root, names, out):
     """`names`' stems summed into a WAV at `out`."""
     import soundfile as sf
@@ -419,7 +404,6 @@ def one(job):
         "other_register": np.percentile([p for _, _, p, _ in other_notes] or [0], [10, 50, 90]).round(1).tolist(),
         "polyphony": round(sum(e - s for s, e, _, _ in other_notes) / max(float(bar_times[-1] - bar_times[0]), 1.0), 2),
         "melody": melody(skyline(other_notes, sixteenths), tonic, mode, n_bars),
-        "layers": layers(root, beats, downbeat),
     }
 
 
@@ -428,52 +412,14 @@ ISOLATED_S = 0.4
 PRE_S = (0.09, 0.01)
 
 
-@app.function(
-    cpu=2.0, memory=4096, timeout=TIMEOUT_S, max_containers=CONCURRENT,
-    volumes={STUDY: study.with_mount_options(read_only=True)},
-)
-def response(key):
-    """How the bass and everything else move around an isolated kick: each
-    stem's level over `RESPONSE_MS`, in dB over its level just before the kick,
-    the median over the track's kicks. A sidechain shows as a dip after 0."""
-    import numpy as np
-
-    root = Path(STUDY) / "stems" / key
-    times, voices, _ = drum_hits(stem(root, "drums"))
-    kicks = times[voices == KICK]
-    gaps = np.diff(kicks)
-    alone = kicks[1:-1][(gaps[:-1] > ISOLATED_S) & (gaps[1:] > ISOLATED_S)]
-    out = {"key": key, "kicks": int(alone.size)}
-    frame = int(0.01 * SR)
-    for name in ("bass", "other"):
-        y = stem(root, name)
-        power = np.convolve(y**2, np.ones(frame) / frame, "same") + 1e-12
-        curves = []
-        for t in alone:
-            at = int(t * SR)
-            pre = power[at - int(PRE_S[0] * SR) : at - int(PRE_S[1] * SR)].mean() if at > int(PRE_S[0] * SR) else 0.0
-            ends = at + int(RESPONSE_MS[-1] / 1000 * SR)
-            if pre <= 0 or ends >= y.size:
-                continue
-            curves.append([10 * np.log10(power[at + int(ms / 1000 * SR)] / pre) for ms in RESPONSE_MS])
-        out[name] = np.median(curves, axis=0).round(2).tolist() if len(curves) >= 4 else None
-    return out
-
-
 @app.local_entrypoint()
-def pump(out: str, prefix: str = ""):
+def run(out: str, prefix: str = "", hints: str = ""):
+    # a reference's beat tracker misreads swing without its hint, so its grid and
+    # every per-bar row would move in silence
+    if not prefix and not hints:
+        sys.exit("analyze.py: the references need --hints, a JSON of each stem key's tempo")
     keys = sorted(e.path.rsplit("/", 1)[1] for e in study.listdir("/stems"))
     keys = [k for k in keys if k.startswith(prefix)] if prefix else keys
-    rows = [r for r in response.map(keys, return_exceptions=True) if isinstance(r, dict)]
-    print(f"{len(rows)} of {len(keys)} read")
-    Path(out, f"pump{prefix.rstrip(chr(45))}.json").write_text(json.dumps({r["key"]: r for r in rows}, indent=0) + "\n")
-
-
-@app.local_entrypoint()
-def run(out: str, limit: int = 0, prefix: str = "", hints: str = ""):
-    keys = sorted(e.path.rsplit("/", 1)[1] for e in study.listdir("/stems"))
-    keys = [k for k in keys if k.startswith(prefix)] if prefix else keys
-    keys = keys[:limit] if limit else keys
     # a reference's tempo hint, keyed as its stems are; a take's grid needs none
     hints = json.loads(Path(hints).read_text()) if hints else {}
     rows = list(one.map([(k, hints.get(k)) for k in keys], return_exceptions=True))

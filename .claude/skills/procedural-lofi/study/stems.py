@@ -18,7 +18,7 @@ REFS, STUDY = "/refs", "/study"
 # Rouard et al., ICASSP 2023; "achieves a SDR of 9.00 dB on the MUSDB HQ test
 # set" (https://github.com/facebookresearch/demucs)
 MODEL = "htdemucs_ft"
-# under the Starter plan's 10 GPUs, as modal_judge.py's SHARDS is
+# `judge_local.py`'s SHARDS, for its reason: a job this GPU-bound queues past it
 CONCURRENT = 8
 TIMEOUT_S = 1800
 
