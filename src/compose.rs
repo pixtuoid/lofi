@@ -258,7 +258,7 @@ struct LeadStyle {
     /// The chance a statement bar rests, where the mood rests at all.
     rest_p: Option<f32>,
     /// The chance each slot of [`LEAD_GRID`] sounds in a bar that doesn't
-    /// rest (LOFI-BIBLE R10).
+    /// rest: by day, LOFI-BIBLE R10's density.
     note_p: f32,
     velocity: Spread,
 }
@@ -357,6 +357,8 @@ const NIGHT: Style = Style {
         lo: 60,
         hi: 79,
         rest_p: Some(0.25),
+        // under R10, the sleepy register, but over the keys' single tones, so
+        // the lead stays the top line
         note_p: 0.35,
         velocity: Spread {
             base: 0.25,
