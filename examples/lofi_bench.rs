@@ -48,7 +48,7 @@ const ROOM_S: u32 = 20 * 60;
 /// The most a song of a room's run may sit from its own level played alone,
 /// in LU: EBU R 128's permitted deviation from a target, which "exists to
 /// allow for minor variations of meter calibrations and errors"
-/// (https://tech.ebu.ch/docs/r/r128-2014.pdf).
+/// (<https://tech.ebu.ch/docs/r/r128-2014.pdf>).
 const SONG_LEVEL_TOLERANCE_LU: f64 = 0.5;
 
 fn main() -> ExitCode {
