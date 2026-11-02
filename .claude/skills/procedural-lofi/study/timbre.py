@@ -20,7 +20,6 @@ SR = 44100
 HOP = 441  # 10 ms
 WIDTH_BANDS = {"<125": (20, 125), "125-500": (125, 500), "500-2k": (500, 2000), "2k-8k": (2000, 8000)}
 # ab_judge.py's click meter
-CLICK_HZ, CLICK_ORDER, CLICK_MADS, CLICK_GAP_S = 4000, 4, 12, 0.005
 SILENT_DB = -50.0
 WORKERS = 8
 BAND_ORDER = 4
@@ -110,7 +109,10 @@ def main():
     with ProcessPoolExecutor(WORKERS) as pool:
         rows = dict(pool.map(one, files))
     out.write_text(json.dumps(rows, indent=0) + "\n")
-    print(len(rows), "read,", sum("error" in r for r in rows.values()), "failed")
+    failed = sum("error" in r for r in rows.values())
+    print(len(rows), "read,", failed, "failed")
+    if failed:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

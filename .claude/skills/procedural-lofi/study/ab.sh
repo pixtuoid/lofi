@@ -45,6 +45,6 @@ status=0
 
 echo "== ${cand_sha:0:12} exit $status"
 grep -E '^(group|day |night |rain|twilight|all )|verdict:|invalid|takes: base' "$work/judge.log" |
-    grep -vE '^(day|night|rain|twilight)_' | sed -E 's/^FAD calibration.*takes: /  /' | cut -c1-120
+    grep -vE '^(day|night|rain|twilight)_' | sed -E 's/^FAD calibration.*takes: /  /' | cut -c1-120 || true
 # a REGRESSION is this experiment's result; a judge that never scored isn't one
 exit $((status == 1 ? 0 : status))

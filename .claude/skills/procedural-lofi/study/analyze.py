@@ -34,7 +34,6 @@ SR = 22050
 HOP = 256
 STEPS = 16
 KICK, SNARE, HAT = 0, 1, 2
-KICK_HZ, SNARE_HZ, HAT_HZ = (30, 150), (150, 5000), (5000, 11000)
 NMF_FFT, NMF_ITER = 1024, 120
 # where each voice may sit: a kick's click and a snare's rattle overlap the
 # hat's floor, but a hat holds nothing under it
@@ -463,3 +462,6 @@ def run(out: str, prefix: str = "", hints: str = ""):
     previous.update({r["key"]: r for r in good})
     path.write_text(json.dumps(previous, indent=0) + "\n")
     print("wrote", path.name, len(previous))
+    # the good rows are kept, but a card over them would read like one over every take
+    if len(good) != len(keys):
+        sys.exit(f"analyze.py: {len(keys) - len(good)} of {len(keys)} failed")

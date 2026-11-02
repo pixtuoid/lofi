@@ -11,8 +11,8 @@ reads a commit's measures, as `score.sh` leaves them in TAKES_DIR, against
 them. A row is off when our median leaves the tracks' interquartile range, and
 its gap counts those ranges from their median.
 
-The judge reads a mono fold, so the stereo rows are the card's alone. That it
-reads harmony poorly is opinion, from #65's factor runs.
+The judge's panel and FAD read a mono fold, so the side rows are the card's
+alone. That they read harmony poorly is opinion, from #65's factor runs.
 """
 
 import json

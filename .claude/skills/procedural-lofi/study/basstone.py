@@ -14,7 +14,7 @@ import modal
 STUDY = "/study"
 # as `stemfad.py`'s, so a track's rows read the same minute
 MIDDLE_S = 60
-FRAME = 2048
+FRAME = 4096
 HOP = 512
 CONCURRENT = 8
 CPU = 2.0
@@ -42,7 +42,7 @@ def one(key):
     x = x.mean(axis=1) if x.ndim > 1 else x
     mid, half = len(x) // 2, MIDDLE_S * sr // 2
     x = x[max(mid - half, 0) : mid + half]
-    f, t, s = signal.stft(x, sr, nperseg=FRAME * 2, noverlap=FRAME * 2 - HOP)
+    f, t, s = signal.stft(x, sr, nperseg=FRAME, noverlap=FRAME - HOP)
     power = np.abs(s) ** 2
     total = power.sum() or 1.0
     shares = {f"{lo}-{hi}": float(100 * power[(f >= lo) & (f < hi)].sum() / total) for lo, hi in BANDS}

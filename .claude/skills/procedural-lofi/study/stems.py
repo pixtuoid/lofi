@@ -10,6 +10,7 @@ Stems are derived from copyrighted audio: they stay on the Volume.
 """
 
 import json
+import sys
 from pathlib import Path
 
 import modal
@@ -79,6 +80,9 @@ def report(jobs):
     for job, r in zip(jobs, results):
         if not isinstance(r, dict):
             print("failed:", job[0], type(r).__name__)
+    # a card over what survived would read like one over every take
+    if len(good) != len(jobs):
+        sys.exit(f"stems.py: {len(jobs) - len(good)} of {len(jobs)} failed")
 
 
 @app.local_entrypoint()
