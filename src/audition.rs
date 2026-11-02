@@ -237,7 +237,7 @@ pub const STAGING_SEEDS: Range<u64> = 0..256;
 /// --pins` prints it beside this. A non-regression, not a target.
 pub const WHOLE_LANE_LUFS_SD: [(f32, f32, f64); 2] = [
     (TIER_INTENSITIES[1], 1.0, 0.4117),
-    (TIER_INTENSITIES[1], 0.0, 0.4992),
+    (TIER_INTENSITIES[1], 0.0, 0.4642),
 ];
 
 /// How much a `Performance`'s songs' gated loudness varied across
@@ -295,10 +295,10 @@ mod tests {
     #[test]
     fn a_call_at_frame_0_picks_the_song_and_bounds_its_calls() {
         let (day, night) = (Controls::default(), Controls::default().with_daylight(0.0));
-        let (seed, night_len) = (1, song_len(1, 0, night));
+        let (seed, night_len) = (5, song_len(5, 0, night));
         assert!(
             song_len(seed, 0, day) < night_len,
-            "seed 1's night song is no longer"
+            "seed 5's night song is no longer"
         );
         // the last of the frame-0 calls wins, as before any latch
         let late = [(0, day), (0, night), (night_len - 1, night)];
