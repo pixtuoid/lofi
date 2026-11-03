@@ -17,7 +17,7 @@ from pathlib import Path
 
 import modal
 
-from grid import BEATS_PER_BAR, STEPS, STEPS_PER_BEAT, placed, placement
+from grid import BEATS_PER_BAR, STEPS, STEPS_PER_BEAT, likeness, placed, placement
 
 STUDY = "/study"
 CONCURRENT = 24
@@ -328,18 +328,7 @@ def melody(line, tonic, mode, n_bars):
     jumps = np.abs(np.diff(pitches))
     degrees = Counter(int((p - tonic) % PITCH_CLASSES) for p in pitches)
     pent = sum(n for d, n in degrees.items() if d in PENTATONIC[mode]) / sum(degrees.values())
-    by_bar = {}
-    for step, pitch in line:
-        by_bar.setdefault(step // STEPS, []).append((step % STEPS, pitch))
-
-    def alike(a, b):
-        a, b = set(a), set(b)
-        return len(a & b) / len(a | b)
-
-    repeats = {
-        str(lag): round(float(np.mean([alike(by_bar[b], by_bar[b - lag]) for b in by_bar if b - lag in by_bar] or [0.0])), 3)
-        for lag in REPEAT_LAGS
-    }
+    repeats = {str(lag): round(float(np.mean(likeness(line, lag) or [0.0])), 3) for lag in REPEAT_LAGS}
     return {
         "register": np.percentile(pitches, REGISTER_PERCENTILES).round(1).tolist(),
         "onsets_per_bar": round(len(line) / max(n_bars, 1), 2),
