@@ -273,7 +273,7 @@ fn lead_voice_distribution_tracks_the_draw_weights() {
 fn the_bass_starts_its_notes_as_bass_step_p_weighs_each_16th() {
     // a bar's root in its first beat by each 16th's share of that beat's
     // weights, then each later 16th by its own chance; each band is ±3.5σ
-    // over every bar of 400 seeds, so a misplaced or misweighted draw fails
+    // over every bar of `SEEDS` seeds, so a misplaced or misweighted draw fails
     // but an unlucky sample does not
     const SEEDS: u64 = 400;
     let mut onsets = [0usize; BASS_STEP_P.len()];
