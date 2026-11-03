@@ -310,7 +310,7 @@ struct BassStyle {
     /// up into the next bar a semitone under its root, where the mood picks
     /// up at all.
     pickup_p: Option<f32>,
-    /// The root's velocity; a later note's is [`ANSWER_SOFTER`] under it.
+    /// The root's velocity; a later note's is [`LATER_SOFTER`] under it.
     velocity: Spread,
 }
 
@@ -1328,7 +1328,7 @@ const BASS_LAG: Spread = Spread {
     span: 0.010,
 };
 /// A later note's velocity under the root's.
-const ANSWER_SOFTER: f32 = 0.14;
+const LATER_SOFTER: f32 = 0.14;
 /// The pickup's lag and velocity.
 const PICKUP_LAG: Spread = Spread {
     base: 0.012,
@@ -1402,8 +1402,8 @@ fn bass(
     let onsets: Vec<usize> = (rhythms.iter().enumerate())
         .flat_map(|(bar, steps)| steps.iter().map(move |&step| bar * bar_steps + step))
         .collect();
-    let answer_velocity = Spread {
-        base: style.velocity.base - ANSWER_SOFTER,
+    let later_velocity = Spread {
+        base: style.velocity.base - LATER_SOFTER,
         span: style.velocity.span,
     };
     let mut out = Vec::new();
@@ -1435,7 +1435,7 @@ fn bass(
             } else {
                 root
             };
-            (BASS_LAG.after(on, rng), midi, answer_velocity.draw(rng))
+            (BASS_LAG.after(on, rng), midi, later_velocity.draw(rng))
         };
         // place() clips at the loop end, so no note rings into the seam
         let dur = (gap * BASS_GATE).min(loop_s - at);
