@@ -19,6 +19,7 @@
 use std::ops::RangeInclusive;
 
 use super::dsp::{NoiseStream, splitmix_draw, splitmix64};
+use super::style::Style;
 
 mod form;
 
@@ -26,25 +27,6 @@ mod form;
 pub(crate) use form::Plays;
 pub(crate) use form::{Edge, Layer, arrange};
 pub use form::{Form, spans_a_form};
-
-/// The listening context a song is composed for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum Mood {
-    /// The daytime style.
-    Day,
-    /// The night-time style.
-    Night,
-}
-
-impl Mood {
-    /// Every knob the mood's songs are composed with.
-    const fn style(self) -> &'static Style {
-        match self {
-            Mood::Day => &DAY,
-            Mood::Night => &NIGHT,
-        }
-    }
-}
 
 /// One lane of a generated take. A take's lanes render in [`Lane::ALL`] order
 /// from one rng stream, so that order is part of the sound; a song's form
@@ -89,7 +71,7 @@ impl Lane {
 
 /// The add-an-instrument seam: a new timbre = one synth voice fn, one variant
 /// here with its arms in [`LeadVoice::name`] and `LeadVoice::voice`, a weight
-/// in a mood's `voices`, a listen batch.
+/// in a style's `voices`, a listen batch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LeadVoice {
     /// The velocity-keyed EP (the ratified night/day-take Rhodes).
@@ -157,7 +139,7 @@ pub(super) struct Hit {
 /// that `synth`'s voices play.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Score {
-    pub(super) mood: Mood,
+    pub(super) style: &'static Style,
     pub(super) bpm: f32,
     /// Each bar's chord, which the pad holds.
     pub(super) bar_chords: [[u8; 4]; GEN_LOOP_BARS],
@@ -233,52 +215,52 @@ pub(crate) fn kicks(hits: &[Hit]) -> Vec<f32> {
     kicks
 }
 
-/// Every knob a mood's songs are composed with, one part per stage, so each
+/// Every knob a style's songs are written with, one part per stage, so each
 /// stage reads only its own.
-struct Style {
-    harmony: HarmonyStyle,
+pub(crate) struct Writing {
+    pub(crate) harmony: HarmonyStyle,
     /// The tempo window, in beats per minute, drawn once a song and rounded.
-    bpm: Spread,
-    lead: LeadStyle,
-    keys: KeysStyle,
-    drums: Grooves,
-    bass: BassStyle,
-    /// The lead voices the mood draws from, each with its weight.
-    voices: &'static [(LeadVoice, u32)],
+    pub(crate) bpm: Spread,
+    pub(crate) lead: LeadStyle,
+    pub(crate) keys: KeysStyle,
+    pub(crate) drums: Grooves,
+    pub(crate) bass: BassStyle,
+    /// The lead voices the style draws from, each with its weight.
+    pub(crate) voices: &'static [(LeadVoice, u32)],
 }
 
-struct HarmonyStyle {
-    /// The share of its songs a mood writes over [`MAJOR_LOOPS`], the rest
+pub(crate) struct HarmonyStyle {
+    /// The share of its songs a style writes over [`MAJOR_LOOPS`], the rest
     /// over [`MINOR_LOOPS`].
-    major_share: f32,
+    pub(crate) major_share: f32,
 }
 
-struct LeadStyle {
+pub(crate) struct LeadStyle {
     /// The lowest and highest notes the lead sings (MIDI): the span of the
-    /// mood's frozen take's lead, which LOFI-BIBLE R7's judging held.
-    lo: u8,
-    hi: u8,
-    /// The chance a statement bar rests, where the mood rests at all.
-    rest_p: Option<f32>,
+    /// style's frozen take's lead, which LOFI-BIBLE R7's judging held.
+    pub(crate) lo: u8,
+    pub(crate) hi: u8,
+    /// The chance a statement bar rests, where the style rests at all.
+    pub(crate) rest_p: Option<f32>,
     /// The chance each slot of [`LEAD_GRID`] sounds in a bar that doesn't
     /// rest: by day, LOFI-BIBLE R10's density.
-    note_p: f32,
-    velocity: Spread,
+    pub(crate) note_p: f32,
+    pub(crate) velocity: Spread,
     /// How long each note is held, in seconds.
-    dur: f32,
+    pub(crate) dur: f32,
 }
 
-struct KeysStyle {
+pub(crate) struct KeysStyle {
     /// The chance each eighth strikes.
-    density: Density,
-    velocity: Spread,
-    comp: Comp,
+    pub(crate) density: Density,
+    pub(crate) velocity: Spread,
+    pub(crate) comp: Comp,
     /// How long each note is held, in seconds.
-    dur: f32,
+    pub(crate) dur: f32,
 }
 
-/// How a mood sets the keys' density.
-enum Density {
+/// How a style sets the keys' density.
+pub(crate) enum Density {
     /// Drawn once a song.
     Drawn(Spread),
     /// The same every song, drawing nothing.
@@ -286,7 +268,7 @@ enum Density {
 }
 
 /// What the keys strike on an eighth.
-enum Comp {
+pub(crate) enum Comp {
     /// A rolled rootless shell, the chord's 3rd and 7th, the 7th sometimes
     /// lifted to the 9th: comping means chords, and the pad and bass own the
     /// low end, so two voices keep 250-500 Hz controlled.
@@ -295,121 +277,43 @@ enum Comp {
     Single,
 }
 
-/// How a mood picks its groove.
-enum Grooves {
+/// How a style picks its groove.
+pub(crate) enum Grooves {
     /// One of these, drawn once a song.
     Drawn(&'static [GrooveTemplate]),
     /// This one every song, drawing nothing.
     Fixed(&'static GrooveTemplate),
 }
 
-struct BassStyle {
+pub(crate) struct BassStyle {
     /// The chance a note after the root is the fifth, not the root again.
-    fifth_p: f32,
+    pub(crate) fifth_p: f32,
     /// The chance a bar's last note, where it falls in the last beat, picks
-    /// up into the next bar a semitone under its root, where the mood picks
+    /// up into the next bar a semitone under its root, where the style picks
     /// up at all.
-    pickup_p: Option<f32>,
+    pub(crate) pickup_p: Option<f32>,
     /// The root's velocity; a later note's is [`LATER_SOFTER`] under it.
-    velocity: Spread,
+    pub(crate) velocity: Spread,
 }
-
-const DAY: Style = Style {
-    harmony: HarmonyStyle { major_share: 0.8 },
-    bpm: Spread::between(70.0, 82.0),
-    lead: LeadStyle {
-        lo: 65,
-        hi: 81,
-        rest_p: None,
-        note_p: 0.45,
-        velocity: Spread {
-            base: 0.34,
-            span: 0.10,
-        },
-        dur: 2.0,
-    },
-    keys: KeysStyle {
-        density: Density::Drawn(Spread::between(0.28, 0.38)),
-        velocity: Spread {
-            base: 0.42,
-            span: 0.30,
-        },
-        comp: Comp::Shell,
-        dur: 0.9,
-    },
-    drums: Grooves::Drawn(&DAY_GROOVES),
-    bass: BassStyle {
-        fifth_p: 0.4,
-        pickup_p: Some(0.25),
-        velocity: Spread {
-            base: 0.62,
-            span: 0.08,
-        },
-    },
-    voices: &[
-        (LeadVoice::Pluck, 35),
-        (LeadVoice::Kalimba, 25),
-        (LeadVoice::EpVel, 40),
-    ],
-};
-
-const NIGHT: Style = Style {
-    harmony: HarmonyStyle { major_share: 0.42 },
-    // the slower half of the scorecard's `tempo bpm` quartiles
-    bpm: Spread::between(73.0, 77.0),
-    lead: LeadStyle {
-        lo: 60,
-        hi: 79,
-        rest_p: Some(0.25),
-        // under R10, the sleepy register, but over the keys' single tones, so
-        // the lead stays the top line
-        note_p: 0.35,
-        velocity: Spread {
-            base: 0.25,
-            span: 0.12,
-        },
-        dur: 2.2,
-    },
-    keys: KeysStyle {
-        density: Density::Fixed(0.15),
-        velocity: Spread {
-            base: 0.35,
-            span: 0.25,
-        },
-        comp: Comp::Single,
-        dur: 1.1,
-    },
-    drums: Grooves::Fixed(&NIGHT_GROOVE),
-    bass: BassStyle {
-        fifth_p: 0.2,
-        pickup_p: None,
-        velocity: Spread {
-            base: 0.55,
-            span: 0.08,
-        },
-    },
-    voices: &[(LeadVoice::Vibraphone, 35), (LeadVoice::EpVel, 65)],
-};
 
 /// The fastest any song plays, in beats per minute.
 #[cfg(test)]
 pub(crate) fn fastest_bpm() -> f32 {
-    [Mood::Day, Mood::Night]
-        .map(|mood| mood.style().bpm.hi())
-        .into_iter()
+    (crate::style::STYLES.iter())
+        .map(|style| style.writing.bpm.hi())
         .fold(0.0, f32::max)
 }
 
 /// A uniform draw from `base` up to `base + span`.
 #[derive(Clone, Copy, Debug)]
-struct Spread {
-    base: f32,
-    span: f32,
+pub(crate) struct Spread {
+    pub(crate) base: f32,
+    pub(crate) span: f32,
 }
 
 impl Spread {
     /// The draw from `lo` up to `hi`.
-    const fn between(lo: f32, hi: f32) -> Self {
+    pub(crate) const fn between(lo: f32, hi: f32) -> Self {
         Self {
             base: lo,
             span: hi - lo,
@@ -871,7 +775,7 @@ fn statement(rng: &mut NoiseStream, style: &LeadStyle) -> Vec<Vec<f32>> {
             beats
         })
         .collect();
-    // a mood that rests can rest through the whole phrase, and a take with no
+    // a style that rests can rest through the whole phrase, and a take with no
     // lead has lost its singable identity
     if bars.iter().map(Vec::len).sum::<usize>() < FALLBACK_STATEMENT.len() {
         for (bar, beat) in FALLBACK_STATEMENT {
@@ -1024,7 +928,7 @@ fn melody(
 
 /// One groove: where its kicks, snares and hats land, and how they swing and
 /// drag.
-struct GrooveTemplate {
+pub(crate) struct GrooveTemplate {
     /// The bar's downbeat kick, then its second.
     kicks: [Kick; 2],
     /// Whether a ghost kick picks up into each phrase's next bar.
@@ -1057,7 +961,7 @@ struct Hats {
 
 const DOWNBEAT: f32 = 0.0;
 
-const DAY_GROOVES: [GrooveTemplate; 4] = [
+pub(crate) const DAY_GROOVES: [GrooveTemplate; 4] = [
     // boom-bap: backbeats on 2&4
     GrooveTemplate {
         kicks: [
@@ -1162,7 +1066,7 @@ impl Hats {
 
 /// The night groove: kick, soft closed hats and a backbeat under the day's by
 /// LOFI-BIBLE.md §3's sleepy snare (the sleepy register).
-const NIGHT_GROOVE: GrooveTemplate = GrooveTemplate {
+pub(crate) const NIGHT_GROOVE: GrooveTemplate = GrooveTemplate {
     kicks: [
         Kick {
             beats: [DOWNBEAT; 2],
@@ -1280,7 +1184,7 @@ fn push_kick(
     });
 }
 
-/// The drums stage: a groove of the mood's, laid.
+/// The drums stage: a groove of the style's, laid.
 fn drums(rng: &mut NoiseStream, grooves: &Grooves, beat_s: f32) -> Vec<Hit> {
     let g = match *grooves {
         Grooves::Drawn(pool) => &pool[pick(rng, pool.len())],
@@ -1555,25 +1459,35 @@ fn keys(
 /// Compose one full take from a seed — deterministic, no clock and no I/O.
 /// A [`Performance`](crate::Performance) plays it;
 /// [`render_lane`](super::synth::render_lane) renders one lane whole.
-pub(crate) fn compose(mood: Mood, seed: u64) -> Score {
-    composed(mood, seed).0
+pub(crate) fn compose(style: &'static Style, seed: u64) -> Score {
+    composed(style, seed).0
 }
 
-/// The score `seed` composes in `mood`, and the harmony it is written over,
+/// The score `seed` composes in `style`, and the harmony it is written over,
 /// whose roots and key the score's voices don't read.
-fn composed(mood: Mood, seed: u64) -> (Score, Harmony) {
-    let style = mood.style();
+fn composed(style: &'static Style, seed: u64) -> (Score, Harmony) {
+    let writing = &style.writing;
     let stream = |stage: Stage| stage.stream(seed);
-    let harmony = harmony(&mut stream(Stage::Harmony), &style.harmony);
-    let bpm = style.bpm.draw(&mut stream(Stage::Tempo)).round();
+    let harmony = harmony(&mut stream(Stage::Harmony), &writing.harmony);
+    let bpm = writing.bpm.draw(&mut stream(Stage::Tempo)).round();
     let beat_s = 60.0 / bpm;
-    let sparkle = lead(&mut stream(Stage::Lead), &harmony, &style.lead, beat_s);
-    let keys = keys(&mut stream(Stage::Keys), &harmony.bars, &style.keys, beat_s);
-    let drums = drums(&mut stream(Stage::Drums), &style.drums, beat_s);
-    let bass = bass(&mut stream(Stage::Bass), &harmony.bars, &style.bass, beat_s);
-    let lead_voice = kind(stream(Stage::LeadVoice).unit(), style.voices);
+    let sparkle = lead(&mut stream(Stage::Lead), &harmony, &writing.lead, beat_s);
+    let keys = keys(
+        &mut stream(Stage::Keys),
+        &harmony.bars,
+        &writing.keys,
+        beat_s,
+    );
+    let drums = drums(&mut stream(Stage::Drums), &writing.drums, beat_s);
+    let bass = bass(
+        &mut stream(Stage::Bass),
+        &harmony.bars,
+        &writing.bass,
+        beat_s,
+    );
+    let lead_voice = kind(stream(Stage::LeadVoice).unit(), writing.voices);
     let score = Score {
-        mood,
+        style,
         bpm,
         bar_chords: harmony.bars.map(|c| c.notes),
         sparkle,

@@ -12,11 +12,10 @@ use super::rain::{self, RAIN_RAMP_BARS};
 use super::ramp::{Ramp, Shape};
 use super::{BLOCK, LANES, gain_of_db};
 use crate::Controls;
-use crate::compose::{
-    Edge, Form, GEN_LOOP_BARS, HAT_JITTER_S, Layer, Mood, Score, arrange, compose,
-};
+use crate::compose::{Edge, Form, GEN_LOOP_BARS, HAT_JITTER_S, Layer, Score, arrange, compose};
 use crate::compose::{Lane, kicks};
 use crate::dsp::{NoiseStream, SAMPLE_RATE, splitmix_draw};
+use crate::style::{DAY, NIGHT};
 use crate::synth::{
     CRACKLE_POPS_PER_SEC, Part, SIDECHAIN_ATTACK_S, SIDECHAIN_DB, SIDECHAIN_RELEASE_S, bar_onset,
     crackle_pop, part, samples_at,
@@ -47,12 +46,12 @@ fn song_seed(seed: u64, k: u64) -> u64 {
 
 /// The score song `k` of `seed`'s run plays under `controls`.
 pub fn song_score(seed: u64, k: u64, controls: Controls) -> Score {
-    let mood = if controls.daylight < Controls::DUSK {
-        Mood::Night
+    let style = if controls.daylight < Controls::DUSK {
+        &NIGHT
     } else {
-        Mood::Day
+        &DAY
     };
-    compose(mood, song_seed(seed, k))
+    compose(style, song_seed(seed, k))
 }
 
 /// The form song `k` of `seed`'s run plays under `controls`, which its first
@@ -515,7 +514,7 @@ impl Song {
     /// `score` played as `form` at `sr`, as the song seeded `seed`, which
     /// seeds its noise, its first bar latching `controls`.
     fn of(score: Score, form: Form, seed: u64, controls: Controls, sr: u32) -> Self {
-        let mood = score.mood;
+        let style = score.style;
         let window = Window::new(&score, &form, sr);
         let len = window.len;
         let mut noise = NoiseStream::new(seed);
@@ -535,7 +534,7 @@ impl Song {
         let automation = Automation::new(controls, sweep(&form, &window, level_ramp));
         let chains = Lane::ALL.map(|lane| {
             Chain::new(
-                mood,
+                style,
                 lane,
                 &part(&score, lane),
                 len,
@@ -981,9 +980,10 @@ mod tests {
 
     #[test]
     fn a_song_is_composed_for_the_night_below_dusk_and_the_day_from_it() {
-        let at = |daylight: f32| song_score(1, 0, Controls::default().with_daylight(daylight)).mood;
-        assert_eq!(at(Controls::DUSK), Mood::Day);
-        assert_eq!(at(Controls::DUSK.next_down()), Mood::Night);
+        let at =
+            |daylight: f32| song_score(1, 0, Controls::default().with_daylight(daylight)).style;
+        assert_eq!(at(Controls::DUSK), &DAY);
+        assert_eq!(at(Controls::DUSK.next_down()), &NIGHT);
     }
 
     #[test]

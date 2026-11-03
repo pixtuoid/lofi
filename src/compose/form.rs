@@ -601,9 +601,9 @@ pub(crate) fn arrange(seed: u64) -> Form {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compose::{Mood, band, compose, fnv1a};
+    use crate::compose::{band, compose, fnv1a};
 
-    /// The forms every test here sweeps: [`arrange`] reads no mood, so these
+    /// The forms every test here sweeps: [`arrange`] reads no style, so these
     /// are the population whatever the tempo.
     const FORMS: u64 = 512;
 
@@ -775,8 +775,8 @@ mod tests {
         let (mut counts, mut lengths, mut long, mut alone, mut with) =
             (Vec::new(), Vec::new(), 0, 0, 0);
         for (seed, form) in forms() {
-            for mood in [Mood::Day, Mood::Night] {
-                let bar_s = compose(mood, seed).bar_s();
+            for style in crate::style::STYLES {
+                let bar_s = compose(style, seed).bar_s();
                 songs.push(form.bars() as f32 * bar_s);
                 outros.push(form.outro() as f32 * bar_s);
             }

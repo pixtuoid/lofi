@@ -39,10 +39,10 @@ pub fn staged_lane(
     (staged.buf, staged.gains)
 }
 
-/// The stream's staging of `lane` in `score`'s mood: its fixed gains `[in,
+/// The stream's staging of `lane` in `score`'s style: its fixed gains `[in,
 /// out]`, which stand in for those [`staged_lane`] reports.
 pub fn staging(score: &Score, lane: Lane) -> [f64; 2] {
-    crate::stream::lanes::staging(score.mood, lane)
+    score.style.staging[lane as usize]
 }
 
 /// `lane`'s send into the plate in dB, and how far under its dry lane that

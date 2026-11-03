@@ -1,7 +1,7 @@
 //! The note and hit voices.
 
 use super::{NoteVoice, env_ar, midi_freq, samples_at};
-use crate::compose::{DrumKind, LeadVoice, Mood};
+use crate::compose::{DrumKind, LeadVoice};
 use crate::dsp::{NoiseStream, bandpass_at, highpass, white_noise_gain};
 
 /// An electric piano's three partials: each one's fall rate; the 3rd's weight
@@ -433,39 +433,14 @@ fn vibe_note(midi: u8, dur_s: f32, vel: f32, sr: u32) -> Vec<f32> {
 /// attack, each note's later by a step, their release, the 2nd and 3rd
 /// harmonics' weights, and the voice's gain.
 #[derive(Clone, Copy, Debug)]
-pub(super) struct ChordTone {
-    ring_s: f32,
-    attack_s: f32,
-    attack_step_s: f32,
-    release_s: f32,
-    h2: f32,
-    h3: f32,
-    gain: f32,
-}
-
-impl ChordTone {
-    pub(super) const fn of(mood: Mood) -> Self {
-        match mood {
-            Mood::Day => Self {
-                ring_s: 0.9,
-                attack_s: 0.25,
-                attack_step_s: 0.08,
-                release_s: 1.2,
-                h2: 0.30,
-                h3: 0.08,
-                gain: 1.0,
-            },
-            Mood::Night => Self {
-                ring_s: 1.2,
-                attack_s: 0.5,
-                attack_step_s: 0.1,
-                release_s: 1.8,
-                h2: 0.22,
-                h3: 0.05,
-                gain: 0.8,
-            },
-        }
-    }
+pub(crate) struct ChordTone {
+    pub(crate) ring_s: f32,
+    pub(crate) attack_s: f32,
+    pub(crate) attack_step_s: f32,
+    pub(crate) release_s: f32,
+    pub(crate) h2: f32,
+    pub(crate) h3: f32,
+    pub(crate) gain: f32,
 }
 
 /// One pad chord in `tone`, held through the bar and its ring.
@@ -519,7 +494,7 @@ impl LeadVoice {
 mod tests {
     use super::*;
     use crate::dsp::{SAMPLE_RATE, band_energy_share};
-    use crate::synth::{DRUMS, ROLLOFF_HZ, n_samples};
+    use crate::synth::{ROLLOFF_HZ, n_samples};
 
     #[test]
     fn new_lead_voices_are_pure_finite_and_keep_their_decay_character() {
@@ -578,22 +553,22 @@ mod tests {
             ("vibe", vibe_note),
             ("bass", bass_note),
         ];
-        let chords = [("day chord", Mood::Day), ("night chord", Mood::Night)];
         type Render = Box<dyn Fn(u32) -> Vec<f32>>;
-        let mut voices: Vec<(&str, Render, (f64, f64))> = Vec::new();
+        let mut voices: Vec<(String, Render, (f64, f64))> = Vec::new();
         for (name, voice) in notes {
-            voices.push((name, Box::new(move |sr| voice(69, 1.0, 0.8, sr)), a4));
+            voices.push((name.into(), Box::new(move |sr| voice(69, 1.0, 0.8, sr)), a4));
         }
-        for (name, mood) in chords {
-            let tone = ChordTone::of(mood);
-            voices.push((name, Box::new(move |sr| chord(tone, &[69; 4], 1.0, sr)), a4));
+        for style in crate::style::STYLES {
+            let tone = style.sound.chord;
+            let render = move |sr| chord(tone, &[69; 4], 1.0, sr);
+            voices.push((format!("{style:?} chord"), Box::new(render), a4));
         }
         for (name, kind, band) in [
             ("kick", DrumKind::Kick, (30.0, 200.0)),
             ("snare", DrumKind::Snare, (150.0, 230.0)),
         ] {
             let hit = move |sr| drum_hit(&mut NoiseStream::new(3), kind, sr);
-            voices.push((name, Box::new(hit), band));
+            voices.push((name.into(), Box::new(hit), band));
         }
         for (name, render, band) in voices {
             let want = peak_hz(&render(SAMPLE_RATE), SAMPLE_RATE, band);
@@ -644,11 +619,9 @@ mod tests {
     /// plays nothing the chain lets through.
     #[test]
     fn a_hat_sounds_under_the_drums_chain() {
-        let corner = DRUMS
-            .night
-            .cutoff_hz
-            .min(DRUMS.day.cutoff_hz)
-            .min(ROLLOFF_HZ);
+        let corner = (crate::style::STYLES.iter())
+            .map(|style| style.sound.drums.cutoff_hz)
+            .fold(ROLLOFF_HZ, f32::min);
         assert!(2.0 * HAT_HZ <= corner, "{HAT_HZ} Hz under {corner} Hz");
     }
 }
