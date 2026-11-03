@@ -33,7 +33,9 @@ The card is worked top-down. These rows wait on others:
   and each song's texture loop (the commit that wrote this file). Those come
   first, as a PR of their own.
 - **`lofi_bench` times by the wall clock**, so load from elsewhere fails its
-  gate (#72). `std` has no thread CPU time, and the crate takes no dependency.
+  gate (#72). `std::time`'s clocks are `Instant` and `SystemTime`, none a
+  thread's CPU time (<https://doc.rust-lang.org/1.99.1/std/time/index.html>),
+  and the crate takes no dependency (`ci.yml`'s count, REVIEW.md's Design 2).
 - **The card has no form or variation row.**
 - **Styles**: targets per style, and a judge batch split by style, whose
   floor test then covers the style axis.
