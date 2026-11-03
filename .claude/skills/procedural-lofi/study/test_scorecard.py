@@ -4,6 +4,7 @@
 import contextlib
 import io
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -16,6 +17,10 @@ sys.path.insert(0, str(HERE))
 
 import scorecard
 from scorecard import BASS, LAYERS, STEMFAD, STUDY, TARGETS, TIMBRE, card, main, outside_key, path, row, targets
+
+# stems' powers with a kit and with only a separation's residue
+KIT = {"drums": 2, "bass": 3, "other": 5}
+NO_KIT = {"drums": 0.0001, "bass": 3, "other": 5}
 
 # one row of each source, every value distinct, so a reader of the wrong field
 # reads the wrong number
@@ -160,7 +165,7 @@ class Scorecard(unittest.TestCase):
 
     def test_a_row_the_takes_never_measured_says_so(self):
         target = {"2 rhythm": {"tempo bpm": [73, 77, 81]}}
-        lines = list(card(target, {STUDY: [{}]}))
+        lines = list(card(target, {STUDY: {"a": {}}}))
         self.assertEqual(lines, [("2 rhythm", "tempo bpm", [73, 77, 81], None)])
 
     def test_a_chord_root_outside_a_tracks_mode_counts_against_that_mode(self):
@@ -173,10 +178,31 @@ class Scorecard(unittest.TestCase):
         self.assertIsNone(path("decay_ms")({"decay_ms": None}))
 
     def test_targets_are_true_quartiles_and_a_row_no_track_measures_is_null(self):
-        rows = [{"tempo": t} for t in (70, 75, 80, 85)]
-        made = targets({STUDY: rows, TIMBRE: [], BASS: [], STEMFAD: []})
+        rows = {f"s-{i}": {"powers": KIT, "tempo": t} for i, t in enumerate((70, 75, 80, 85))}
+        made = targets({STUDY: rows, TIMBRE: {}, BASS: {}, STEMFAD: {}})
         self.assertEqual(made["2 rhythm"]["tempo bpm"], [73.75, 77.5, 81.25])
         self.assertIsNone(made["2 rhythm"]["kicks /bar"])
+
+    def test_a_style_mostly_without_a_kit_has_no_target_only_its_kits_measure(self):
+        kitless = {f"s-{i}": {"powers": NO_KIT, "tempo": None, "polyphony": 3.0} for i in range(3)}
+        kits = {"s-9": {"powers": KIT, "tempo": 75.0, "polyphony": 4.0}}
+        made = targets({
+            STUDY: kitless | kits,
+            TIMBRE: {"a.wav": {"onsets_per_s": 2.0}},
+            BASS: {},
+            STEMFAD: {"s-0": {"bass": 0.2}, "s-9": {"drums": 0.5, "bass": 0.3}},
+        })
+        self.assertIsNone(made["2 rhythm"]["tempo bpm"])
+        self.assertIsNone(made["4 source"]["drums FAD"])
+        self.assertEqual(made["3 melody"]["polyphony"], [3.0, 3.0, 3.25])
+        self.assertEqual(made["4 source"]["bass FAD"], [0.225, 0.25, 0.275])
+        self.assertEqual(made["2 rhythm"]["onsets /s"], [2.0, 2.0, 2.0])
+
+    def test_a_style_mostly_with_a_kit_keeps_a_row_few_tracks_measure(self):
+        kits = {f"s-{i}": {"powers": KIT, "snare": {"centroid_hz": None}} for i in range(3)}
+        kits["s-9"] = {"powers": KIT, "snare": {"centroid_hz": 900.0}}
+        made = targets({STUDY: kits, TIMBRE: {}, BASS: {}, STEMFAD: {}})
+        self.assertEqual(made["4 source"]["snare centroid Hz"], [900.0, 900.0, 900.0])
 
     def test_every_styles_committed_targets_cover_every_row_in_order(self):
         committed = json.loads(TARGETS.read_text())
@@ -198,8 +224,8 @@ class Scorecard(unittest.TestCase):
             refs = Path(tmp, "refs")
             refs.mkdir()
             files = {
-                "study-sleep.json": {f"sleep-{i:03d}": {"tempo": t} for i, t in enumerate((70, 75, 80, 85))}
-                | {"jazz-000": {"tempo": 500}},
+                "study-sleep.json": {f"sleep-{i:03d}": {"powers": KIT, "tempo": t} for i, t in enumerate((70, 75, 80, 85))}
+                | {"jazz-000": {"powers": KIT, "tempo": 500}},
                 "timbre.json": {},
                 "basstone.json": {},
                 "stemfad.json": {},
@@ -214,7 +240,7 @@ class Scorecard(unittest.TestCase):
 
     def test_a_row_its_styles_tracks_never_measure_says_so(self):
         target = {"2 rhythm": {"kicks /bar": None}}
-        lines = list(card(target, {STUDY: [{"drums": {"kick": {"per_bar": 2.0}}}]}))
+        lines = list(card(target, {STUDY: {"a": {"drums": {"kick": {"per_bar": 2.0}}}}}))
         self.assertEqual(lines, [("2 rhythm", "kicks /bar", None, (2.0, False, None))])
         printed = io.StringIO()
         with contextlib.redirect_stdout(printed):
@@ -243,6 +269,12 @@ class Scorecard(unittest.TestCase):
         self.assertRegex(card_text, r"bass centroid Hz\s.*\s301\.00\s")
         self.assertRegex(card_text, r"tempo bpm\s.*\s77\.00\s")
         self.assertNotIn("9000000000", card_text)
+
+
+    def test_the_cli_runs_isolated_as_targets_and_score_run_it(self):
+        ran = subprocess.run([sys.executable, "-I", str(HERE / "scorecard.py")], capture_output=True, text=True)
+        self.assertNotIn("Error", ran.stderr)
+        self.assertIn("scorecard.py targets STYLE DIR", ran.stderr)
 
 
 if __name__ == "__main__":

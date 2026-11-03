@@ -5,9 +5,10 @@ the style's references'.
   modal run stemfad.py::run --corpus STYLE --out DIR [--prefix take-NAME_]
 
 Held-out references say what a real track scores, stem by stem, so a take's
-distance reads against that and not against a number on its own. What comes
-home is distances, the held-out references' and the takes PREFIX picks; the
-stems stay on the Volume.
+distance reads against that and not against a number on its own. A track
+without a kit (`grid.has_kit`) has no drums to measure, in the references'
+statistics or as a distance. What comes home is distances, the held-out
+references' and the takes PREFIX picks; the stems stay on the Volume.
 """
 
 import json
@@ -78,10 +79,15 @@ def run(corpus: str, out: str, prefix: str = ""):
     refs_prefix = f"{corpus}-"
     keys = sorted(e.path.rsplit("/", 1)[1] for e in study.listdir("/stems"))
     keys = [k for k in keys if k.startswith(refs_prefix) or (prefix and k.startswith(prefix))]
+    from grid import has_kit
+
     batches = [keys[i::SHARDS] for i in range(SHARDS)]
     frames = {}
     for part in embed.map(batches):
         frames.update(part)
+    for key in frames:
+        if not has_kit(json.loads(b"".join(study.read_file(f"/stems/{key}/done")))):
+            frames[key].pop("drums", None)
     refs = sorted(k for k in frames if k.startswith(refs_prefix))
     if not refs:
         raise SystemExit(f"stemfad.py: no stems start with {refs_prefix!r}")
@@ -98,7 +104,11 @@ def run(corpus: str, out: str, prefix: str = ""):
 
     by_track = {}
     for name in STEMS:
-        target = stats(np.concatenate([np.array(frames[k][name]) for k in train if name in frames[k]]))
+        known = [np.array(frames[k][name]) for k in train if name in frames[k]]
+        if not known:
+            print(name, "no reference holds it")
+            continue
+        target = stats(np.concatenate(known))
         rows = {k: distance(target, stats(np.array(frames[k][name]))) for k in frames if k not in train and name in frames[k]}
         for key, value in rows.items():
             by_track.setdefault(key, {})[name] = value

@@ -24,6 +24,10 @@ import sys
 from pathlib import Path
 from statistics import median, quantiles
 
+# `-I` keeps the script's own directory off the path, so grid.py is put on it
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from grid import has_kit
+
 HERE = Path(__file__).resolve().parent
 TARGETS = HERE / "targets.json"
 STUDY, TIMBRE, BASS, STEMFAD = "study", "timbre", "bass", "stemfad"
@@ -160,12 +164,21 @@ def quartiles(values):
 
 
 def targets(sources):
+    """Each row's quartiles over a style's tracks, `sources` keyed by track.
+    Where most of them have no kit, a row only its kit tracks measure is null
+    too: it would describe the few, not the style (opinion)."""
+    study = sources[STUDY]
+    kitless = {key for key, row in study.items() if not has_kit(row["powers"])}
+    few_kits = len(kitless) > len(study) / 2
     out = {}
     for layer, rows in LAYERS:
         out[layer] = {}
         for label, source, read in rows:
-            values = [v for v in map(read, sources[source]) if v is not None]
-            out[layer][label] = [round(q, 3) for q in quartiles(values)] if values else None
+            measured = {key: v for key, v in ((k, read(r)) for k, r in sources[source].items()) if v is not None}
+            # `timbre.json` keys its rows by path, so they can't say which track has a kit
+            kits_only = few_kits and set(measured) <= set(study) and not set(measured) & kitless
+            values = list(measured.values())
+            out[layer][label] = [round(q, 3) for q in quartiles(values)] if values and not kits_only else None
     return out
 
 
@@ -187,7 +200,7 @@ def card(target, sources):
     for layer, rows in LAYERS:
         for label, source, read in rows:
             if label in target.get(layer, {}):
-                values = [v for v in map(read, sources[source]) if v is not None]
+                values = [v for v in map(read, sources[source].values()) if v is not None]
                 quartile = target[layer][label]
                 yield layer, label, quartile, row(quartile, values) if values else None
 
@@ -221,12 +234,12 @@ def load(file):
 
 def measured(folder, prefix):
     """The measures in `folder` of the tracks whose keys start with `prefix`,
-    by source. `timbre.json` keys its rows by path, so its folder holds only
-    theirs."""
-    mine = lambda rows: [v for k, v in rows.items() if k.startswith(prefix)]
+    by source and track. `timbre.json` keys its rows by path, so its folder
+    holds only theirs."""
+    mine = lambda rows: {k: v for k, v in rows.items() if k.startswith(prefix)}
     return {
         STUDY: mine(load(folder / f"study-{prefix.strip('-')}.json")),
-        TIMBRE: list(load(folder / "timbre.json").values()),
+        TIMBRE: load(folder / "timbre.json"),
         BASS: mine(load(folder / "basstone.json")),
         STEMFAD: mine(load(folder / "stemfad.json")),
     }

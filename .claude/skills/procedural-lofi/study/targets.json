@@ -1,4 +1,312 @@
 {
+ "asian": {
+  "1 harmony": {
+   "triads %": [
+    41.544,
+    56.863,
+    83.567
+   ],
+   "maj7 %": [
+    2.641,
+    14.252,
+    24.18
+   ],
+   "min7 %": [
+    3.129,
+    16.124,
+    35.503
+   ],
+   "dom7 %": [
+    0.0,
+    0.0,
+    1.163
+   ],
+   "roots off the key %": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "beats a chord": [
+    3.36,
+    4.135,
+    5.015
+   ],
+   "loop bars": [
+    4.0,
+    4.0,
+    8.0
+   ]
+  },
+  "2 rhythm": {
+   "tempo bpm": [
+    65.2,
+    69.0,
+    73.65
+   ],
+   "onsets /s": [
+    2.433,
+    2.868,
+    3.407
+   ],
+   "kicks /bar": [
+    1.137,
+    1.44,
+    1.853
+   ],
+   "snares /bar": [
+    1.067,
+    1.295,
+    1.542
+   ],
+   "hats /bar": [
+    2.75,
+    3.92,
+    4.825
+   ],
+   "off-eighth": [
+    0.494,
+    0.502,
+    0.542
+   ],
+   "snare behind kick ms": [
+    -14.525,
+    -10.15,
+    -3.525
+   ],
+   "kick level sd dB": [
+    0.297,
+    1.005,
+    2.163
+   ],
+   "hat level sd dB": [
+    3.062,
+    3.935,
+    4.723
+   ],
+   "bass notes /bar": [
+    2.02,
+    2.48,
+    3.155
+   ],
+   "bass legato": [
+    0.682,
+    0.863,
+    0.938
+   ],
+   "bass on a beat": [
+    0.322,
+    0.416,
+    0.488
+   ],
+   "bass on an off-eighth": [
+    0.127,
+    0.172,
+    0.225
+   ],
+   "bass with a kick": [
+    0.057,
+    0.088,
+    0.126
+   ]
+  },
+  "3 melody": {
+   "pentatonic share": [
+    0.814,
+    0.895,
+    0.939
+   ],
+   "step share": [
+    0.3,
+    0.356,
+    0.431
+   ],
+   "top-line onsets /bar": [
+    7.637,
+    8.45,
+    9.455
+   ],
+   "on eighth grid": [
+    0.491,
+    0.523,
+    0.568
+   ],
+   "top-line median MIDI": [
+    63.0,
+    65.0,
+    68.0
+   ],
+   "repeat at 4 bars": [
+    0.063,
+    0.095,
+    0.139
+   ],
+   "repeat at 8 bars": [
+    0.051,
+    0.071,
+    0.103
+   ],
+   "repeat at 16 bars": [
+    0.041,
+    0.069,
+    0.115
+   ],
+   "polyphony": [
+    3.268,
+    3.71,
+    4.012
+   ],
+   "other median MIDI": [
+    61.0,
+    63.0,
+    64.0
+   ]
+  },
+  "4 source": {
+   "drums FAD": [
+    0.377,
+    0.394,
+    0.425
+   ],
+   "bass FAD": [
+    0.277,
+    0.287,
+    0.351
+   ],
+   "other FAD": [
+    0.365,
+    0.4,
+    0.457
+   ],
+   "kick decay ms": [
+    110.4,
+    131.0,
+    153.4
+   ],
+   "snare centroid Hz": [
+    759.85,
+    1129.8,
+    1605.075
+   ],
+   "snare decay ms": [
+    31.9,
+    37.7,
+    52.15
+   ],
+   "hat centroid Hz": [
+    1646.95,
+    3451.1,
+    5016.075
+   ],
+   "hat decay ms": [
+    44.2,
+    64.4,
+    93.15
+   ],
+   "bass centroid Hz": [
+    56.004,
+    63.255,
+    69.898
+   ],
+   "bass overtones dB": [
+    -21.065,
+    -17.174,
+    -13.412
+   ],
+   "bass under 45 Hz %": [
+    12.953,
+    29.734,
+    44.925
+   ],
+   "bass 62-90 Hz %": [
+    18.031,
+    32.409,
+    44.563
+   ],
+   "bass occupancy": [
+    0.582,
+    0.744,
+    0.93
+   ]
+  },
+  "5 balance": {
+   "drums %": [
+    21.238,
+    29.722,
+    41.601
+   ],
+   "bass %": [
+    15.506,
+    26.913,
+    36.898
+   ],
+   "other %": [
+    25.564,
+    36.737,
+    50.06
+   ]
+  },
+  "6 dynamics": {
+   "crest dB": [
+    13.847,
+    14.704,
+    15.728
+   ],
+   "body swing dB": [
+    9.806,
+    11.243,
+    12.935
+   ],
+   "low punch dB": [
+    6.58,
+    10.206,
+    13.178
+   ],
+   "perc share %": [
+    8.603,
+    11.401,
+    15.513
+   ]
+  },
+  "7 space": {
+   "side <125 dB": [
+    -31.243,
+    -26.296,
+    -23.401
+   ],
+   "side 125-500 dB": [
+    -6.566,
+    -5.325,
+    -3.599
+   ],
+   "side 500-2k dB": [
+    -4.48,
+    -3.19,
+    -1.74
+   ],
+   "side 2-8k dB": [
+    -6.518,
+    -4.407,
+    -2.47
+   ],
+   "LR correlation": [
+    0.666,
+    0.762,
+    0.833
+   ]
+  },
+  "8 texture": {
+   "clicks /min": [
+    288.323,
+    356.202,
+    397.617
+   ],
+   "hiss floor dB": [
+    -50.82,
+    -45.68,
+    -41.876
+   ]
+  }
+ },
  "hiphop": {
   "1 harmony": {
    "triads %": [
@@ -307,6 +615,214 @@
    ]
   }
  },
+ "jazz": {
+  "1 harmony": {
+   "triads %": [
+    8.588,
+    21.691,
+    42.613
+   ],
+   "maj7 %": [
+    8.604,
+    19.821,
+    30.208
+   ],
+   "min7 %": [
+    16.071,
+    25.708,
+    38.187
+   ],
+   "dom7 %": [
+    8.662,
+    16.429,
+    27.048
+   ],
+   "roots off the key %": [
+    0.0,
+    2.632,
+    10.187
+   ],
+   "beats a chord": null,
+   "loop bars": null
+  },
+  "2 rhythm": {
+   "tempo bpm": null,
+   "onsets /s": [
+    2.544,
+    3.021,
+    3.82
+   ],
+   "kicks /bar": null,
+   "snares /bar": null,
+   "hats /bar": null,
+   "off-eighth": null,
+   "snare behind kick ms": null,
+   "kick level sd dB": null,
+   "hat level sd dB": null,
+   "bass notes /bar": null,
+   "bass legato": [
+    0.894,
+    0.925,
+    0.942
+   ],
+   "bass on a beat": null,
+   "bass on an off-eighth": null,
+   "bass with a kick": null
+  },
+  "3 melody": {
+   "pentatonic share": [
+    0.696,
+    0.758,
+    0.81
+   ],
+   "step share": [
+    0.237,
+    0.281,
+    0.335
+   ],
+   "top-line onsets /bar": null,
+   "on eighth grid": null,
+   "top-line median MIDI": [
+    65.0,
+    68.0,
+    71.0
+   ],
+   "repeat at 4 bars": null,
+   "repeat at 8 bars": null,
+   "repeat at 16 bars": null,
+   "polyphony": [
+    2.925,
+    3.495,
+    4.002
+   ],
+   "other median MIDI": [
+    60.0,
+    62.0,
+    63.0
+   ]
+  },
+  "4 source": {
+   "drums FAD": null,
+   "bass FAD": [
+    0.167,
+    0.198,
+    0.224
+   ],
+   "other FAD": [
+    0.219,
+    0.236,
+    0.258
+   ],
+   "kick decay ms": null,
+   "snare centroid Hz": null,
+   "snare decay ms": null,
+   "hat centroid Hz": null,
+   "hat decay ms": null,
+   "bass centroid Hz": [
+    80.837,
+    88.622,
+    95.948
+   ],
+   "bass overtones dB": [
+    -12.741,
+    -8.382,
+    -6.613
+   ],
+   "bass under 45 Hz %": [
+    1.138,
+    2.362,
+    6.084
+   ],
+   "bass 62-90 Hz %": [
+    42.565,
+    55.231,
+    65.919
+   ],
+   "bass occupancy": [
+    0.889,
+    0.938,
+    0.971
+   ]
+  },
+  "5 balance": {
+   "drums %": [
+    0.058,
+    0.136,
+    0.374
+   ],
+   "bass %": [
+    33.647,
+    45.304,
+    57.49
+   ],
+   "other %": [
+    41.491,
+    54.167,
+    65.934
+   ]
+  },
+  "6 dynamics": {
+   "crest dB": [
+    14.738,
+    16.347,
+    17.691
+   ],
+   "body swing dB": [
+    15.577,
+    18.236,
+    20.492
+   ],
+   "low punch dB": [
+    9.623,
+    11.43,
+    13.185
+   ],
+   "perc share %": [
+    3.723,
+    4.358,
+    5.16
+   ]
+  },
+  "7 space": {
+   "side <125 dB": [
+    -28.993,
+    -23.47,
+    -17.3
+   ],
+   "side 125-500 dB": [
+    -6.386,
+    -4.944,
+    -3.417
+   ],
+   "side 500-2k dB": [
+    -3.734,
+    -2.492,
+    -1.049
+   ],
+   "side 2-8k dB": [
+    -6.32,
+    -3.951,
+    -1.553
+   ],
+   "LR correlation": [
+    0.534,
+    0.684,
+    0.778
+   ]
+  },
+  "8 texture": {
+   "clicks /min": [
+    125.028,
+    206.133,
+    275.904
+   ],
+   "hiss floor dB": [
+    -50.551,
+    -45.533,
+    -41.518
+   ]
+  }
+ },
  "sleep": {
   "1 harmony": {
    "triads %": [
@@ -394,11 +910,7 @@
    ]
   },
   "4 source": {
-   "drums FAD": [
-    0.263,
-    0.303,
-    0.353
-   ],
+   "drums FAD": null,
    "bass FAD": [
     0.17,
     0.201,
