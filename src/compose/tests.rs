@@ -63,19 +63,29 @@ fn a_songs_bars_cycle_the_loop_it_drew() {
     }
 }
 
+/// C major pitch classes, the one scale [`MAJOR_LOOPS`] and [`MINOR_LOOPS`]
+/// are written in.
+const C_MAJOR: [u8; 7] = [0, 2, 4, 5, 7, 9, 11];
+
+/// A song's key's pitch classes: [`C_MAJOR`] over the tonic its pool starts
+/// on.
+fn key_pcs(harmony: &Harmony) -> [u8; 7] {
+    C_MAJOR.map(|pc| (pc + harmony.melody_pcs[0]) % OCTAVE)
+}
+
 /// A song keeps to its key as the tracks do (LOFI-BIBLE R3): every note in
 /// it, its root, third and 7th sounding (R1).
 #[test]
 fn every_bar_keeps_to_its_songs_key() {
     for (mood, seed) in songs() {
         let harmony = composed(mood, seed).1;
+        let key = key_pcs(&harmony);
         for chord in &harmony.bars {
             let sounding = pcs(&chord.notes);
             assert!(
-                (sounding.iter()).all(|pc| harmony.scale_pcs.contains(pc)),
-                "{mood:?} seed {seed}: {:?} leaves {:?}",
-                chord.notes,
-                harmony.scale_pcs
+                (sounding.iter()).all(|pc| key.contains(pc)),
+                "{mood:?} seed {seed}: {:?} leaves {key:?}",
+                chord.notes
             );
             for offsets in [[MINOR_THIRD, MAJOR_THIRD], [MINOR_SEVENTH, MAJOR_SEVENTH]] {
                 let tone = offsets.map(|i| (chord.root_pc + i) % OCTAVE);
@@ -90,13 +100,39 @@ fn every_bar_keeps_to_its_songs_key() {
     }
 }
 
+/// The lead's pick among a bar's chord tones never finds none: every chord
+/// of both grammars, in every key, sounds a tone of LOFI-BIBLE R9's pool in
+/// the top octave of each mood's lead register, the narrowest window the
+/// lead picks from.
+#[test]
+fn every_chord_offers_the_lead_a_tone_of_its_pool() {
+    for (loops, major) in [(&MAJOR_LOOPS[..], true), (&MINOR_LOOPS[..], false)] {
+        for key in 0..OCTAVE {
+            let pool = melody_pcs(key, major);
+            for degree in loops.iter().flat_map(|l| l.iter()) {
+                let chord = degree.voiced(key);
+                for mood in MOODS {
+                    let lead = &mood.style().lead;
+                    let lo = lead.lo.max(lead.hi.saturating_sub(OCTAVE));
+                    let tones = chord_tones_in(&chord.notes, lo, lead.hi);
+                    assert!(
+                        tones.iter().any(|n| pool.contains(&(n % OCTAVE))),
+                        "{mood:?} key {key}: {:?} sounds none of {pool:?}",
+                        chord.notes
+                    );
+                }
+            }
+        }
+    }
+}
+
 /// A key a mood never reaches would narrow what hours of songs can sound
 /// like: the tracks sit in all twelve.
 #[test]
 fn every_mood_reaches_every_key() {
     for mood in MOODS {
-        let keys: BTreeSet<[u8; 7]> = (0..SWEEP)
-            .map(|seed| composed(mood, seed).1.scale_pcs)
+        let keys: BTreeSet<u8> = (0..SWEEP)
+            .map(|seed| composed(mood, seed).1.melody_pcs[0])
             .collect();
         assert_eq!(keys.len(), usize::from(OCTAVE), "{mood:?}");
     }
@@ -455,8 +491,9 @@ fn assert_well_formed(s: &Score, h: &Harmony, seed: u64) {
     }
     for &Note { at, midi: note, .. } in &s.sparkle {
         assert!(
-            h.scale_pcs.contains(&(note % 12)),
-            "seed {seed}: lead note {note} at {at}s outside its key"
+            h.melody_pcs.contains(&(note % 12)),
+            "seed {seed}: lead note {note} at {at}s outside LOFI-BIBLE R9's pool {:?}",
+            h.melody_pcs
         );
     }
     assert!(
@@ -499,6 +536,14 @@ fn outranks_the_walk(line: &[Sung], j: usize) -> bool {
     quote || close || peak
 }
 
+/// Whether bar `bar`'s chord offers the lead a tone of its pool other than
+/// its root, which a strong beat then sings (LOFI-BIBLE R9).
+fn sings_over_the_root(h: &Harmony, lead: &LeadStyle, bar: usize) -> bool {
+    let chord = &h.bars[bar];
+    (chord_tones_in(&chord.notes, lead.lo, lead.hi).iter())
+        .any(|n| h.melody_pcs.contains(&(n % OCTAVE)) && n % OCTAVE != chord.root_pc)
+}
+
 /// Whether note `j` follows a leap past a major third, which it resolves; the
 /// lead's first leap starts from a note it never sings, so note 1's is unknown.
 fn resolves(line: &[Sung], j: usize) -> Option<bool> {
@@ -507,10 +552,11 @@ fn resolves(line: &[Sung], j: usize) -> Option<bool> {
 
 #[test]
 fn strong_beats_sing_chord_tones_unless_a_rule_outranks_them() {
-    let mut checked = 0;
+    let (mut checked, mut over_roots) = (0, 0);
     for mood in MOODS {
+        let lead = &mood.style().lead;
         for seed in 0..SWEEP {
-            let s = compose(mood, seed);
+            let (s, h) = composed(mood, seed);
             let line = sung(&s);
             for (j, n) in line.iter().enumerate() {
                 let strong = n.beat.fract() == 0.0 || n.beat.fract() == 0.75;
@@ -525,10 +571,20 @@ fn strong_beats_sing_chord_tones_unless_a_rule_outranks_them() {
                     n.note,
                     n.bar
                 );
+                if sings_over_the_root(&h, lead, n.bar) {
+                    over_roots += 1;
+                    assert_ne!(
+                        n.note % OCTAVE,
+                        h.bars[n.bar].root_pc,
+                        "{mood:?} seed {seed}: strong note {} in bar {} on its root",
+                        n.note,
+                        n.bar
+                    );
+                }
             }
         }
     }
-    assert!(checked > 0);
+    assert!(checked > 0 && over_roots > 0);
 }
 
 #[test]
@@ -560,9 +616,10 @@ fn a_leap_resolves_by_a_step_against_it() {
                 checked += 1;
                 let leap = i16::from(line[j - 1].note) - i16::from(line[j - 2].note);
                 let step = i16::from(line[j].note) - i16::from(line[j - 1].note);
-                // a step held at the register's edge stays put
+                // a step is one degree of R9's pool, at most its widest gap,
+                // and one held at the register's edge stays put
                 assert!(
-                    step.signum() != leap.signum() && step.abs() <= 2,
+                    step.signum() != leap.signum() && step.abs() <= i16::from(MINOR_THIRD),
                     "{mood:?} seed {seed}: a leap of {leap} met by {step}"
                 );
             }
@@ -577,7 +634,7 @@ fn the_peak_and_the_close_land_on_chord_tones_and_the_close_comes_home() {
     for mood in MOODS {
         let lead = &mood.style().lead;
         for seed in 0..SWEEP {
-            let s = compose(mood, seed);
+            let (s, h) = composed(mood, seed);
             let line = sung(&s);
             if let Some(peak) = line.iter().find(|n| n.bar == 5 && n.i == 0) {
                 peaks += 1;
@@ -586,13 +643,21 @@ fn the_peak_and_the_close_land_on_chord_tones_and_the_close_comes_home() {
                     "{mood:?} seed {seed}: the peak {} is off its chord",
                     peak.note
                 );
+                assert!(
+                    !sings_over_the_root(&h, lead, 5) || peak.note % OCTAVE != h.bars[5].root_pc,
+                    "{mood:?} seed {seed}: the peak {} is on its root",
+                    peak.note
+                );
             }
             let (first, last) = (&line[0], &line[line.len() - 1]);
             if last.bar != GEN_LOOP_BARS - 1 {
                 continue;
             }
             closes += 1;
-            let chord = pcs(&s.bar_chords[last.bar]);
+            // the chord's tones R9's pool sings
+            let chord: Vec<u8> = (pcs(&s.bar_chords[last.bar]).into_iter())
+                .filter(|pc| h.melody_pcs.contains(pc))
+                .collect();
             let distance = |n: u8| (i16::from(n) - i16::from(first.note)).abs();
             let nearer = (lead.lo..=lead.hi)
                 .filter(|n| chord.contains(&(n % 12)))
@@ -772,4 +837,4 @@ fn every_seed_composes_the_score_it_did() {
     assert_eq!(h, EVERY_SEED_GOLDEN, "{h:#018x}");
 }
 
-const EVERY_SEED_GOLDEN: u64 = 0xb46e_9b09_90b2_957b;
+const EVERY_SEED_GOLDEN: u64 = 0x4962_aa36_4086_89fd;

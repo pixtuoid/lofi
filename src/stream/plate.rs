@@ -26,7 +26,7 @@ const SPARKLE_RETURN_UNDER_LU: f64 = 9.6;
 /// `lofi_measure --pins` prints each beside the send a run gives now.
 const PAD_SEND_DB: f64 = 0.8;
 const KEYS_SEND_DB: f64 = -0.3;
-const SPARKLE_SEND_DB: f64 = -6.9;
+const SPARKLE_SEND_DB: f64 = -7.1;
 
 /// `lane`'s send into the plate in dB on its mix level, and how far under
 /// its dry lane that puts its return; none for a lane lofi keeps dry: the
