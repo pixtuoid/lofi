@@ -108,6 +108,7 @@ LAYERS = [
         ("top-line median MIDI", STUDY, item(1, "melody", "register")),
         ("repeat at 4 bars", STUDY, path("melody", "repeat_at_bars", "4")),
         ("repeat at 8 bars", STUDY, path("melody", "repeat_at_bars", "8")),
+        ("repeat at 16 bars", STUDY, path("melody", "repeat_at_bars", "16")),
         ("polyphony", STUDY, path("polyphony")),
         ("other median MIDI", STUDY, item(1, "other_register")),
     ]),
