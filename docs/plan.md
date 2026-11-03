@@ -30,8 +30,10 @@ The card is worked top-down. These rows wait on others:
   8 (#78), so the lockstep loop must run longer than a song before it
   repeats. A 32-bar loop, with the form's phrase and the lead's period kept,
   ran the library tests about 3.3 times as long, on the whole-lane renders
-  and each song's texture loop (the commit that wrote this file). Those come
-  first, as a PR of their own.
+  and each song's texture loop (the commit that wrote this file). Two
+  refactors come first, each a PR of its own: `GEN_LOOP_BARS`, which names the
+  loop, the form's phrase and the lead's period at once, splits in three,
+  byte-identical; and those renders stop scaling with the loop.
 - **`lofi_bench` times by the wall clock**, so load from elsewhere fails its
   gate (#72). `std::time`'s clocks are `Instant` and `SystemTime`, none a
   thread's CPU time (<https://doc.rust-lang.org/1.99.1/std/time/index.html>),
