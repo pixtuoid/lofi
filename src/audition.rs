@@ -221,8 +221,8 @@ pub fn transform(buf: &[f32]) -> (Vec<f64>, Vec<f64>) {
 /// target.
 pub const TARGET_LUFS: f64 = -16.0;
 
-/// The seeds [`WHOLE_LANE_LUFS_SD`] and [`SONG_LUFS_SD`] were measured over,
-/// each seed's first song.
+/// The seeds [`WHOLE_LANE_LUFS_SD`] was measured over, each seed's first
+/// song.
 pub const LUFS_SEEDS: Range<u64> = 0..24;
 
 /// The seeds `lofi_measure --pins` takes the stream's staging over, each
@@ -240,18 +240,8 @@ pub const WHOLE_LANE_LUFS_SD: [(f32, f32, f64); 2] = [
     (TIER_INTENSITIES[1], 0.0, 0.4642),
 ];
 
-/// How much a `Performance`'s songs' gated loudness varied across
-/// [`LUFS_SEEDS`], each song played alone, as [`lufs_sd`] reads it, in a
-/// room `lofi_bench` plays: `(intensity, daylight, LU)`. A run's songs vary
-/// no more than these, songs that played alone: `lofi_measure --pins` prints
-/// it beside this. A non-regression, not a target.
-pub const SONG_LUFS_SD: [(f32, f32, f64); 2] = [
-    (TIER_INTENSITIES[0], 1.0, 0.4061),
-    (TIER_INTENSITIES[2], 1.0, 0.3131),
-];
-
 /// The most `songs` songs' loudness may vary against `reference`, a row of
-/// [`WHOLE_LANE_LUFS_SD`] or [`SONG_LUFS_SD`]: two standard errors of the
+/// [`WHOLE_LANE_LUFS_SD`]: two standard errors of the
 /// difference over it, of two sample standard deviations each with a
 /// standard error of about σ/√(2(n−1)) when the sample is normal (eq. 3 of
 /// <https://web.eecs.umich.edu/~fessler/papers/files/tr/stderr.pdf>).

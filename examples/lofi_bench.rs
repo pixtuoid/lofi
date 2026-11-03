@@ -14,7 +14,7 @@ use std::hint::black_box;
 use std::ops::Range;
 use std::process::ExitCode;
 
-use pixtuoid_lofi::audition::{self, SONG_LUFS_SD, TIER_INTENSITIES};
+use pixtuoid_lofi::audition::{self, TIER_INTENSITIES};
 use pixtuoid_lofi::dsp::SAMPLE_RATE;
 use pixtuoid_lofi::{Controls, Frame, Performance};
 
@@ -44,6 +44,12 @@ const MID_SONG_DAYLIGHT: f32 = f32::midpoint(Controls::DUSK, 1.0);
 /// How long each room plays, in seconds, to the end of its last song.
 /// The mean settles within minutes, and this spans many song transitions.
 const ROOM_S: u32 = 20 * 60;
+
+/// The most a song of a room's run may sit from its own level played alone,
+/// in LU: EBU R 128's permitted deviation from a target, which "exists to
+/// allow for minor variations of meter calibrations and errors"
+/// (<https://tech.ebu.ch/docs/r/r128-2014.pdf>).
+const SONG_LEVEL_TOLERANCE_LU: f64 = 0.5;
 
 fn main() -> ExitCode {
     if cfg!(debug_assertions) {
@@ -151,15 +157,11 @@ fn slowest_chunk(buf: &mut [Frame]) -> Result<(f64, u64, u64), String> {
 
 /// Plays [`ROOM_S`] of `room` under `controls` in `buf`-long chunks, and
 /// says whether it passed its gates: the mean real-time factor within
-/// [`MEAN_RTF`], every frame finite, and its songs' gated loudness varying
-/// within [`audition::lufs_sd_bound`] of its songs' played alone.
+/// [`MEAN_RTF`], every frame finite, and each song's gated loudness within
+/// [`SONG_LEVEL_TOLERANCE_LU`] of the same song played alone. Each song is
+/// held to itself, not to other songs' spread, so what the run's sequencing
+/// does to a level shows, and how far a seed's songs differ doesn't.
 fn play_room(buf: &mut [Frame], room: &str, controls: Controls) -> bool {
-    let Some(&(.., alone)) =
-        (SONG_LUFS_SD.iter()).find(|&&(i, d, _)| i == controls.intensity && d == controls.daylight)
-    else {
-        say(&format!("{room} room: no songs' loudness to hold it to"));
-        return false;
-    };
     let seed = SEEDS.start;
     let mut music = Performance::new(seed, controls);
     let (mut took, mut songs) = (0.0, Vec::new());
@@ -181,22 +183,33 @@ fn play_room(buf: &mut [Frame], room: &str, controls: Controls) -> bool {
             }
             song.extend_from_slice(&buf[..n]);
         }
-        let [left, right] = audition::channels(&song);
-        songs.push(audition::gated_lufs(&[&left, &right], SAMPLE_RATE));
+        songs.push(lufs(&song));
     }
     let played = music.position() as f64 / f64::from(SAMPLE_RATE);
     let rtf = took / played;
-    let (sd, bound) = (
-        audition::lufs_sd(&songs),
-        audition::lufs_sd_bound(alone, songs.len()),
-    );
+    let offs: Vec<f64> = (songs.iter().enumerate())
+        .map(|(k, &run)| (run - lufs(&audition::song(seed, k as u64, controls, &[]))).abs())
+        .collect();
+    let worst = worst(&offs);
     say(&format!(
-        "{room} room, {:.1} min: mean real-time factor {rtf:.4} (gate {MEAN_RTF}); {} songs, every frame finite, gated loudness sd {sd:.4} LU (gate {bound:.4})",
+        "{room} room, {:.1} min: mean real-time factor {rtf:.4} (gate {MEAN_RTF}); {} songs, every frame finite, each within {worst:.3} LU of itself played alone (gate {SONG_LEVEL_TOLERANCE_LU})",
         played / 60.0,
         songs.len()
     ));
-    // `<=`, which the NaN sd a silent song's -inf LUFS makes fails
-    rtf <= MEAN_RTF && sd <= bound
+    // `<=`, which the NaN a silent song's -inf LUFS leaves fails
+    rtf <= MEAN_RTF && offs.iter().all(|&off| off <= SONG_LEVEL_TOLERANCE_LU)
+}
+
+/// The largest of `offs`, or NaN where one is: `f64::max` drops a NaN, which
+/// the gate fails on, and the room's line would print a passing figure.
+fn worst(offs: &[f64]) -> f64 {
+    (offs.iter().copied()).fold(0.0, |a, b| if b.is_nan() || b > a { b } else { a })
+}
+
+/// `frames`' gated loudness, in LUFS.
+fn lufs(frames: &[Frame]) -> f64 {
+    let [left, right] = audition::channels(frames);
+    audition::gated_lufs(&[&left, &right], SAMPLE_RATE)
 }
 
 /// What the host lends the bench: std's clock and stdout natively.
@@ -283,5 +296,18 @@ mod host {
     /// The harness names the host before the bench runs.
     pub(crate) fn machine() -> String {
         "wasm32-unknown-unknown, on the host named above".into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::worst;
+
+    #[test]
+    fn the_worst_offset_is_the_largest_and_a_nan_wins() {
+        assert_eq!(worst(&[0.1, 0.3, 0.2]), 0.3);
+        assert_eq!(worst(&[0.1, f64::INFINITY]), f64::INFINITY);
+        assert!(worst(&[0.1, f64::NAN, 0.2]).is_nan());
+        assert!(worst(&[f64::NAN, 0.2]).is_nan());
     }
 }
