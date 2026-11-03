@@ -56,9 +56,8 @@ method of https://arxiv.org/abs/2311.01616 (ICASSP 2024):
   https://arxiv.org/abs/2311.01616), so both takes of a pair are scored on
   equally many frames.
 
-On the corpus, the panel ranks Lofi Girl's tracks over ours: a reference's
-middle minute scored over one of 16 takes at e8d016b, all at one loudness, in
-80% of pairs by CE and 88% by TuneJury (the commit that wrote this measures).
+The panel ranks the corpus's tracks over ours, which the commit that wrote
+this measures, so its veto on a step toward them stands.
 
 The weights' licences: Audiobox Aesthetics CC-BY 4.0, LAION-CLAP CC0 1.0,
 and TuneJury and MERT-v1-330M CC-BY-NC 4.0 (each Hugging Face card at the
