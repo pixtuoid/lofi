@@ -236,8 +236,8 @@ pub const STAGING_SEEDS: Range<u64> = 0..256;
 /// `Performance`'s loop, unarranged, varies no more than: `lofi_measure
 /// --pins` prints it beside this. A non-regression, not a target.
 pub const WHOLE_LANE_LUFS_SD: [(f32, f32, f64); 2] = [
-    (TIER_INTENSITIES[1], 1.0, 0.2499),
-    (TIER_INTENSITIES[1], 0.0, 0.4111),
+    (TIER_INTENSITIES[1], 1.0, 0.2984),
+    (TIER_INTENSITIES[1], 0.0, 0.3962),
 ];
 
 /// The most `songs` songs' loudness may vary against `reference`, a row of
