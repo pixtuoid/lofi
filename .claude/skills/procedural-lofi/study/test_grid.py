@@ -59,22 +59,21 @@ class Placement(unittest.TestCase):
 
 
 class Likeness(unittest.TestCase):
-    # a bar 16 steps long: onsets (16th from the first downbeat, pitch)
     def test_a_bar_matched_lag_bars_later_reads_whole(self):
-        line = [(0, 60), (6, 62), (16 * 16, 60), (16 * 16 + 6, 62)]
+        line = [(0, 60), (6, 62), (16 * STEPS, 60), (16 * STEPS + 6, 62)]
         self.assertEqual(likeness(line, 16), [1.0])
 
     def test_two_bars_share_the_onsets_both_hold_over_those_either_holds(self):
-        line = [(0, 60), (6, 62), (8 * 16, 60), (8 * 16 + 4, 64)]
+        line = [(0, 60), (6, 62), (8 * STEPS, 60), (8 * STEPS + 4, 64)]
         self.assertEqual(likeness(line, 8), [1 / 3])
 
     def test_a_pitch_or_a_16th_moved_is_another_onset(self):
-        line = [(0, 60), (16, 61), (32, 60), (32 + 1, 60)]
+        line = [(0, 60), (STEPS, 61), (2 * STEPS, 60), (2 * STEPS + 1, 60)]
         self.assertEqual(likeness(line, 1), [0.0, 0.0])
         self.assertEqual(likeness(line, 2), [0.5])
 
     def test_a_bar_with_none_lag_before_counts_for_nothing(self):
-        self.assertEqual(likeness([(0, 60), (16, 60)], 16), [])
+        self.assertEqual(likeness([(0, 60), (STEPS, 60)], 16), [])
 
 
 if __name__ == "__main__":
