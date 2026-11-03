@@ -946,15 +946,15 @@ fn melody(
     for (bar, beats) in rhythm.iter().enumerate() {
         let chord = &harmony.bars[bar];
         let tones = sung(chord_tones_in(&chord.notes, lo, hi));
-        // R9: a strong beat's chord tone is its 3rd or 7th over its root,
-        // where the pool holds one
-        let over_root: Vec<u8> = (tones.iter().copied())
+        // R9: a strong beat sings a chord tone other than its root, where the
+        // pool holds one
+        let rootless: Vec<u8> = (tones.iter().copied())
             .filter(|n| n % OCTAVE != chord.root_pc)
             .collect();
-        let strong_tones = if over_root.is_empty() {
+        let strong_tones = if rootless.is_empty() {
             &tones
         } else {
-            &over_root
+            &rootless
         };
         for (i, &beat) in beats.iter().enumerate() {
             let last = bar == last_bar && i == beats.len() - 1;

@@ -536,6 +536,14 @@ fn outranks_the_walk(line: &[Sung], j: usize) -> bool {
     quote || close || peak
 }
 
+/// Whether bar `bar`'s chord offers the lead a tone of its pool other than
+/// its root, which a strong beat then sings (LOFI-BIBLE R9).
+fn sings_over_the_root(h: &Harmony, lead: &LeadStyle, bar: usize) -> bool {
+    let chord = &h.bars[bar];
+    (chord_tones_in(&chord.notes, lead.lo, lead.hi).iter())
+        .any(|n| h.melody_pcs.contains(&(n % OCTAVE)) && n % OCTAVE != chord.root_pc)
+}
+
 /// Whether note `j` follows a leap past a major third, which it resolves; the
 /// lead's first leap starts from a note it never sings, so note 1's is unknown.
 fn resolves(line: &[Sung], j: usize) -> Option<bool> {
@@ -544,10 +552,11 @@ fn resolves(line: &[Sung], j: usize) -> Option<bool> {
 
 #[test]
 fn strong_beats_sing_chord_tones_unless_a_rule_outranks_them() {
-    let mut checked = 0;
+    let (mut checked, mut over_roots) = (0, 0);
     for mood in MOODS {
+        let lead = &mood.style().lead;
         for seed in 0..SWEEP {
-            let s = compose(mood, seed);
+            let (s, h) = composed(mood, seed);
             let line = sung(&s);
             for (j, n) in line.iter().enumerate() {
                 let strong = n.beat.fract() == 0.0 || n.beat.fract() == 0.75;
@@ -562,10 +571,20 @@ fn strong_beats_sing_chord_tones_unless_a_rule_outranks_them() {
                     n.note,
                     n.bar
                 );
+                if sings_over_the_root(&h, lead, n.bar) {
+                    over_roots += 1;
+                    assert_ne!(
+                        n.note % OCTAVE,
+                        h.bars[n.bar].root_pc,
+                        "{mood:?} seed {seed}: strong note {} in bar {} on its root",
+                        n.note,
+                        n.bar
+                    );
+                }
             }
         }
     }
-    assert!(checked > 0);
+    assert!(checked > 0 && over_roots > 0);
 }
 
 #[test]
@@ -622,6 +641,11 @@ fn the_peak_and_the_close_land_on_chord_tones_and_the_close_comes_home() {
                 assert!(
                     pcs(&s.bar_chords[5]).contains(&(peak.note % 12)),
                     "{mood:?} seed {seed}: the peak {} is off its chord",
+                    peak.note
+                );
+                assert!(
+                    !sings_over_the_root(&h, lead, 5) || peak.note % OCTAVE != h.bars[5].root_pc,
+                    "{mood:?} seed {seed}: the peak {} is on its root",
                     peak.note
                 );
             }
