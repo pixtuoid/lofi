@@ -25,5 +25,10 @@ modal_run stems.py::split --corpus "$style"
 modal_run analyze.py::run --prefix "$style-" --out "$out"
 modal_run basstone.py::run --prefix "$style-" --out "$out"
 modal_run stemfad.py::run --corpus "$style" --out "$out"
-"$HOME/.cache/lofi-judge/bin/python" -I timbre.py "$out/timbre.json" "$refs/audio/"*
+# the manifest's tracks, not whatever else sits in audio/
+files=()
+while IFS= read -r file; do
+    files+=("$refs/audio/$file")
+done < <(python3 -I -c 'import json, sys; print("\n".join(t["file"] for t in json.load(open(sys.argv[1]))["tracks"]))' "$refs/manifest.json")
+"$HOME/.cache/lofi-judge/bin/python" -I timbre.py "$out/timbre.json" "${files[@]}"
 python3 -I scorecard.py targets "$style" "$out"

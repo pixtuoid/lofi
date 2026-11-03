@@ -618,29 +618,29 @@
  "jazz": {
   "1 harmony": {
    "triads %": [
-    8.588,
-    21.691,
-    42.613
+    9.241,
+    20.922,
+    40.434
    ],
    "maj7 %": [
-    8.604,
-    19.821,
-    30.208
+    8.401,
+    19.66,
+    31.118
    ],
    "min7 %": [
     16.071,
-    25.708,
-    38.187
+    26.824,
+    38.031
    ],
    "dom7 %": [
-    8.662,
-    16.429,
-    27.048
+    9.449,
+    16.769,
+    26.075
    ],
    "roots off the key %": [
     0.0,
-    2.632,
-    10.187
+    2.907,
+    9.303
    ],
    "beats a chord": null,
    "loop bars": null
@@ -671,29 +671,29 @@
   },
   "3 melody": {
    "pentatonic share": [
-    0.696,
-    0.758,
-    0.81
+    0.704,
+    0.754,
+    0.817
    ],
    "step share": [
-    0.237,
-    0.281,
-    0.335
+    0.245,
+    0.288,
+    0.341
    ],
    "top-line onsets /bar": null,
    "on eighth grid": null,
    "top-line median MIDI": [
     65.0,
-    68.0,
+    68.75,
     71.0
    ],
    "repeat at 4 bars": null,
    "repeat at 8 bars": null,
    "repeat at 16 bars": null,
    "polyphony": [
-    2.925,
-    3.495,
-    4.002
+    2.882,
+    3.45,
+    3.88
    ],
    "other median MIDI": [
     60.0,
@@ -826,14 +826,14 @@
  "sleep": {
   "1 harmony": {
    "triads %": [
-    88.191,
+    88.175,
     100.0,
     100.0
    ],
    "maj7 %": [
     0.0,
     0.0,
-    8.913
+    8.847
    ],
    "min7 %": [
     0.0,
@@ -879,14 +879,14 @@
   },
   "3 melody": {
    "pentatonic share": [
-    0.899,
+    0.902,
     0.956,
     0.984
    ],
    "step share": [
-    0.337,
-    0.41,
-    0.506
+    0.334,
+    0.423,
+    0.511
    ],
    "top-line onsets /bar": null,
    "on eighth grid": null,
@@ -899,9 +899,9 @@
    "repeat at 8 bars": null,
    "repeat at 16 bars": null,
    "polyphony": [
-    2.587,
-    3.19,
-    3.745
+    2.547,
+    3.16,
+    3.665
    ],
    "other median MIDI": [
     52.0,

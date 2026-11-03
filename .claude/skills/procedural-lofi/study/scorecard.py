@@ -24,7 +24,8 @@ import sys
 from pathlib import Path
 from statistics import median, quantiles
 
-# `-I` keeps the script's own directory off the path, so grid.py is put on it
+# `-I` keeps the script's own directory off the path
+# (https://docs.python.org/3/using/cmdline.html#cmdoption-I), so grid.py is put on it
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from grid import has_kit
 
@@ -160,7 +161,10 @@ LAYERS = [
 
 
 def quartiles(values):
-    return quantiles(values, n=4, method="inclusive")
+    """One value is its own quartiles, as `quantiles` returns it from Python
+    3.13 (https://docs.python.org/3/library/statistics.html#statistics.quantiles);
+    CI's 3.12 raises."""
+    return quantiles(values, n=4, method="inclusive") if len(values) > 1 else values * 3
 
 
 def targets(sources):

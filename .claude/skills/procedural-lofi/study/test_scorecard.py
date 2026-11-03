@@ -16,6 +16,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import scorecard
+from grid import without_grid
 from scorecard import BASS, LAYERS, STEMFAD, STUDY, TARGETS, TIMBRE, card, main, outside_key, path, row, targets
 
 # stems' powers with a kit and with only a separation's residue
@@ -270,6 +271,17 @@ class Scorecard(unittest.TestCase):
         self.assertRegex(card_text, r"tempo bpm\s.*\s77\.00\s")
         self.assertNotIn("9000000000", card_text)
 
+
+    def test_a_track_without_a_kit_loses_exactly_the_rows_read_off_a_grid_or_a_hit(self):
+        row = without_grid({**FIXTURE[STUDY], "powers": NO_KIT})
+        lost = {label for _, rows in LAYERS for label, source, read in rows if source == STUDY and read(row) is None}
+        self.assertEqual(lost, {
+            "beats a chord", "loop bars", "tempo bpm", "kicks /bar", "snares /bar", "hats /bar", "off-eighth",
+            "snare behind kick ms", "kick level sd dB", "hat level sd dB", "bass notes /bar", "bass on a beat",
+            "bass on an off-eighth", "bass with a kick", "top-line onsets /bar", "on eighth grid", "repeat at 4 bars",
+            "repeat at 8 bars", "repeat at 16 bars", "kick decay ms", "snare centroid Hz", "snare decay ms",
+            "hat centroid Hz", "hat decay ms",
+        })
 
     def test_the_cli_runs_isolated_as_targets_and_score_run_it(self):
         ran = subprocess.run([sys.executable, "-I", str(HERE / "scorecard.py")], capture_output=True, text=True)

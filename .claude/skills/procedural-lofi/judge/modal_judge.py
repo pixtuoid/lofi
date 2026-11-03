@@ -6,7 +6,7 @@ Usage, with modal-requirements.txt's client and a configured token:
   modal run modal_judge.py::upload_refs --refs-dir REFS --corpus STYLE
                                           STYLE's corpus, from REFS to the
                                           Volume's /STYLE
-  modal run modal_judge.py::provision     build the caches over it
+  modal run modal_judge.py::provision     build the caches over JUDGED's corpus
   modal run modal_judge.py::check         run every model in this lock's image
                                           on the warm-up take, offline
   modal run modal_judge.py::judge --batch DIR --base SHA --cand SHA [--out OUT] [--force-score]
@@ -293,11 +293,21 @@ def judge(batch: str, base: str, cand: str, out: str = "", force_score: bool = F
 @app.local_entrypoint()
 def upload_refs(refs_dir: str, corpus: str):
     """Uploads from `refs_dir` every reference of `corpus`, once its sha256
-    matches the manifest, over any the refs Volume holds under its name, then
-    the manifest, last: a judge never reads a manifest whose audio isn't
-    there. The corpora share `corpus-cache`, whose files their manifests'
-    sha256s name."""
+    matches the manifest, then the manifest, last: a judge never reads a
+    manifest whose audio isn't there. A corpus the Volume holds under another
+    manifest is refused, since its stems, keyed by manifest index, and the
+    judge's caches, keyed by the manifest's sha256, would read the old one.
+    The corpora share `corpus-cache`."""
     local = Path(refs_dir)
+    try:
+        held = b"".join(refs.read_file(f"/{corpus}/manifest.json"))
+    except FileNotFoundError:
+        held = None
+    if held not in (None, (local / "manifest.json").read_bytes()):
+        raise SystemExit(
+            f"the refs Volume holds another {corpus} corpus: a new selection replaces it, so remove /{corpus}"
+            f" there and /stems/{corpus}-* on the study Volume first, then provision if JUDGED reads it"
+        )
     manifest = json.loads((local / "manifest.json").read_text())["tracks"]
     with refs.batch_upload(force=True) as upload:
         for i, t in enumerate(manifest):

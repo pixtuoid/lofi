@@ -57,9 +57,12 @@ PITCH = {
     "G": 7, "G#": 8, "Ab": 8, "A": 9, "A#": 10, "Bb": 10, "B": 11, "Cb": 11,
 }
 TEMPO_AGREES = 0.08
-# the tempo prior a beat grid is checked against: librosa's pseudo-log-normal
-# prior (`librosa.feature.tempo`'s `start_bpm` and `std_bpm`, in octaves),
-# centred on LOFI-BIBLE.md's measured centre, 74-80 BPM
+# the tempo prior a beat grid is checked against: `librosa.feature.tempo`'s
+# default, log-normal over log2 of the tempo
+# (https://github.com/librosa/librosa/blob/0.10.2/librosa/feature/rhythm.py#L437),
+# so its width is in octaves, centred on LOFI-BIBLE.md's BPM centre; the width
+# is the one that agreed most with the hand hints it replaced, as the commit
+# that set it records
 PRIOR_BPM = 77.0
 PRIOR_OCTAVES = 0.5
 # Krumhansl & Kessler's key profiles
@@ -408,7 +411,12 @@ def one(key):
     pitched = bounce(root, ("bass", "other"), f"/tmp/{key}-pitched.wav")
     drums = stem(root, "drums")
     times, voices, levels = drum_hits(drums)
-    beats, tempo, downbeat, four_four, grid_from = beat_grid(mix, drums, times, voices)
+    if has_kit(powers):
+        beats, tempo, downbeat, four_four, grid_from = beat_grid(mix, drums, times, voices)
+    else:
+        # no kit, no beat to track: a fixed grid at the prior's tempo segments
+        # what `without_grid` keeps, so no tracker's choice moves it
+        beats, tempo, downbeat, four_four, grid_from = np.arange(0.0, drums.size / SR, 60.0 / PRIOR_BPM), PRIOR_BPM, 0, None, "fixed"
     bar_times = beats[downbeat:]
     sixteenths = np.interp(np.arange(0, (bar_times.size - 1) * STEPS_PER_BEAT + 1) / STEPS_PER_BEAT, np.arange(bar_times.size), bar_times)
     bass_notes = transcribe(root / "bass.flac", BASS_LOW_HZ, BASS_HIGH_HZ)

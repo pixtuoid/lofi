@@ -53,14 +53,15 @@ def likeness(line, lag):
 
 
 # a drums stem under this share of the mix's power holds the separation's
-# residue, no kit: Lofi Girl's sleep playlist peaks at 0.07 % and its main one
-# starts at 10 % (measured 2026-11-03)
+# residue, no kit: it sits between the kitless playlists' highest share and the
+# kit ones' lowest, as the commit that set it records
 MIN_KIT_SHARE = 0.01
-# the measures a line keeps without a grid: where its notes sit and how they
-# move, never how many fall in a bar or where
+# what each part keeps without a grid, which its tracker's grid only segments:
+# where its notes sit and how they move, a chord's quality and root; never a
+# count a bar, a place on the grid or a drum hit
 UNGRIDDED_BASS = ("register", "legato", "median_note_ms")
 UNGRIDDED_MELODY = ("register", "interval_hist", "pentatonic_share", "step_share")
-GRIDDED_HARMONY = ("bar_tokens", "bigrams", "beats_per_chord", "cycle_bars", "cycle_match")
+UNGRIDDED_HARMONY = ("qualities", "roots")
 
 
 def has_kit(powers):
@@ -69,20 +70,16 @@ def has_kit(powers):
 
 
 def without_grid(row):
-    """`row` with every measure read off a beat grid or a drum hit unset: a
-    track without a kit has neither, and its tracker's grid is a convention,
-    not the track's."""
-    def keep(line, fields):
-        return line and {k: (v if k in fields else None) for k, v in line.items()}
+    """`row` with every count a bar, every place on the grid and every drum hit
+    unset: a track without a kit has no beat grid, only the fixed one
+    `analyze.py` segments what it keeps on."""
+    def keep(part, fields):
+        return part and {k: (v if k in fields else None) for k, v in part.items()}
 
     return {
         **row,
-        "tempo": None,
-        "drums": None,
-        "kick": None,
-        "snare": None,
-        "hat": None,
-        "harmony": {k: (None if k in GRIDDED_HARMONY else v) for k, v in row["harmony"].items()},
+        **dict.fromkeys(("tempo", "beats", "downbeat", "four_four", "grid_from", "drums", "kick", "snare", "hat")),
+        "harmony": keep(row["harmony"], UNGRIDDED_HARMONY),
         "bass": keep(row["bass"], UNGRIDDED_BASS),
         "melody": keep(row["melody"], UNGRIDDED_MELODY),
     }

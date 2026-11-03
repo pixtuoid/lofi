@@ -81,11 +81,15 @@ class WithoutGrid(unittest.TestCase):
     ROW = {
         "powers": {"drums": 0.0005, "bass": 0.5, "other": 0.4995},
         "tempo": 79.5,
+        "beats": 200,
+        "downbeat": 1,
+        "four_four": 0.9,
+        "grid_from": "beat-this",
         "drums": {"kick": {"per_bar": 8.3}},
         "kick": {"decay_ms": 168.0},
         "snare": {"centroid_hz": 184.0},
         "hat": {"centroid_hz": 187.0},
-        "harmony": {"qualities": {"maj": 3}, "roots": {"0": 3}, "beats_per_chord": 30.2, "cycle_bars": 1},
+        "harmony": {"qualities": {"maj": 3}, "roots": {"0": 3}, "beats_per_chord": 30.2, "cycle_bars": 1, "bar_tokens": {"0:maj": 3}},
         "bass": {"register": [40.0], "legato": 0.8, "notes_per_bar": 0.7, "on_beat_share": 0.3},
         "melody": {"register": [50.0, 54.5, 59.0], "pentatonic_share": 0.96, "onsets_per_bar": 6.9, "repeat_at_bars": {"4": 0.05}},
         "polyphony": 3.2,
@@ -97,10 +101,11 @@ class WithoutGrid(unittest.TestCase):
 
     def test_a_track_without_a_kit_counts_nothing_by_its_grid_or_its_hits(self):
         row = without_grid(self.ROW)
-        for field in ("tempo", "drums", "kick", "snare", "hat"):
+        for field in ("tempo", "beats", "downbeat", "four_four", "grid_from", "drums", "kick", "snare", "hat"):
             self.assertIsNone(row[field], field)
         self.assertIsNone(row["harmony"]["beats_per_chord"])
         self.assertIsNone(row["harmony"]["cycle_bars"])
+        self.assertIsNone(row["harmony"]["bar_tokens"])
         self.assertIsNone(row["bass"]["notes_per_bar"])
         self.assertIsNone(row["bass"]["on_beat_share"])
         self.assertIsNone(row["melody"]["onsets_per_bar"])
@@ -109,6 +114,7 @@ class WithoutGrid(unittest.TestCase):
     def test_what_needs_no_grid_stays(self):
         row = without_grid(self.ROW)
         self.assertEqual(row["harmony"]["qualities"], {"maj": 3})
+        self.assertEqual(row["harmony"]["roots"], {"0": 3})
         self.assertEqual(row["bass"]["legato"], 0.8)
         self.assertEqual(row["melody"]["pentatonic_share"], 0.96)
         self.assertEqual(row["melody"]["register"], [50.0, 54.5, 59.0])
