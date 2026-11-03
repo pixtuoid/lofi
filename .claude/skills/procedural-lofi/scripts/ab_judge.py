@@ -56,9 +56,6 @@ method of https://arxiv.org/abs/2311.01616 (ICASSP 2024):
   https://arxiv.org/abs/2311.01616), so both takes of a pair are scored on
   equally many frames.
 
-The panel ranks the corpus's tracks over our takes, which the commit that
-wrote this measures.
-
 The weights' licences: Audiobox Aesthetics CC-BY 4.0, LAION-CLAP CC0 1.0,
 and TuneJury and MERT-v1-330M CC-BY-NC 4.0 (each Hugging Face card at the
 revision pinned below).
