@@ -8,7 +8,7 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from grid import STEPS, placed, placement
+from grid import STEPS, likeness, placed, placement
 
 # beats a second apart from a downbeat at 0, two bars of them
 BEATS = [float(t) for t in range(9)]
@@ -55,6 +55,25 @@ class Placement(unittest.TestCase):
         made = placement([-1.0, 9.0], BEATS, [], NEAR_S, 1)
         self.assertIsNone(made["on_beat_share"])
         self.assertIsNone(made["off_eighth_share"])
+
+
+
+class Likeness(unittest.TestCase):
+    def test_a_bar_matched_lag_bars_later_reads_whole(self):
+        line = [(0, 60), (6, 62), (16 * STEPS, 60), (16 * STEPS + 6, 62)]
+        self.assertEqual(likeness(line, 16), [1.0])
+
+    def test_two_bars_share_the_onsets_both_hold_over_those_either_holds(self):
+        line = [(0, 60), (6, 62), (8 * STEPS, 60), (8 * STEPS + 4, 64)]
+        self.assertEqual(likeness(line, 8), [1 / 3])
+
+    def test_a_pitch_or_a_16th_moved_is_another_onset(self):
+        line = [(0, 60), (STEPS, 61), (2 * STEPS, 60), (2 * STEPS + 1, 60)]
+        self.assertEqual(likeness(line, 1), [0.0, 0.0])
+        self.assertEqual(likeness(line, 2), [0.5])
+
+    def test_a_bar_with_none_lag_before_counts_for_nothing(self):
+        self.assertEqual(likeness([(0, 60), (STEPS, 60)], 16), [])
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
-"""Where a time falls on a track's beat grid, in the standard library alone so
-`test_grid.py` runs it without the study's image."""
+"""Where a time falls on a track's beat grid, and how alike its bars are, in
+the standard library alone so `test_grid.py` runs it without the study's
+image."""
 
 from bisect import bisect_right
 
@@ -35,3 +36,17 @@ def placement(starts, beats, kicks, near_s, n_bars):
         "off_eighth_share": share(step % STEPS_PER_BEAT == STEPS_PER_BEAT // 2 for step in steps),
         "with_kick_share": round(sum(with_kick) / len(starts), 3) if starts else None,
     }
+
+
+def likeness(line, lag):
+    """How alike each bar of `line`, `(16th from the first downbeat, pitch)`
+    onsets, is to the bar `lag` before it: the share of the onsets either
+    holds that both do, one a bar with a bar `lag` before it."""
+    by_bar = {}
+    for step, pitch in line:
+        by_bar.setdefault(step // STEPS, set()).add((step % STEPS, pitch))
+    return [
+        len(by_bar[bar] & by_bar[bar - lag]) / len(by_bar[bar] | by_bar[bar - lag])
+        for bar in by_bar
+        if bar - lag in by_bar
+    ]
