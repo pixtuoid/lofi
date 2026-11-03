@@ -189,9 +189,11 @@ class Scorecard(unittest.TestCase):
 
     def test_every_row_the_plan_names_is_one_the_card_prints(self):
         text = " ".join(PLAN.read_text().split())
-        runs = re.findall(r"\brows? ((?:`[^`]+`(?:,? and |, )?)+)", text)
+        runs = re.findall(r"\brows? ((?:`[^`]+`(?:, (?=`)|,? and )?)+)", text)
         named = [label for run in runs for label in re.findall(r"`([^`]+)`", run)]
         labels = {label for _, rows in LAYERS for label, _, _ in rows}
+        # a list that stops on its "and" lost its last row's backticks
+        self.assertEqual([run for run in runs if not run.endswith("`")], [])
         self.assertTrue(named)
         self.assertEqual([label for label in named if label not in labels], [])
 
