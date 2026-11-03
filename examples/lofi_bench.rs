@@ -190,7 +190,7 @@ fn play_room(buf: &mut [Frame], room: &str, controls: Controls) -> bool {
     let offs: Vec<f64> = (songs.iter().enumerate())
         .map(|(k, &run)| (run - lufs(&audition::song(seed, k as u64, controls, &[]))).abs())
         .collect();
-    let worst = offs.iter().copied().fold(0.0, f64::max);
+    let worst = worst(&offs);
     say(&format!(
         "{room} room, {:.1} min: mean real-time factor {rtf:.4} (gate {MEAN_RTF}); {} songs, every frame finite, each within {worst:.3} LU of itself played alone (gate {SONG_LEVEL_TOLERANCE_LU})",
         played / 60.0,
@@ -198,6 +198,12 @@ fn play_room(buf: &mut [Frame], room: &str, controls: Controls) -> bool {
     ));
     // `<=`, which the NaN a silent song's -inf LUFS leaves fails
     rtf <= MEAN_RTF && offs.iter().all(|&off| off <= SONG_LEVEL_TOLERANCE_LU)
+}
+
+/// The largest of `offs`, or NaN where one is: `f64::max` drops a NaN, which
+/// the gate fails on, and the room's line would print a passing figure.
+fn worst(offs: &[f64]) -> f64 {
+    (offs.iter().copied()).fold(0.0, |a, b| if b.is_nan() || b > a { b } else { a })
 }
 
 /// `frames`' gated loudness, in LUFS.
@@ -290,5 +296,18 @@ mod host {
     /// The harness names the host before the bench runs.
     pub(crate) fn machine() -> String {
         "wasm32-unknown-unknown, on the host named above".into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::worst;
+
+    #[test]
+    fn the_worst_offset_is_the_largest_and_a_nan_wins() {
+        assert_eq!(worst(&[0.1, 0.3, 0.2]), 0.3);
+        assert_eq!(worst(&[0.1, f64::INFINITY]), f64::INFINITY);
+        assert!(worst(&[0.1, f64::NAN, 0.2]).is_nan());
+        assert!(worst(&[f64::NAN, 0.2]).is_nan());
     }
 }
