@@ -2,37 +2,32 @@
 
 use super::voices::{ChordTone, bass_note, chord, drum_hit, ep_pluck_vel};
 use super::{NoteVoice, SR, bar_onset, onset};
-use crate::compose::{GEN_LOOP_BARS, Hit, Lane, Mood, Note, Score, kicks};
+use crate::compose::{GEN_LOOP_BARS, Hit, Lane, Note, Score, kicks};
 use crate::dsp::NoiseStream;
+
+/// Every recipe a style's lanes sound with: the ONE authority
+/// [`render_lane`](super::render_lane) and the lane chains read.
+pub(crate) struct Sound {
+    pub(crate) pad: PadTone,
+    pub(crate) chord: ChordTone,
+    pub(crate) sparkle: NoteRecipe,
+    pub(crate) keys: NoteRecipe,
+    pub(crate) bass: NoteRecipe,
+    pub(crate) drums: HitRecipe,
+    pub(crate) bed: Bed,
+}
 
 /// A generated pad's tone before the tape: a low-pass, then a slow swell.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PadTone {
     pub(crate) cutoff_hz: f32,
     pub(crate) swell_hz: f32,
-    swell_depth: f32,
+    pub(crate) swell_depth: f32,
     /// Its whole-lane stem's peak.
-    pub(super) peak: f32,
+    pub(crate) peak: f32,
 }
 
 impl PadTone {
-    pub(crate) fn of(mood: Mood) -> Self {
-        match mood {
-            Mood::Day => Self {
-                cutoff_hz: 2600.0,
-                swell_hz: 0.22,
-                swell_depth: 0.05,
-                peak: 0.7,
-            },
-            Mood::Night => Self {
-                cutoff_hz: 2200.0,
-                swell_hz: 0.15,
-                swell_depth: 0.04,
-                peak: 0.75,
-            },
-        }
-    }
-
     /// The swell's gain at its phase in radians, which the caller's clock
     /// keeps as [`room_tone`](super::room_tone)'s does.
     pub(crate) fn swell(self, phase: f32) -> f32 {
@@ -42,23 +37,6 @@ impl PadTone {
     /// The swell's gain on sample `i` of a whole-lane pad.
     pub(super) fn bed_swell(self, i: usize) -> f32 {
         self.swell(std::f32::consts::TAU * self.swell_hz * i as f32 / SR)
-    }
-}
-
-/// A lane's recipe at night and by day.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct ByMood<T> {
-    pub(crate) night: T,
-    pub(crate) day: T,
-}
-
-impl<T: Copy> ByMood<T> {
-    /// The recipe a `mood` song plays.
-    pub(crate) const fn at(&self, mood: Mood) -> T {
-        match mood {
-            Mood::Night => self.night,
-            Mood::Day => self.day,
-        }
     }
 }
 
@@ -78,112 +56,81 @@ pub(crate) struct HitRecipe {
     pub(crate) peak: f32,
 }
 
-/// Each lane's recipe: the ONE authority
-/// [`render_lane`](super::render_lane) and the lane chains read.
-pub(crate) const SPARKLE: ByMood<NoteRecipe> = ByMood {
-    night: NoteRecipe {
-        cutoff_hz: 2800.0,
-        peak: 0.5,
-    },
-    day: NoteRecipe {
-        cutoff_hz: 3200.0,
-        peak: 0.6,
-    },
-};
-pub(crate) const KEYS: ByMood<NoteRecipe> = ByMood {
-    night: NoteRecipe {
-        cutoff_hz: 2000.0,
-        peak: 0.7,
-    },
-    day: NoteRecipe {
-        cutoff_hz: 2400.0,
-        peak: 0.8,
-    },
-};
-pub(crate) const BASS: ByMood<NoteRecipe> = ByMood {
-    night: NoteRecipe {
-        cutoff_hz: 700.0,
-        peak: 0.82,
-    },
-    day: NoteRecipe {
-        cutoff_hz: 900.0,
-        peak: 0.704,
-    },
-};
-pub(crate) const DRUMS: ByMood<HitRecipe> = ByMood {
-    night: HitRecipe {
-        cutoff_hz: 6000.0,
-        drive: 2.0,
-        peak: 0.8,
-    },
-    day: HitRecipe {
-        cutoff_hz: 6500.0,
-        drive: 2.2,
-        peak: 0.85,
-    },
-};
+/// How a style's texture bed runs against its groove.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Bed {
+    /// On a length of its own, out of phase with the groove.
+    Free,
+    /// A loop long, ducking under every kick its groove lays, so the room
+    /// breathes with it.
+    Breathing,
+}
 
 /// What one lane of a score plays: the ONE mapping from a lane to its events
 /// and voice, read by [`render_lane`](super::render_lane) and by the stream
-/// alike.
+/// alike, each lane in the `sound` of its song's style.
 pub(crate) enum Part<'a> {
     /// A chord a bar, each held through the bar and its ring.
     Chords {
         chords: &'a [[u8; 4]; GEN_LOOP_BARS],
         bar_s: f32,
-        mood: Mood,
+        sound: &'static Sound,
     },
-    /// Notes, played through `voice` as `recipes` gives a `mood` song.
+    /// Notes, played through `voice` as `recipe` reads a style's sound,
+    /// which the stream grades between styles.
     Notes {
         events: &'a [Note],
         voice: NoteVoice,
-        recipes: ByMood<NoteRecipe>,
-        mood: Mood,
+        recipe: fn(&Sound) -> NoteRecipe,
+        sound: &'static Sound,
     },
-    /// Drum hits, played as `recipes` gives a `mood` song.
+    /// Drum hits, played as `recipe` reads a style's sound.
     Hits {
         hits: &'a [Hit],
-        recipes: ByMood<HitRecipe>,
-        mood: Mood,
+        recipe: fn(&Sound) -> HitRecipe,
+        sound: &'static Sound,
     },
     /// The texture: a bed with no notes, which [`Part::ducks`] under the
     /// kicks of `hits`.
-    Bed { mood: Mood, hits: &'a [Hit] },
+    Bed {
+        sound: &'static Sound,
+        hits: &'a [Hit],
+    },
 }
 
 pub(crate) fn part(score: &Score, lane: Lane) -> Part<'_> {
-    let mood = score.mood;
+    let sound = &score.style.sound;
     match lane {
         Lane::Pad => Part::Chords {
             chords: &score.bar_chords,
             bar_s: score.bar_s(),
-            mood,
+            sound,
         },
         Lane::Sparkle => Part::Notes {
             events: &score.sparkle,
             voice: score.lead_voice.voice(),
-            recipes: SPARKLE,
-            mood,
+            recipe: |sound| sound.sparkle,
+            sound,
         },
         Lane::Keys => Part::Notes {
             events: &score.keys,
             voice: ep_pluck_vel,
-            recipes: KEYS,
-            mood,
+            recipe: |sound| sound.keys,
+            sound,
         },
         Lane::Bass => Part::Notes {
             events: &score.bass,
             voice: bass_note,
-            recipes: BASS,
-            mood,
+            recipe: |sound| sound.bass,
+            sound,
         },
         Lane::Drums => Part::Hits {
             hits: &score.drums,
-            recipes: DRUMS,
-            mood,
+            recipe: |sound| sound.drums,
+            sound,
         },
         Lane::Texture => Part::Bed {
-            mood,
+            sound,
             hits: &score.drums,
         },
     }
@@ -204,15 +151,12 @@ impl Part<'_> {
         }
     }
 
-    /// The times in the loop a bed ducks under, in order: a night bed's
-    /// kicks, so the night room breathes with its groove, while the day room
-    /// runs free. The other lanes' sidechain is `whole::sidechained`'s.
+    /// The times in the loop a bed ducks under, in order: a
+    /// [`Bed::Breathing`] bed's kicks. The other lanes' sidechain is
+    /// `whole::sidechained`'s.
     pub(crate) fn ducks(&self) -> Vec<f32> {
         match *self {
-            Part::Bed {
-                mood: Mood::Night,
-                hits,
-            } => kicks(hits),
+            Part::Bed { sound, hits } if sound.bed == Bed::Breathing => kicks(hits),
             _ => Vec::new(),
         }
     }
@@ -224,8 +168,8 @@ impl Part<'_> {
             Part::Chords {
                 chords,
                 bar_s,
-                mood,
-            } => (chord(ChordTone::of(mood), &chords[i], bar_s, sr), 1.0),
+                sound,
+            } => (chord(sound.chord, &chords[i], bar_s, sr), 1.0),
             Part::Notes { events, voice, .. } => {
                 let n = events[i];
                 (voice(n.midi, n.dur, n.vel, sr), 1.0)
@@ -243,18 +187,24 @@ impl Part<'_> {
 mod tests {
     use super::*;
 
-    /// The day bed loops on its own length, out of phase with the groove, so
-    /// only the night bed, a loop long, ducks: under every kick it lays.
+    /// A free bed loops on its own length, out of phase with the groove, so
+    /// only a breathing bed, a loop long, ducks: under every kick it lays.
     #[test]
-    fn only_a_night_bed_ducks_and_under_every_kick() {
-        for seed in 0..8 {
-            let day = crate::compose::compose(Mood::Day, seed);
-            assert!(part(&day, Lane::Texture).ducks().is_empty());
-            let night = crate::compose::compose(Mood::Night, seed);
-            let mut kicks: Vec<f32> = night.kicks().collect();
-            kicks.sort_by(f32::total_cmp);
-            assert!(!kicks.is_empty());
-            assert_eq!(part(&night, Lane::Texture).ducks(), kicks, "seed {seed}");
+    fn only_a_breathing_bed_ducks_and_under_every_kick() {
+        for style in crate::style::STYLES {
+            for seed in 0..8 {
+                let score = crate::compose::compose(style, seed);
+                let ducks = part(&score, Lane::Texture).ducks();
+                match style.sound.bed {
+                    Bed::Free => assert!(ducks.is_empty(), "{style:?} seed {seed}"),
+                    Bed::Breathing => {
+                        let mut kicks: Vec<f32> = score.kicks().collect();
+                        kicks.sort_by(f32::total_cmp);
+                        assert!(!kicks.is_empty());
+                        assert_eq!(ducks, kicks, "{style:?} seed {seed}");
+                    }
+                }
+            }
         }
     }
 }

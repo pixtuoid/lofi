@@ -1,10 +1,10 @@
 //! The whole-lane chain behind `render_lane`.
 
-use super::recipe::{PadTone, Part, part};
-use super::voices::{ChordTone, chord, drum_hit};
+use super::recipe::{Bed, PadTone, Part, part};
+use super::voices::{chord, drum_hit};
 use super::{NoteVoice, SR, n_samples, place, samples_at};
 use crate::compose::kicks;
-use crate::compose::{GEN_LOOP_BARS, Hit, Lane, Mood, Note, Score};
+use crate::compose::{GEN_LOOP_BARS, Hit, Lane, Note, Score};
 use crate::dsp::{NoiseStream, SAMPLE_RATE, bandpass, lowpass, white_noise_gain};
 
 /// Scales `buf` to peak at `peak`, and returns the gain it applied.
@@ -111,8 +111,8 @@ pub(crate) const WARPS: [(f32, f32); 2] = [WOW, (8.0, 0.0006)];
 /// it by name, not by place.
 pub(crate) const WOW: (f32, f32) = (0.7, 0.0025);
 
-/// The tape drive of every musical lane but the drums, which
-/// [`DRUMS`](super::recipe::DRUMS) gives their own.
+/// The tape drive of every musical lane but the drums, which a style's
+/// [`HitRecipe`](super::recipe::HitRecipe) gives their own.
 pub(crate) const DRIVE: f32 = 1.6;
 
 /// The tape's head bump: the band it lifts, low enough to catch the bass
@@ -261,10 +261,10 @@ fn brighten(buf: &mut [f32]) -> f32 {
     normalize(buf, pre_peak.max(1e-6))
 }
 
-/// A `mood` pad over `loop_bars` bars `bar_s` long, `bar` giving each bar's
-/// sound.
+/// A pad in `tone` over `loop_bars` bars `bar_s` long, `bar` giving each
+/// bar's sound.
 pub(super) fn pad_core(
-    mood: Mood,
+    tone: PadTone,
     bar_s: f32,
     loop_bars: usize,
     bar: impl Fn(usize) -> Vec<f32>,
@@ -273,7 +273,6 @@ pub(super) fn pad_core(
     for b in 0..loop_bars {
         place(&mut buf, &bar(b), b as f32 * bar_s, 1.0);
     }
-    let tone = PadTone::of(mood);
     let mut buf = lowpass(&buf, tone.cutoff_hz);
     for (i, v) in buf.iter_mut().enumerate() {
         *v *= tone.bed_swell(i);
@@ -344,34 +343,31 @@ pub(super) fn render_part(part: &Part<'_>, loop_s: f32, rng: &mut NoiseStream) -
         Part::Chords {
             chords,
             bar_s,
-            mood,
-        } => pad_core(mood, bar_s, GEN_LOOP_BARS, |bar| {
-            let tone = ChordTone::of(mood);
-            chord(tone, &chords[bar % chords.len()], bar_s, SAMPLE_RATE)
+            sound,
+        } => pad_core(sound.pad, bar_s, GEN_LOOP_BARS, |bar| {
+            chord(sound.chord, &chords[bar % chords.len()], bar_s, SAMPLE_RATE)
         }),
         Part::Notes {
             events,
             voice,
-            recipes,
-            mood,
+            recipe,
+            sound,
         } => {
-            let r = recipes.at(mood);
+            let r = recipe(sound);
             events_stem_voiced(loop_s, events, r.cutoff_hz, r.peak, voice)
         }
         Part::Hits {
             hits,
-            recipes,
-            mood,
+            recipe,
+            sound,
         } => {
-            let r = recipes.at(mood);
+            let r = recipe(sound);
             drums_core(loop_s, hits, r.cutoff_hz, r.drive, r.peak, rng)
         }
-        Part::Bed {
-            mood: Mood::Day, ..
-        } => texture_bed(rng),
-        Part::Bed {
-            mood: Mood::Night, ..
-        } => night_texture_core(loop_s, &part.ducks(), rng),
+        Part::Bed { sound, .. } => match sound.bed {
+            Bed::Free => texture_bed(rng),
+            Bed::Breathing => night_texture_core(loop_s, &part.ducks(), rng),
+        },
     }
 }
 
@@ -380,6 +376,7 @@ mod tests {
     use super::*;
     use crate::dsp::{band_energy_share, centroid_hz};
     use crate::score;
+    use crate::style::DAY;
 
     #[test]
     fn a_late_kicks_dip_wraps_the_loop() {
@@ -394,7 +391,7 @@ mod tests {
     /// with: a staged pad falls to the floor a kick's attack after it.
     #[test]
     fn a_staged_lane_reaches_the_floor_under_a_kick() {
-        let score = crate::compose::compose(Mood::Day, 0);
+        let score = crate::compose::compose(&DAY, 0);
         let core = render_part(
             &part(&score, Lane::Pad),
             score.loop_secs(),
@@ -445,7 +442,7 @@ mod tests {
     #[test]
     fn a_day_lead_sits_above_its_pad() {
         use crate::compose::compose;
-        let score = compose(Mood::Day, 0);
+        let score = compose(&DAY, 0);
         let mut rng = NoiseStream::new(0);
         let pad = render_lane(&score, Lane::Pad, &mut rng);
         let sparkle = render_lane(&score, Lane::Sparkle, &mut rng);
@@ -522,7 +519,7 @@ mod tests {
     /// under one: a bed, a chord lane and a hit lane each.
     #[test]
     fn a_staged_lane_is_its_core_brightened() {
-        let score = crate::compose::compose(Mood::Day, 0);
+        let score = crate::compose::compose(&DAY, 0);
         for lane in [Lane::Texture, Lane::Pad, Lane::Drums] {
             let core = render_part(
                 &part(&score, lane),
@@ -570,10 +567,10 @@ mod tests {
     #[test]
     fn generated_beds_are_finite_phase_locked_and_in_the_sound_world() {
         // the musical invariants are the compose seed-sweep's job; a couple of
-        // seeds per mood suffice as the synthesis smoke
-        for mood in [Mood::Day, Mood::Night] {
+        // seeds per style suffice as the synthesis smoke
+        for style in crate::style::STYLES {
             for seed in [0u64, 7] {
-                let score = crate::compose::compose(mood, seed);
+                let score = crate::compose::compose(style, seed);
                 let mut rng = NoiseStream::new(9);
                 let beds = Lane::ALL.map(|l| render_lane(&score, l, &mut rng));
                 let n = n_samples(score.loop_secs());
@@ -588,10 +585,10 @@ mod tests {
                 ] {
                     assert!(
                         bed.iter().all(|v| v.is_finite() && v.abs() <= 1.0),
-                        "{mood:?} seed {seed} {name}: NaN/over-peak"
+                        "{style:?} seed {seed} {name}: NaN/over-peak"
                     );
                 }
-                // every musical lane phase-locks; only texture runs free by day
+                // every musical lane phase-locks; only a free bed runs on its own
                 for (name, bed) in [
                     ("pad", pad),
                     ("sparkle", sparkle),
@@ -599,26 +596,26 @@ mod tests {
                     ("drums", drums),
                     ("bass", bass),
                 ] {
-                    assert_eq!(bed.len(), n, "{mood:?} seed {seed} {name} length");
+                    assert_eq!(bed.len(), n, "{style:?} seed {seed} {name} length");
                 }
-                match mood {
-                    Mood::Day => assert_eq!(
+                match style.sound.bed {
+                    Bed::Free => assert_eq!(
                         texture.len(),
                         1 << 19,
                         "the ratified texture loop; a new length is a new sound"
                     ),
-                    Mood::Night => assert_eq!(texture.len(), n),
+                    Bed::Breathing => assert_eq!(texture.len(), n),
                 }
                 let low = band_energy_share(drums, 62.5, 125.0);
                 let mid = band_energy_share(drums, 125.0, 250.0);
                 assert!(
                     low > 0.2 && low > mid * 0.8,
-                    "{mood:?} seed {seed}: drums lost the kick floor ({low:.3}/{mid:.3})"
+                    "{style:?} seed {seed}: drums lost the kick floor ({low:.3}/{mid:.3})"
                 );
                 let sub = band_energy_share(bass, 31.0, 125.0);
                 assert!(
                     sub > 0.35 && sub > band_energy_share(bass, 250.0, 1000.0),
-                    "{mood:?} seed {seed}: the bass lane must own the sub ({sub:.3})"
+                    "{style:?} seed {seed}: the bass lane must own the sub ({sub:.3})"
                 );
             }
         }

@@ -10,6 +10,7 @@ mod perform;
 #[cfg(test)]
 mod score;
 mod stream;
+mod style;
 mod synth;
 
 pub use perform::{Controls, Frame, Performance};

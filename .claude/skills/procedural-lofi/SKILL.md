@@ -176,13 +176,13 @@ constraint and re-batch), and every taste axis is a data table or named const wi
 | Want to change…            | Edit (all in `compose.rs` unless noted)                  |
 |----------------------------|----------------------------------------------------------|
 | what to work on next       | `study/score.sh TREE OUT`'s scorecard, top layer first; one factor's A/B: `study/ab.sh` |
-| harmony vocabulary         | `MAJOR_LOOPS` / `MINOR_LOOPS` (rows of `Degree`s); a mood's lean: `HarmonyStyle`'s `major_share` |
-| a mood's tempo, lead register and density, comping, bass, voice weights | the `DAY` / `NIGHT` `Style` |
+| harmony vocabulary         | `MAJOR_LOOPS` / `MINOR_LOOPS` (rows of `Degree`s); a style's lean: `HarmonyStyle`'s `major_share` |
+| a style's tempo, lead register and density, comping, bass, voice weights, lane tones, staging | `style.rs`: the `DAY` / `NIGHT` records |
 | melody rules               | the lead stage's consts and its `Role`s (quote, close, peak, leap bound, grid) |
 | groove feel                | `DAY_GROOVES` / `NIGHT_GROOVE` templates + the swing consts |
 | room-tone crackle          | `synth::CRACKLE_POPS_PER_SEC` (one knob, both beds)      |
 | lane gains, mix level      | `stream::master`: `tier_gains`; `Performance::MASTER_GAIN` |
-| staging, bed crossfade     | `stream::lanes`: `staging`, `BED_CROSSFADE_S`            |
+| bed crossfade              | `stream::lanes::BED_CROSSFADE_S`                         |
 | song form (intro, sections, outro, edges) | `compose::form`'s consts; edges' depth and corner: `stream::schedule::FADE_FLOOR_DB`, `stream::lanes::FILTERED_HZ` |
 | **a new instrument**       | see the checklist below                                  |
 
@@ -190,7 +190,7 @@ constraint and re-batch), and every taste axis is a data table or named const wi
 1. Write the voice as a pure note fn in `synth/voices.rs`, a `NoteVoice` rendered at the rate it
    is given, physics-first then tuned by ear/fingerprint (Phase 1-2 of this skill still apply).
 2. Add a `compose::LeadVoice` variant + its arm in `LeadVoice::voice` (the ONE dispatch).
-3. Give it a weight in its mood's `Style::voices` — the voice draws from `Stage::LeadVoice`'s
+3. Give it a weight in its style's `voices` in `style.rs` — the voice draws from `Stage::LeadVoice`'s
    stream, so a new voice never recomposes a seed's notes.
 4. Extend the distribution property test; run the compose suite (fast — no synthesis).
 5. Render the batch the judge scores (`cargo run --release --example lofi_audition -- --batch

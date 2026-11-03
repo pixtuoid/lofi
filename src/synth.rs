@@ -63,9 +63,8 @@ mod recipe;
 mod voices;
 mod whole;
 
-#[cfg(test)]
-pub(crate) use recipe::{BASS, DRUMS, HitRecipe, KEYS, NoteRecipe, SPARKLE};
-pub(crate) use recipe::{PadTone, Part, part};
+pub(crate) use recipe::{Bed, HitRecipe, NoteRecipe, PadTone, Part, Sound, part};
+pub(crate) use voices::ChordTone;
 pub use whole::render_lane;
 pub(crate) use whole::{
     CRACKLE_POPS_PER_SEC, DRIVE, DUCK_DB, DUCK_RELEASE_S, HEAD_BUMP_HZ, HEAD_BUMP_MIX, HISS_HZ,

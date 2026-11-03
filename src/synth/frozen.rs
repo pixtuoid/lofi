@@ -2,13 +2,14 @@
 //! whose pins prove the voices and cores `render_lane` shares still render the
 //! ratified sound, the drums' rows the kit that replaced the ratified one.
 
-use super::recipe::{DRUMS, KEYS, Part, SPARKLE};
-use super::voices::{ChordTone, chord, ep_pluck_h2, ep_pluck_vel};
+use super::recipe::Part;
+use super::voices::{chord, ep_pluck_h2, ep_pluck_vel};
 use super::whole::{drums_core, events_stem_voiced, pad_core, render_part};
 use super::{SR, env_ar, midi_freq, n_samples, place};
-use crate::compose::{BEATS_PER_BAR, DrumKind, GEN_LOOP_BARS, Hit, Mood, Note};
+use crate::compose::{BEATS_PER_BAR, DrumKind, GEN_LOOP_BARS, Hit, Note};
 use crate::dsp::{NoiseStream, SAMPLE_RATE};
 use crate::score;
+use crate::style::{DAY, NIGHT};
 
 fn beat_s() -> f32 {
     score::beat_s()
@@ -46,20 +47,20 @@ pub(crate) fn stem_pad() -> Vec<f32> {
     let pad = Part::Chords {
         chords: &chords,
         bar_s: bar_s(),
-        mood: Mood::Day,
+        sound: &DAY.sound,
     };
     render_part(&pad, score::loop_secs(), &mut NoiseStream::new(0)).buf
 }
 
 pub(crate) fn stem_sparkle() -> Vec<f32> {
-    let r = SPARKLE.day;
+    let r = DAY.sound.sparkle;
     let events = anchor_events(&score::SPARKLE_SCORE, ANCHOR_LEAD_DUR_S);
     let loop_s = score::loop_secs();
     events_stem_voiced(loop_s, &events, r.cutoff_hz, r.peak, ep_pluck).buf
 }
 
 pub(crate) fn stem_keys() -> Vec<f32> {
-    let r = KEYS.day;
+    let r = DAY.sound.keys;
     let events = anchor_events(&score::KEYS_SCORE, score::DAY_KEYS_DUR);
     events_stem_voiced(score::loop_secs(), &events, r.cutoff_hz, r.peak, ep_pluck).buf
 }
@@ -87,7 +88,7 @@ pub(crate) fn stem_drums(rng: &mut NoiseStream) -> Vec<f32> {
             hits.push(hit(at, kind, score::DRUM_HAT_VELS[bar * 8 + eighth]));
         }
     }
-    let r = DRUMS.day;
+    let r = DAY.sound.drums;
     drums_core(score::loop_secs(), &hits, r.cutoff_hz, r.drive, r.peak, rng).buf
 }
 
@@ -103,9 +104,9 @@ const NIGHT_PAD_SUB_GAIN: f32 = 3.2;
 /// moves as one — the FROZEN anchor predates the bass stem and keeps its pins.
 pub(crate) fn night_pad() -> Vec<f32> {
     let (chords, bar_s) = (&score::NIGHT_CHORDS, night_bar_s());
-    pad_core(Mood::Night, bar_s, score::NIGHT_LOOP_BARS, |bar| {
-        let tone = ChordTone::of(Mood::Night);
-        let mut sig = chord(tone, &chords[bar % chords.len()], bar_s, SAMPLE_RATE);
+    let sound = &NIGHT.sound;
+    pad_core(sound.pad, bar_s, score::NIGHT_LOOP_BARS, |bar| {
+        let mut sig = chord(sound.chord, &chords[bar % chords.len()], bar_s, SAMPLE_RATE);
         let roots = &score::NIGHT_BASS_ROOTS;
         bake_night_sub(&mut sig, roots[bar % roots.len()], bar_s);
         sig
@@ -145,8 +146,8 @@ pub(crate) fn night_keys() -> Vec<f32> {
     let keys = Part::Notes {
         events: &score::NIGHT_KEYS,
         voice: ep_pluck_vel,
-        recipes: KEYS,
-        mood: Mood::Night,
+        recipe: |sound| sound.keys,
+        sound: &NIGHT.sound,
     };
     night_part(&keys, &mut NoiseStream::new(0))
 }
@@ -155,8 +156,8 @@ pub(crate) fn night_sparkle() -> Vec<f32> {
     let sparkle = Part::Notes {
         events: &score::NIGHT_SPARKLE,
         voice: ep_pluck_vel,
-        recipes: SPARKLE,
-        mood: Mood::Night,
+        recipe: |sound| sound.sparkle,
+        sound: &NIGHT.sound,
     };
     night_part(&sparkle, &mut NoiseStream::new(0))
 }
@@ -164,8 +165,8 @@ pub(crate) fn night_sparkle() -> Vec<f32> {
 pub(crate) fn night_drums(rng: &mut NoiseStream) -> Vec<f32> {
     let drums = Part::Hits {
         hits: &score::NIGHT_DRUMS,
-        recipes: DRUMS,
-        mood: Mood::Night,
+        recipe: |sound| sound.drums,
+        sound: &NIGHT.sound,
     };
     night_part(&drums, rng)
 }
@@ -179,7 +180,7 @@ pub(crate) fn night_texture(rng: &mut NoiseStream) -> Vec<f32> {
 
 /// The frozen night take's bed, ducking under its drums.
 const NIGHT_BED: Part<'static> = Part::Bed {
-    mood: Mood::Night,
+    sound: &NIGHT.sound,
     hits: &score::NIGHT_DRUMS,
 };
 
@@ -193,7 +194,7 @@ pub(super) fn day_take_pad(take: &score::DayTake) -> Vec<f32> {
     let pad = Part::Chords {
         chords: &chords,
         bar_s: take.bar_s(),
-        mood: Mood::Day,
+        sound: &DAY.sound,
     };
     day_take_part(take, &pad, &mut NoiseStream::new(0))
 }
@@ -202,8 +203,8 @@ pub(super) fn day_take_sparkle(take: &score::DayTake) -> Vec<f32> {
     let sparkle = Part::Notes {
         events: take.sparkle,
         voice: ep_pluck_vel,
-        recipes: SPARKLE,
-        mood: Mood::Day,
+        recipe: |sound| sound.sparkle,
+        sound: &DAY.sound,
     };
     day_take_part(take, &sparkle, &mut NoiseStream::new(0))
 }
@@ -212,8 +213,8 @@ pub(super) fn day_take_keys(take: &score::DayTake) -> Vec<f32> {
     let keys = Part::Notes {
         events: take.keys,
         voice: ep_pluck_vel,
-        recipes: KEYS,
-        mood: Mood::Day,
+        recipe: |sound| sound.keys,
+        sound: &DAY.sound,
     };
     day_take_part(take, &keys, &mut NoiseStream::new(0))
 }
@@ -221,8 +222,8 @@ pub(super) fn day_take_keys(take: &score::DayTake) -> Vec<f32> {
 pub(super) fn day_take_drums(take: &score::DayTake, rng: &mut NoiseStream) -> Vec<f32> {
     let drums = Part::Hits {
         hits: take.drums,
-        recipes: DRUMS,
-        mood: Mood::Day,
+        recipe: |sound| sound.drums,
+        sound: &DAY.sound,
     };
     day_take_part(take, &drums, rng)
 }
