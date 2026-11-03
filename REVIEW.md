@@ -12,7 +12,7 @@ What the automatic review ([`claude-review.yml`](.github/workflows/claude-review
 ## Always check
 
 - New behavior without a test; scope beyond what the PR body states; each claim the PR body makes.
-- The [Roadmap](https://github.com/orgs/pixtuoid/projects/1) against the diff: a sound change that names no issue it advances, works a row whose issue is blocked, or passes a row above it with no dependency stated.
+- A sound change whose PR body names no issue it advances, or that passes a row above it with no dependency the body states or links: the review reads no issue or board, so the body carries them.
 
 ## Do not flag
 
