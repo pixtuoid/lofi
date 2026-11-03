@@ -497,9 +497,12 @@ struct Chord {
     root_pc: u8,
 }
 
-/// C major pitch classes, the one scale [`MAJOR_LOOPS`] and [`MINOR_LOOPS`]
-/// are written in.
-const C_MAJOR: [u8; 7] = [0, 2, 4, 5, 7, 9, 11];
+/// The key's pentatonic, as pitch classes over its major tonic: LOFI-BIBLE
+/// R9's melody pool, which a major key and its relative minor share.
+const PENTATONIC: [u8; 5] = [0, 2, 4, 7, 9];
+
+/// A song's pool starts on its key's tonic, which the tests read its key off.
+const _: () = assert!(PENTATONIC[0] == 0);
 
 /// One chord of the grammar in C: the loops name no key, so a song draws one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -639,8 +642,9 @@ fn in_octave_from(lo: u8, pc: u8) -> u8 {
 /// A song's harmony: its key, and the bars every lane reads.
 #[derive(Debug)]
 struct Harmony {
-    /// The key's pitch classes, in order.
-    scale_pcs: [u8; 7],
+    /// The pitch classes the lead sings, LOFI-BIBLE R9's pool: the key's
+    /// [`PENTATONIC`], and over a major loop its major seventh.
+    melody_pcs: Vec<u8>,
     /// The drawn loop's chords, cycled.
     bars: [Chord; GEN_LOOP_BARS],
 }
@@ -659,10 +663,18 @@ fn drawn_loop(rng: &mut NoiseStream, style: &HarmonyStyle) -> &'static [Degree] 
 fn harmony(rng: &mut NoiseStream, style: &HarmonyStyle) -> Harmony {
     let degrees = drawn_loop(rng, style);
     let key = pick(rng, OCTAVE.into()) as u8;
-    let mut scale_pcs = C_MAJOR.map(|pc| (pc + key) % OCTAVE);
-    scale_pcs.sort_unstable();
+    let melody_pcs = melody_pcs(key, MAJOR_LOOPS.contains(&degrees));
     let bars = std::array::from_fn(|bar| degrees[bar % degrees.len()].voiced(key));
-    Harmony { scale_pcs, bars }
+    Harmony { melody_pcs, bars }
+}
+
+/// LOFI-BIBLE R9's pool in `key`: its [`PENTATONIC`], and over a `major`
+/// loop its major seventh.
+fn melody_pcs(key: u8, major: bool) -> Vec<u8> {
+    let colour = major.then_some(MAJOR_SEVENTH);
+    (PENTATONIC.into_iter().chain(colour))
+        .map(|pc| (pc + key) % OCTAVE)
+        .collect()
 }
 
 /// The rootless comp shell: the chord's 3rd and 7th, found degree-aware from
@@ -708,25 +720,26 @@ fn nearest(pool: &[u8], target: u8) -> u8 {
         .expect("pool is never empty within the register windows")
 }
 
-/// Nearest in-scale note to `n` inside `[lo, hi]` — a diatonic scale has no gap
-/// wider than a whole tone, so the outward search always lands within ±2.
-fn snap_to_scale(n: i16, scale: &[u8; 7], lo: u8, hi: u8) -> u8 {
+/// Nearest note of `pool`'s pitch classes to `n` inside `[lo, hi]`: a
+/// pentatonic's widest gap is a minor third, so the outward search lands
+/// within ±2.
+fn snap_to_scale(n: i16, pool: &[u8], lo: u8, hi: u8) -> u8 {
     for d in 0..=i16::from(OCTAVE / 2) {
         for cand in [n - d, n + d] {
             if cand >= i16::from(lo)
                 && cand <= i16::from(hi)
-                && scale.contains(&(cand.rem_euclid(OCTAVE.into()) as u8))
+                && pool.contains(&(cand.rem_euclid(OCTAVE.into()) as u8))
             {
                 return cand as u8;
             }
         }
     }
-    lo // unreachable for any 7-pc scale with hi-lo >= 12; safe fallback
+    lo // unreachable for a pool of 5 or more with hi-lo >= 12; safe fallback
 }
 
-/// Step `k` scale degrees from `note` (k may be negative), clamped to the
-/// register window. Stays in-scale by construction.
-fn scale_step(note: u8, k: i8, scale: &[u8; 7], lo: u8, hi: u8) -> u8 {
+/// Step `k` of `pool`'s degrees from `note` (k may be negative), clamped to
+/// the register window. Stays in the pool by construction.
+fn scale_step(note: u8, k: i8, pool: &[u8], lo: u8, hi: u8) -> u8 {
     let mut n = i16::from(note);
     let mut remaining = k.abs();
     let dir = if k >= 0 { 1 } else { -1 };
@@ -736,11 +749,11 @@ fn scale_step(note: u8, k: i8, scale: &[u8; 7], lo: u8, hi: u8) -> u8 {
             n -= dir;
             break;
         }
-        if scale.contains(&(n.rem_euclid(OCTAVE.into()) as u8)) {
+        if pool.contains(&(n.rem_euclid(OCTAVE.into()) as u8)) {
             remaining -= 1;
         }
     }
-    snap_to_scale(n, scale, lo, hi)
+    snap_to_scale(n, pool, lo, hi)
 }
 
 /// The friendly beat grid a lead note may land on (0.0 is the kick's).
@@ -915,19 +928,34 @@ fn melody(
     style: &LeadStyle,
 ) -> Vec<LeadNote> {
     let (lo, hi) = (style.lo, style.hi);
-    let scale = &harmony.scale_pcs;
-    let start_pool = chord_tones_in(
+    let pool = &harmony.melody_pcs[..];
+    let sung = |mut notes: Vec<u8>| {
+        notes.retain(|n| pool.contains(&(n % OCTAVE)));
+        notes
+    };
+    let start_pool = sung(chord_tones_in(
         &harmony.bars[0].notes,
         lo.max(hi.saturating_sub(OCTAVE)),
         hi,
-    );
+    ));
     let mut prev = nearest(&start_pool, u8::midpoint(lo, hi) + START_LIFT);
     let mut last_leap: i16 = 0;
     let mut head: Vec<u8> = Vec::new();
     let mut out: Vec<LeadNote> = Vec::new();
     let last_bar = rhythm.len() - 1;
     for (bar, beats) in rhythm.iter().enumerate() {
-        let tones = chord_tones_in(&harmony.bars[bar].notes, lo, hi);
+        let chord = &harmony.bars[bar];
+        let tones = sung(chord_tones_in(&chord.notes, lo, hi));
+        // R9: a strong beat's chord tone is its 3rd or 7th over its root,
+        // where the pool holds one
+        let over_root: Vec<u8> = (tones.iter().copied())
+            .filter(|n| n % OCTAVE != chord.root_pc)
+            .collect();
+        let strong_tones = if over_root.is_empty() {
+            &tones
+        } else {
+            &over_root
+        };
         for (i, &beat) in beats.iter().enumerate() {
             let last = bar == last_bar && i == beats.len() - 1;
             // an anticipation is a pushed strong beat, not a passing tone
@@ -950,22 +978,26 @@ fn melody(
                 Role::Close => nearest(&tones, out.first().map_or(prev, |n| n.note)),
                 Role::Peak => {
                     let lift = *PEAK_LIFT.start() + pick(rng, PEAK_LIFT.count()) as i16;
-                    nearest(&tones, (i16::from(prev) + lift).min(i16::from(hi)) as u8)
+                    nearest(
+                        strong_tones,
+                        (i16::from(prev) + lift).min(i16::from(hi)) as u8,
+                    )
                 }
-                Role::Resolve => scale_step(prev, -last_leap.signum() as i8, scale, lo, hi),
+                Role::Resolve => scale_step(prev, -last_leap.signum() as i8, pool, lo, hi),
                 Role::ChordTone => {
+                    let tones = if strong { strong_tones } else { &tones };
                     let drift = *DRIFT.start() + pick(rng, DRIFT.count()) as i16;
                     let target = (i16::from(prev) + drift).clamp(i16::from(lo), i16::from(hi));
-                    let n = nearest(&tones, target as u8);
+                    let n = nearest(tones, target as u8);
                     if (i16::from(n) - i16::from(prev)).abs() > i16::from(FIFTH) {
-                        nearest(&tones, prev)
+                        nearest(tones, prev)
                     } else {
                         n
                     }
                 }
                 Role::Passing => {
                     let k = if coin(rng) { 1 } else { -1 };
-                    scale_step(prev, k * (1 + i8::from(chance(rng, SKIP_P))), scale, lo, hi)
+                    scale_step(prev, k * (1 + i8::from(chance(rng, SKIP_P))), pool, lo, hi)
                 }
             };
             last_leap = i16::from(note) - i16::from(prev);
