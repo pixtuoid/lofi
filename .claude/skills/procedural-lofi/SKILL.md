@@ -199,7 +199,7 @@ constraint and re-batch), and every taste axis is a data table or named const wi
    the branch into `DIR/cand`, DIR durable and outside the repo (`~/Desktop/lofi-listen/<change>`),
    each from a clean tree with its `git rev-parse HEAD` in `DIR/{base,cand}/COMMIT`, and
    `ab_judge.py` gates them (its header holds each measure's blind spots; `verdict.judged` holds the verdict rule)
-   against REFS, the private reference corpus (`audio/` and its `manifest.json` of sha256s, never
+   against REFS, the judged style's private corpus (`modal_judge.py`'s `JUDGED`; `audio/` and its `manifest.json` of sha256s, never
    committed), from a venv outside the repo, set up once; CI's `judge.yml` renders the same batch and
    judges it on Modal (`judge/modal_judge.py`) for every PR that changes the render:
    ```bash

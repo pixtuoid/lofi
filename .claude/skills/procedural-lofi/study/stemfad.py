@@ -1,11 +1,13 @@
-"""Which stem sits furthest from Lofi Girl: per-song FAD over ab_judge's CLAP
-embedding, one stem at a time, each take's stem against the references'.
+"""Which stem sits furthest from a style's Lofi Girl playlist: per-song FAD
+over ab_judge's CLAP embedding, one stem at a time, each take's stem against
+the style's references'.
 
-  modal run stemfad.py::run --prefix take-NAME_ --out DIR
+  modal run stemfad.py::run --corpus STYLE --out DIR [--prefix take-NAME_]
 
 Held-out references say what a real track scores, stem by stem, so a take's
 distance reads against that and not against a number on its own. What comes
-home is distances; the stems stay on the Volume.
+home is distances, the held-out references' and the takes PREFIX picks; the
+stems stay on the Volume.
 """
 
 import json
@@ -69,17 +71,20 @@ def embed(keys):
 
 
 @app.local_entrypoint()
-def run(prefix: str, out: str):
+def run(corpus: str, out: str, prefix: str = ""):
     import numpy as np
     from scipy import linalg
 
+    refs_prefix = f"{corpus}-"
     keys = sorted(e.path.rsplit("/", 1)[1] for e in study.listdir("/stems"))
-    keys = [k for k in keys if k.startswith(prefix) or not k.startswith("take-")]
+    keys = [k for k in keys if k.startswith(refs_prefix) or (prefix and k.startswith(prefix))]
     batches = [keys[i::SHARDS] for i in range(SHARDS)]
     frames = {}
     for part in embed.map(batches):
         frames.update(part)
-    refs = sorted(k for k in frames if not k.startswith("take-"))
+    refs = sorted(k for k in frames if k.startswith(refs_prefix))
+    if not refs:
+        raise SystemExit(f"stemfad.py: no stems start with {refs_prefix!r}")
     held = refs[::HOLDOUT_EVERY]
     train = [k for k in refs if k not in held]
 
@@ -98,6 +103,6 @@ def run(prefix: str, out: str):
         for key, value in rows.items():
             by_track.setdefault(key, {})[name] = value
         groups = {"held": [v for k, v in rows.items() if k in held],
-                  "takes": [v for k, v in rows.items() if k.startswith(prefix)]}
+                  "takes": [v for k, v in rows.items() if prefix and k.startswith(prefix)]}
         print(name, {g: (round(float(np.median(v)), 3), len(v)) for g, v in groups.items() if v})
     Path(out, "stemfad.json").write_text(json.dumps(by_track, indent=0) + "\n")

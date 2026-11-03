@@ -1,12 +1,13 @@
-"""Splits the private corpus into drums, bass, other and vocals on Modal's T4s,
-into a Volume of its own, so what a mix hides can be measured stem by stem.
+"""Splits a style's private corpus into drums, bass, other and vocals on
+Modal's T4s, into a Volume of its own, so what a mix hides can be measured
+stem by stem.
 
-  modal run stems.py::split [--limit N]
+  modal run stems.py::split --corpus STYLE [--limit N]
   modal run stems.py::split_takes --takes DIR   the control: our own takes
 
-A reference is named by its manifest index on the Volume and in everything
-this prints, as modal_judge.py names it: the corpus's names stay private.
-Stems are derived from copyrighted audio: they stay on the Volume.
+A reference is named by its style and its manifest index, `STYLE-NNN`, on the
+Volume and in everything this prints: the corpus's names stay private. Stems
+are derived from copyrighted audio: they stay on the Volume.
 """
 
 import json
@@ -86,9 +87,9 @@ def report(jobs):
 
 
 @app.local_entrypoint()
-def split(limit: int = 0):
-    manifest = json.loads(b"".join(refs.read_file("/manifest.json")))["tracks"]
-    jobs = [(f"{i:03d}", f"{REFS}/audio/{t['file']}") for i, t in enumerate(manifest)]
+def split(corpus: str, limit: int = 0):
+    manifest = json.loads(b"".join(refs.read_file(f"/{corpus}/manifest.json")))["tracks"]
+    jobs = [(f"{corpus}-{i:03d}", f"{REFS}/{corpus}/audio/{t['file']}") for i, t in enumerate(manifest)]
     report(jobs[:limit] if limit else jobs)
 
 

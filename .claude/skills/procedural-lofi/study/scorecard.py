@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
-"""Lofi Girl's sound against a set of our takes, row by row, in the order the
-signal chain makes them, so what to work on next reads off the top of the card.
+"""A style's Lofi Girl playlist against a set of our takes, row by row, in the
+order the signal chain makes them, so what to work on next reads off the top
+of the card.
 
-  scorecard.py targets OUT.json STUDY TIMBRE BASS STEMFAD
-  scorecard.py score TAKES_DIR PREFIX
+  scorecard.py targets STYLE DIR
+  scorecard.py score DIR PREFIX STYLE
 
-`targets` turns the references' per-track measures into `targets.json`, each
-row's quartiles and nothing else, so no track is in this public repo. `score`
-reads a commit's measures, as `score.sh` leaves them in TAKES_DIR, against
-them. A row is off when our median leaves the tracks' interquartile range, and
-its gap counts those ranges from their median.
+`targets` turns STYLE's references' per-track measures, as `targets.sh` leaves
+them in DIR, into STYLE's entry in `targets.json`: each row's quartiles and
+nothing else, so no track is in this public repo, and null for a row none of
+its tracks measures. `score` reads the takes whose keys start with PREFIX, as
+`score.sh` leaves them in DIR, against STYLE's. A row is off when our median
+leaves the tracks' interquartile range, and its gap counts those ranges from
+their median.
 
 The melody rows read the other stem's top line, lead and comp together, not
 our lead alone: its register follows LOFI-BIBLE R7. The judge's panel and FAD
@@ -162,22 +165,25 @@ def targets(sources):
         out[layer] = {}
         for label, source, read in rows:
             values = [v for v in map(read, sources[source]) if v is not None]
-            if values:
-                out[layer][label] = [round(q, 3) for q in quartiles(values)]
+            out[layer][label] = [round(q, 3) for q in quartiles(values)] if values else None
     return out
 
 
 def row(quartile, values):
     """Our median, whether it holds, and its gap: None where the tracks' range
-    is flat, which has no width to count in."""
-    low, mid, high = quartile
+    is flat, which has no width to count in, or where they hold no such
+    measure, which our takes then leave."""
     ours = median(values)
+    if quartile is None:
+        return ours, False, None
+    low, mid, high = quartile
     return ours, low <= ours <= high, abs(ours - mid) / (high - low) if high > low else None
 
 
 def card(target, sources):
-    """`(layer, label, quartiles, ours)` a row, `ours` None where the takes
-    hold no such measure."""
+    """`(layer, label, quartiles, ours)` a row, `quartiles` None where the
+    style's tracks hold no such measure and `ours` None where the takes
+    don't."""
     for layer, rows in LAYERS:
         for label, source, read in rows:
             if label in target.get(layer, {}):
@@ -189,10 +195,15 @@ def card(target, sources):
 def show(lines):
     held = total = 0
     shown = None
-    for layer, label, (low, mid, high), ours in lines:
+    for layer, label, quartile, ours in lines:
         if layer != shown:
             print(f"\n{layer}\n{'':24}{'P25':>9}{'P50':>9}{'P75':>9}{'ours':>9}")
             shown = layer
+        if quartile is None:
+            total += ours is not None
+            print(f"{label:24}{'':27}{'' if ours is None else f'{ours[0]:9.2f}'}  not in the style's tracks")
+            continue
+        low, mid, high = quartile
         if ours is None:
             print(f"{label:24}{low:9.2f}{mid:9.2f}{high:9.2f}  not measured")
             continue
@@ -208,24 +219,28 @@ def load(file):
     return json.loads(Path(file).read_text())
 
 
+def measured(folder, prefix):
+    """The measures in `folder` of the tracks whose keys start with `prefix`,
+    by source. `timbre.json` keys its rows by path, so its folder holds only
+    theirs."""
+    mine = lambda rows: [v for k, v in rows.items() if k.startswith(prefix)]
+    return {
+        STUDY: mine(load(folder / f"study-{prefix.strip('-')}.json")),
+        TIMBRE: list(load(folder / "timbre.json").values()),
+        BASS: mine(load(folder / "basstone.json")),
+        STEMFAD: mine(load(folder / "stemfad.json")),
+    }
+
+
 def main(args):
-    if args[:1] == ["targets"] and len(args) == 6:
-        study, timbre, bass, stemfad = map(load, args[2:])
-        refs = lambda rows: [v for k, v in rows.items() if not k.startswith("take")]
-        made = targets({
-            STUDY: refs(study), TIMBRE: refs(timbre), BASS: refs(bass), STEMFAD: refs(stemfad),
-        })
-        Path(args[1]).write_text(json.dumps(made, indent=1) + "\n")
-    elif args[:1] == ["score"] and len(args) == 3:
-        taken, prefix = Path(args[1]), args[2]
-        mine = lambda rows: [v for k, v in rows.items() if k.startswith(prefix)]
-        # a commit's own: `timbre.json` keys its rows by path, not by prefix
-        show(card(load(TARGETS), {
-            STUDY: list(load(taken / f"study-{prefix.strip('-')}.json").values()),
-            TIMBRE: list(load(taken / "timbre.json").values()),
-            BASS: mine(load(taken / "basstone.json")),
-            STEMFAD: mine(load(taken / "stemfad.json")),
-        }))
+    if args[:1] == ["targets"] and len(args) == 3:
+        style, folder = args[1], Path(args[2])
+        made = load(TARGETS) if TARGETS.exists() else {}
+        made[style] = targets(measured(folder, f"{style}-"))
+        TARGETS.write_text(json.dumps(dict(sorted(made.items())), indent=1) + "\n")
+    elif args[:1] == ["score"] and len(args) == 4:
+        folder, prefix, style = Path(args[1]), args[2], args[3]
+        show(card(load(TARGETS)[style], measured(folder, prefix)))
     else:
         sys.exit(__doc__)
 

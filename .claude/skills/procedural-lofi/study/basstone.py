@@ -1,7 +1,9 @@
 """What the bass stem is made of, track by track: where its power sits, how its
 notes hold, and how much of it is overtones you can hear on a small speaker.
 
-  modal run basstone.py::run --prefix take-NAME_ --out DIR
+  modal run basstone.py::run --prefix PREFIX --out DIR
+
+PREFIX picks the stems, as `analyze.py`'s does.
 
 What comes home is numbers; the stems stay on the Volume.
 """
@@ -61,8 +63,9 @@ def one(key):
 
 @app.local_entrypoint()
 def run(prefix: str, out: str):
-    keys = sorted(e.path.rsplit("/", 1)[1] for e in study.listdir("/stems"))
-    keys = [k for k in keys if k.startswith(prefix) or not k.startswith("take-")]
+    keys = sorted(k for k in (e.path.rsplit("/", 1)[1] for e in study.listdir("/stems")) if k.startswith(prefix))
+    if not keys:
+        raise SystemExit(f"basstone.py: no stems start with {prefix!r}")
     rows = dict(one.map(keys))
     Path(out, "basstone.json").write_text(json.dumps(rows, indent=0) + "\n")
     print(len(rows), "read")

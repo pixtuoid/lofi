@@ -8,11 +8,13 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.dont_write_bytecode = True
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+import scorecard
 from scorecard import BASS, LAYERS, STEMFAD, STUDY, TARGETS, TIMBRE, card, main, outside_key, path, row, targets
 
 # one row of each source, every value distinct, so a reader of the wrong field
@@ -170,19 +172,54 @@ class Scorecard(unittest.TestCase):
         self.assertIsNone(path("drums", "kick")({"drums": {}}))
         self.assertIsNone(path("decay_ms")({"decay_ms": None}))
 
-    def test_targets_are_true_quartiles_and_hold_nothing_else(self):
+    def test_targets_are_true_quartiles_and_a_row_no_track_measures_is_null(self):
         rows = [{"tempo": t} for t in (70, 75, 80, 85)]
         made = targets({STUDY: rows, TIMBRE: [], BASS: [], STEMFAD: []})
-        self.assertEqual(made["2 rhythm"], {"tempo bpm": [73.75, 77.5, 81.25]})
+        self.assertEqual(made["2 rhythm"]["tempo bpm"], [73.75, 77.5, 81.25])
+        self.assertIsNone(made["2 rhythm"]["kicks /bar"])
 
-    def test_the_committed_targets_cover_every_row_in_order(self):
+    def test_every_styles_committed_targets_cover_every_row_in_order(self):
         committed = json.loads(TARGETS.read_text())
-        self.assertEqual(
-            {layer: sorted(rows) for layer, rows in committed.items()},
-            {layer: sorted(label for label, _, _ in rows) for layer, rows in LAYERS},
-        )
-        for rows in committed.values():
-            self.assertTrue(all(low <= mid <= high for low, mid, high in rows.values()))
+        self.assertTrue(committed)
+        for style, layers in committed.items():
+            self.assertEqual(
+                {layer: sorted(rows) for layer, rows in layers.items()},
+                {layer: sorted(label for label, _, _ in rows) for layer, rows in LAYERS},
+                style,
+            )
+            for rows in layers.values():
+                held = [q for q in rows.values() if q is not None]
+                self.assertTrue(all(low <= mid <= high for low, mid, high in held), style)
+
+    def test_a_styles_targets_come_from_its_own_tracks_and_leave_the_others(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            committed = Path(tmp, "targets.json")
+            committed.write_text(json.dumps({"other": {"kept": {}}}))
+            refs = Path(tmp, "refs")
+            refs.mkdir()
+            files = {
+                "study-sleep.json": {f"sleep-{i:03d}": {"tempo": t} for i, t in enumerate((70, 75, 80, 85))}
+                | {"jazz-000": {"tempo": 500}},
+                "timbre.json": {},
+                "basstone.json": {},
+                "stemfad.json": {},
+            }
+            for name, rows in files.items():
+                Path(refs, name).write_text(json.dumps(rows))
+            with mock.patch.object(scorecard, "TARGETS", committed):
+                main(["targets", "sleep", str(refs)])
+            made = json.loads(committed.read_text())
+        self.assertEqual(made["other"], {"kept": {}})
+        self.assertEqual(made["sleep"]["2 rhythm"]["tempo bpm"], [73.75, 77.5, 81.25])
+
+    def test_a_row_its_styles_tracks_never_measure_says_so(self):
+        target = {"2 rhythm": {"kicks /bar": None}}
+        lines = list(card(target, {STUDY: [{"drums": {"kick": {"per_bar": 2.0}}}]}))
+        self.assertEqual(lines, [("2 rhythm", "kicks /bar", None, (2.0, False, None))])
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            scorecard.show(lines)
+        self.assertRegex(printed.getvalue(), r"kicks /bar\s+.*not in the style's tracks")
 
     def test_a_card_reads_only_the_prefixs_takes(self):
         def take(tempo, fad):
@@ -200,7 +237,7 @@ class Scorecard(unittest.TestCase):
                 Path(tmp, name).write_text(json.dumps(rows))
             printed = io.StringIO()
             with contextlib.redirect_stdout(printed):
-                main(["score", tmp, "take-a_"])
+                main(["score", tmp, "take-a_", "hiphop"])
         card_text = printed.getvalue()
         self.assertRegex(card_text, r"drums FAD\s.*\s0\.40\s")
         self.assertRegex(card_text, r"bass centroid Hz\s.*\s301\.00\s")

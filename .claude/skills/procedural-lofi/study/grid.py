@@ -1,6 +1,6 @@
-"""Where a time falls on a track's beat grid, and how alike its bars are, in
-the standard library alone so `test_grid.py` runs it without the study's
-image."""
+"""Where a time falls on a track's beat grid, how alike its bars are, and
+what a track without a kit has no grid for, in the standard library alone so
+`test_grid.py` runs it without the study's image."""
 
 from bisect import bisect_right
 
@@ -50,3 +50,39 @@ def likeness(line, lag):
         for bar in by_bar
         if bar - lag in by_bar
     ]
+
+
+# a drums stem under this share of the mix's power holds the separation's
+# residue, no kit: Lofi Girl's sleep playlist peaks at 0.07 % and its main one
+# starts at 10 % (measured 2026-11-03)
+MIN_KIT_SHARE = 0.01
+# the measures a line keeps without a grid: where its notes sit and how they
+# move, never how many fall in a bar or where
+UNGRIDDED_BASS = ("register", "legato", "median_note_ms")
+UNGRIDDED_MELODY = ("register", "interval_hist", "pentatonic_share", "step_share")
+GRIDDED_HARMONY = ("bar_tokens", "bigrams", "beats_per_chord", "cycle_bars", "cycle_match")
+
+
+def has_kit(powers):
+    """Whether a track's stems' `powers` hold a drum kit."""
+    return powers["drums"] / sum(powers.values()) >= MIN_KIT_SHARE
+
+
+def without_grid(row):
+    """`row` with every measure read off a beat grid or a drum hit unset: a
+    track without a kit has neither, and its tracker's grid is a convention,
+    not the track's."""
+    def keep(line, fields):
+        return line and {k: (v if k in fields else None) for k, v in line.items()}
+
+    return {
+        **row,
+        "tempo": None,
+        "drums": None,
+        "kick": None,
+        "snare": None,
+        "hat": None,
+        "harmony": {k: (None if k in GRIDDED_HARMONY else v) for k, v in row["harmony"].items()},
+        "bass": keep(row["bass"], UNGRIDDED_BASS),
+        "melody": keep(row["melody"], UNGRIDDED_MELODY),
+    }
