@@ -4,6 +4,7 @@
 import contextlib
 import io
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -11,6 +12,8 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True
 HERE = Path(__file__).resolve().parent
+# the order the card is worked in where it isn't top-down
+PLAN = HERE.parents[3] / "docs" / "plan.md"
 sys.path.insert(0, str(HERE))
 
 from scorecard import BASS, LAYERS, STEMFAD, STUDY, TARGETS, TIMBRE, card, main, outside_key, path, row, targets
@@ -183,6 +186,14 @@ class Scorecard(unittest.TestCase):
         )
         for rows in committed.values():
             self.assertTrue(all(low <= mid <= high for low, mid, high in rows.values()))
+
+    def test_every_row_the_plan_names_is_one_the_card_prints(self):
+        text = " ".join(PLAN.read_text().split())
+        runs = re.findall(r"\brows? ((?:`[^`]+`(?:,? and |, )?)+)", text)
+        named = [label for run in runs for label in re.findall(r"`([^`]+)`", run)]
+        labels = {label for _, rows in LAYERS for label, _, _ in rows}
+        self.assertTrue(named)
+        self.assertEqual([label for label in named if label not in labels], [])
 
     def test_a_card_reads_only_the_prefixs_takes(self):
         def take(tempo, fad):

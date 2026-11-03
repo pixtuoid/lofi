@@ -12,6 +12,7 @@ What the automatic review ([`claude-review.yml`](.github/workflows/claude-review
 ## Always check
 
 - New behavior without a test; scope beyond what the PR body states; each claim the PR body makes.
+- [`docs/plan.md`](docs/plan.md) against the diff: a sound change that works a row the plan says waits, or passes a row above it with no dependency stated; an item the PR finishes, adds or reorders that the plan doesn't follow.
 
 ## Do not flag
 
