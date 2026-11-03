@@ -1,5 +1,6 @@
 //! The styles lofi plays, one record each, so a style is defined in one place,
-//! as jacbz/Lofi's `ProducerPreset` holds every instrument a preset plays
+//! as jacbz/Lofi's `ProducerPreset` holds a preset's bass, harmony, arpeggio
+//! and melody instruments
 //! (<https://github.com/jacbz/Lofi/blob/main/client/src/producer_presets.ts>).
 
 use std::fmt;
