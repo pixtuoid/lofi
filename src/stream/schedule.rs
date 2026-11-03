@@ -911,7 +911,6 @@ mod tests {
     use crate::compose::{Plays, fnv1a, spans_a_form};
     use crate::stream::lanes::{COEFF_BLOCK, FILTERED_HZ};
     use crate::stream::master::TIER_INTENSITIES;
-    use crate::synth::BASS;
 
     /// Song `k` of `seed`'s run under `c` at `sr`, playing [`Form::plain`].
     fn plain_song(seed: u64, k: u64, c: Controls, sr: u32) -> Song {
@@ -1560,7 +1559,7 @@ mod tests {
     /// platform.
     #[test]
     fn a_plain_form_plays_every_cue_where_it_did() {
-        const PLAIN_FRAMES_GOLDEN: u64 = 0x2c3d_c5e3_89bc_3281;
+        const PLAIN_FRAMES_GOLDEN: u64 = 0x4dbc_ae27_6ebd_fd09;
         let mut words: Vec<u64> = Vec::new();
         for daylight in [1.0, 0.0] {
             for seed in 0..4 {
@@ -1610,14 +1609,15 @@ mod tests {
         let (seed, c) = (3, Controls::default());
         let mut whole = plain_song(seed, 0, c, SAMPLE_RATE).at_levels(UNITY);
         let bass = index(Lane::Bass);
-        let ring = samples_at(BASS.at(whole.score.mood).dur_s, SAMPLE_RATE);
         let lines = &whole.window.bars;
         // a bar the last one's bass rings into, so muting it can't cut that
         // tail
         let bar = (1..lines.len() - 1)
             .find(|&bar| {
-                (whole.cues[bass].order.iter())
-                    .any(|&(at, ..)| at < lines[bar] && at + ring > lines[bar])
+                (whole.cues[bass].order.iter()).any(|&(at, i, _)| {
+                    let ring = samples_at(whole.score.bass[i].dur, SAMPLE_RATE);
+                    at < lines[bar] && at + ring > lines[bar]
+                })
             })
             .expect("a bass note rings over a bar line");
         let mut form = Form::plain();

@@ -133,12 +133,15 @@ pub(super) enum DrumKind {
 }
 
 /// One note a lane plays: when it sounds, in seconds into the loop, its
-/// pitch (MIDI) and its velocity.
+/// pitch (MIDI), its velocity and how long it's held, in seconds. A note's
+/// end is the score's, as MIDI's Note Off is a message of its own
+/// (<https://midi.org/summary-of-midi-1-0-messages>), so a line can articulate.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct Note {
     pub(super) at: f32,
     pub(super) midi: u8,
     pub(super) vel: f32,
+    pub(super) dur: f32,
 }
 
 /// One drum hit: when it lands, in seconds into the loop, its drum and its
@@ -162,8 +165,8 @@ pub struct Score {
     pub(super) sparkle: Vec<Note>,
     pub(super) keys: Vec<Note>,
     pub(super) drums: Vec<Hit>,
-    /// The bass lane: each bar's root, an answering root or fifth, and the
-    /// day's pickup a semitone under the next root.
+    /// The bass lane: each bar a rhythm of its own, its root first, then
+    /// roots or fifths, and by day a pickup a semitone under the next root.
     pub(super) bass: Vec<Note>,
     /// Which instrument sings the lead.
     pub(super) lead_voice: LeadVoice,
@@ -261,6 +264,8 @@ struct LeadStyle {
     /// rest: by day, LOFI-BIBLE R10's density.
     note_p: f32,
     velocity: Spread,
+    /// How long each note is held, in seconds.
+    dur: f32,
 }
 
 struct KeysStyle {
@@ -268,6 +273,8 @@ struct KeysStyle {
     density: Density,
     velocity: Spread,
     comp: Comp,
+    /// How long each note is held, in seconds.
+    dur: f32,
 }
 
 /// How a mood sets the keys' density.
@@ -297,16 +304,13 @@ enum Grooves {
 }
 
 struct BassStyle {
-    /// The chance a bar answers its root.
-    answer_p: f32,
-    /// The beat the answer lands on.
-    answer_beat: f32,
-    /// The chance the answer is the fifth, not the root again.
+    /// The chance a note after the root is the fifth, not the root again.
     fifth_p: f32,
-    /// The chance a bar picks up into the next a semitone under its root,
-    /// where the mood picks up at all.
+    /// The chance a bar's last note, where it falls in the last beat, picks
+    /// up into the next bar a semitone under its root, where the mood picks
+    /// up at all.
     pickup_p: Option<f32>,
-    /// The root's velocity; the answer's is [`ANSWER_SOFTER`] under it.
+    /// The root's velocity; a later note's is [`LATER_SOFTER`] under it.
     velocity: Spread,
 }
 
@@ -322,6 +326,7 @@ const DAY: Style = Style {
             base: 0.34,
             span: 0.10,
         },
+        dur: 2.0,
     },
     keys: KeysStyle {
         density: Density::Drawn(Spread::between(0.28, 0.38)),
@@ -330,11 +335,10 @@ const DAY: Style = Style {
             span: 0.30,
         },
         comp: Comp::Shell,
+        dur: 0.9,
     },
     drums: Grooves::Drawn(&DAY_GROOVES),
     bass: BassStyle {
-        answer_p: 0.55,
-        answer_beat: 2.5,
         fifth_p: 0.4,
         pickup_p: Some(0.25),
         velocity: Spread {
@@ -364,6 +368,7 @@ const NIGHT: Style = Style {
             base: 0.25,
             span: 0.12,
         },
+        dur: 2.2,
     },
     keys: KeysStyle {
         density: Density::Fixed(0.15),
@@ -372,12 +377,10 @@ const NIGHT: Style = Style {
             span: 0.25,
         },
         comp: Comp::Single,
+        dur: 1.1,
     },
     drums: Grooves::Fixed(&NIGHT_GROOVE),
     bass: BassStyle {
-        answer_p: 0.7,
-        // the old baked sub's pulse
-        answer_beat: 2.0,
         fifth_p: 0.2,
         pickup_p: None,
         velocity: Spread {
@@ -832,6 +835,7 @@ fn lead(rng: &mut NoiseStream, harmony: &Harmony, style: &LeadStyle, beat_s: f32
                 at,
                 midi: n.note,
                 vel: n.vel * LEAD_ACCENT.draw(rng),
+                dur: style.dur,
             }
         })
         .collect()
@@ -1323,10 +1327,9 @@ const BASS_LAG: Spread = Spread {
     base: 0.014,
     span: 0.010,
 };
-/// The answer's velocity under the root's.
-const ANSWER_SOFTER: f32 = 0.14;
-/// The pickup's beat, lag and velocity.
-const PICKUP_BEAT: f32 = 3.5;
+/// A later note's velocity under the root's.
+const LATER_SOFTER: f32 = 0.14;
+/// The pickup's lag and velocity.
 const PICKUP_LAG: Spread = Spread {
     base: 0.012,
     span: 0.008,
@@ -1336,8 +1339,53 @@ const PICKUP_VELOCITY: Spread = Spread {
     span: 0.06,
 };
 
-/// The bass stage: the ONE on every bar, an optional answer, an occasional
-/// pickup — root/5th/leading-tone only, a floor, not a melody.
+/// Each 16th of a bar from its downbeat, the chance the bar's bass starts a
+/// note there: the tracks' mean bass onsets a bar on each, `analyze.py`'s
+/// bass `steps`, as the commit that set it records.
+const BASS_STEP_P: [f32; 16] = [
+    0.392, 0.226, 0.122, 0.111, 0.191, 0.119, 0.163, 0.117, 0.210, 0.150, 0.128, 0.133, 0.191,
+    0.131, 0.130, 0.125,
+];
+
+/// The 16ths in a beat.
+const STEPS_PER_BEAT: usize = (1.0 / SIXTEENTH_BEATS) as usize;
+
+/// How much of the time to its next note a bass note is held (opinion; the
+/// card's `bass legato` reads it).
+const BASS_GATE: f32 = 0.9;
+
+/// A bar of bass, as 16ths from its downbeat: the root's in the first beat,
+/// picked as [`BASS_STEP_P`] weighs them, then each later 16th that sounds by
+/// its chance.
+fn bass_rhythm(rng: &mut NoiseStream) -> Vec<usize> {
+    let (first, rest) = BASS_STEP_P.split_at(STEPS_PER_BEAT);
+    // each step by its weight over the steps left, so each is picked by its
+    // share of them all
+    let mut left: f32 = first.iter().sum();
+    let mut root = 0;
+    for (step, &p) in first.iter().enumerate() {
+        root = step;
+        if chance(rng, p / left) {
+            break;
+        }
+        left -= p;
+    }
+    let later = (STEPS_PER_BEAT..).zip(rest);
+    std::iter::once(root)
+        .chain(
+            later
+                .filter(|&(_, &p)| chance(rng, p))
+                .map(|(step, _)| step),
+        )
+        .collect()
+}
+
+/// The bass stage: each bar of the loop a rhythm of its own, the root on its
+/// first note, then the root or its fifth, and a pickup a semitone under the
+/// next bar's root on a last-beat last note — a floor, not a melody. A bar
+/// each, not one a song: the tracks' bass holds its share of beats and
+/// off-eighths across a track, which one bar of two or three notes, played
+/// throughout, can't.
 fn bass(
     rng: &mut NoiseStream,
     bars: &[Chord; GEN_LOOP_BARS],
@@ -1345,43 +1393,53 @@ fn bass(
     beat_s: f32,
 ) -> Vec<Note> {
     let bar_s = beat_s * BEATS_PER_BAR;
-    let answer_velocity = Spread {
-        base: style.velocity.base - ANSWER_SOFTER,
+    let step_s = SIXTEENTH_BEATS * beat_s;
+    let loop_s = bar_s * GEN_LOOP_BARS as f32;
+    let bar_steps = BASS_STEP_P.len();
+    // every bar's rhythm before any note, so a bar's last note knows where
+    // the next bar's root falls
+    let rhythms: Vec<Vec<usize>> = bars.iter().map(|_| bass_rhythm(rng)).collect();
+    let onsets: Vec<usize> = (rhythms.iter().enumerate())
+        .flat_map(|(bar, steps)| steps.iter().map(move |&step| bar * bar_steps + step))
+        .collect();
+    let later_velocity = Spread {
+        base: style.velocity.base - LATER_SOFTER,
         span: style.velocity.span,
     };
     let mut out = Vec::new();
-    for (bar, chord) in bars.iter().enumerate() {
-        let b0 = bar as f32 * bar_s;
+    for (i, &onset) in onsets.iter().enumerate() {
+        let (bar, step) = (onset / bar_steps, onset % bar_steps);
+        let chord = &bars[bar];
         let root = bass_pitch(chord.root_pc);
-        let at = BASS_LAG.after(b0, rng);
-        out.push(Note {
-            at,
-            midi: root,
-            vel: style.velocity.draw(rng),
-        });
-        if chance(rng, style.answer_p) {
-            let note = if chance(rng, style.fifth_p) {
+        // the loop repeats, so the last note's next is the first bar's root
+        let next = (onsets.get(i + 1).copied()).unwrap_or(onsets[0] + GEN_LOOP_BARS * bar_steps);
+        let gap = (next - onset) as f32 * step_s;
+        let on = bar as f32 * bar_s + step as f32 * step_s;
+        let ends_bar = onsets.get(i + 1).is_none_or(|&n| n / bar_steps != bar);
+        let last_beat = step >= bar_steps - STEPS_PER_BEAT;
+        let (at, midi, vel) = if step == rhythms[bar][0] {
+            (BASS_LAG.after(on, rng), root, style.velocity.draw(rng))
+        } else if ends_bar
+            && last_beat
+            && style.pickup_p.is_some_and(|p| chance(rng, p))
+            && let Some(next) = bars.get(bar + 1)
+        {
+            // literal semitone below the folded next root (pc-folding
+            // rendered an 11-semitone drop); no last-bar pickup, whose next
+            // root is the loop's first
+            let midi = bass_pitch(next.root_pc) - 1;
+            (PICKUP_LAG.after(on, rng), midi, PICKUP_VELOCITY.draw(rng))
+        } else {
+            let midi = if chance(rng, style.fifth_p) {
                 bass_pitch(chord.root_pc + FIFTH)
             } else {
                 root
             };
-            let at = BASS_LAG.after(b0 + style.answer_beat * beat_s, rng);
-            out.push(Note {
-                at,
-                midi: note,
-                vel: answer_velocity.draw(rng),
-            });
-        }
-        if style.pickup_p.is_some_and(|p| chance(rng, p))
-            && let Some(next) = bars.get(bar + 1)
-        {
-            // literal semitone below the folded next root (pc-folding rendered an
-            // 11-semitone drop); no last-bar pickup — place() clips at the seam
-            let at = PICKUP_LAG.after(b0 + PICKUP_BEAT * beat_s, rng);
-            let midi = bass_pitch(next.root_pc) - 1;
-            let vel = PICKUP_VELOCITY.draw(rng);
-            out.push(Note { at, midi, vel });
-        }
+            (BASS_LAG.after(on, rng), midi, later_velocity.draw(rng))
+        };
+        // place() clips at the loop end, so no note rings into the seam
+        let dur = (gap * BASS_GATE).min(loop_s - at);
+        out.push(Note { at, midi, vel, dur });
     }
     out
 }
@@ -1437,12 +1495,14 @@ fn keys(
                         at,
                         midi: third,
                         vel,
+                        dur: style.dur,
                     });
                     // a hand rolls the dyad; a sequencer stamps it
                     out.push(Note {
                         at: ROLL.after(at, rng),
                         midi: upper,
                         vel: vel * ROLLED_SOFTER,
+                        dur: style.dur,
                     });
                 }
                 Comp::Single => {
@@ -1451,6 +1511,7 @@ fn keys(
                         at,
                         midi: note,
                         vel: style.velocity.draw(rng),
+                        dur: style.dur,
                     });
                 }
             }

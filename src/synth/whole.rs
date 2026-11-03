@@ -286,7 +286,6 @@ pub(super) fn pad_core(
 pub(super) fn events_stem_voiced(
     loop_secs: f32,
     events: &[Note],
-    dur_s: f32,
     cutoff_hz: f32,
     peak: f32,
     note_fn: NoteVoice,
@@ -295,7 +294,7 @@ pub(super) fn events_stem_voiced(
     for n in events {
         place(
             &mut buf,
-            &note_fn(n.midi, dur_s, n.vel, SAMPLE_RATE),
+            &note_fn(n.midi, n.dur, n.vel, SAMPLE_RATE),
             n.at,
             1.0,
         );
@@ -357,7 +356,7 @@ pub(super) fn render_part(part: &Part<'_>, loop_s: f32, rng: &mut NoiseStream) -
             mood,
         } => {
             let r = recipes.at(mood);
-            events_stem_voiced(loop_s, events, r.dur_s, r.cutoff_hz, r.peak, voice)
+            events_stem_voiced(loop_s, events, r.cutoff_hz, r.peak, voice)
         }
         Part::Hits {
             hits,

@@ -270,6 +270,88 @@ fn lead_voice_distribution_tracks_the_draw_weights() {
 }
 
 #[test]
+fn the_bass_starts_its_notes_as_bass_step_p_weighs_each_16th() {
+    // a bar's root in its first beat by each 16th's share of that beat's
+    // weights, then each later 16th by its own chance; each band is ±3.5σ
+    // over every bar of `SEEDS` seeds, so a misplaced or misweighted draw fails
+    // but an unlucky sample does not
+    const SEEDS: u64 = 400;
+    let mut onsets = [0usize; BASS_STEP_P.len()];
+    for seed in 0..SEEDS {
+        let s = compose(Mood::Day, seed);
+        let (bar_s, step_s) = (s.bar_s(), s.beat_s() * SIXTEENTH_BEATS);
+        let mut first_beat = [0usize; GEN_LOOP_BARS];
+        for &Note { at, .. } in &s.bass {
+            let bar = (at / bar_s) as usize;
+            // a note lags its 16th by less than a 16th
+            let step = ((at - bar as f32 * bar_s) / step_s) as usize;
+            onsets[step] += 1;
+            first_beat[bar] += usize::from(step < STEPS_PER_BEAT);
+        }
+        assert_eq!(
+            first_beat, [1; GEN_LOOP_BARS],
+            "seed {seed}: a bar without one root in its first beat"
+        );
+    }
+    let bars = (SEEDS as usize * GEN_LOOP_BARS) as f64;
+    let first: f32 = BASS_STEP_P[..STEPS_PER_BEAT].iter().sum();
+    for (step, (&n, &p)) in onsets.iter().zip(&BASS_STEP_P).enumerate() {
+        let p = f64::from(if step < STEPS_PER_BEAT { p / first } else { p });
+        let (mean, sd) = (bars * p, (bars * p * (1.0 - p)).sqrt());
+        assert!(
+            (n as f64 - mean).abs() <= 3.5 * sd,
+            "16th {step}: {n} onsets over {bars} bars vs p={p:.3}"
+        );
+    }
+}
+
+#[test]
+fn each_bass_bar_plays_its_own_rhythm_each_note_held_toward_the_next() {
+    for mood in MOODS {
+        for seed in 0..SWEEP {
+            let (s, h) = composed(mood, seed);
+            let step_s = s.beat_s() * SIXTEENTH_BEATS;
+            let bar_steps = BASS_STEP_P.len();
+            // each note's 16th from the loop's start: it lags that 16th by
+            // less than a 16th
+            let onsets: Vec<usize> = (s.bass.iter())
+                .map(|&Note { at, .. }| (at / step_s) as usize)
+                .collect();
+            let bars: BTreeSet<Vec<usize>> = (0..GEN_LOOP_BARS)
+                .map(|bar| {
+                    (onsets.iter())
+                        .filter(|&&o| o / bar_steps == bar)
+                        .map(|&o| o % bar_steps)
+                        .collect()
+                })
+                .collect();
+            assert!(bars.len() > 1, "{mood:?} seed {seed}: every bar one rhythm");
+            for (i, (&Note { at, midi, dur, .. }, &onset)) in s.bass.iter().zip(&onsets).enumerate()
+            {
+                // the last note's next is the loop's first, a loop later
+                let next =
+                    (onsets.get(i + 1).copied()).unwrap_or(onsets[0] + GEN_LOOP_BARS * bar_steps);
+                let held = ((next - onset) as f32 * step_s * BASS_GATE).min(s.loop_secs() - at);
+                assert!(
+                    (dur - held).abs() < 1e-4,
+                    "{mood:?} seed {seed}: bass note at {at}s held {dur}s, not {held}s"
+                );
+                let bar = onset / bar_steps;
+                let chord = &h.bars[bar];
+                let tone = [bass_pitch(chord.root_pc), bass_pitch(chord.root_pc + FIFTH)];
+                if !tone.contains(&midi) {
+                    let ends_bar = onsets.get(i + 1).is_none_or(|&n| n / bar_steps != bar);
+                    assert!(
+                        ends_bar && onset % bar_steps >= bar_steps - STEPS_PER_BEAT,
+                        "{mood:?} seed {seed}: pickup at {at}s not its bar's last-beat last note"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn every_seed_is_well_formed() {
     for mood in MOODS {
         let style = mood.style();
@@ -320,7 +402,13 @@ fn assert_well_formed(s: &Score, h: &Harmony, seed: u64) {
             "seed {seed}: the bass must sound bar {bar}'s root on its ONE"
         );
     }
-    for &Note { at, midi: note, .. } in &s.bass {
+    for &Note {
+        at,
+        midi: note,
+        dur,
+        ..
+    } in &s.bass
+    {
         // the window G1-F#2, a root an octave under it, and the leading-tone
         // pickup a step under that
         assert!(
@@ -340,10 +428,10 @@ fn assert_well_formed(s: &Score, h: &Harmony, seed: u64) {
             allowed.contains(&note),
             "seed {seed}: bass note {note} in bar {bar} is not root/5th/pickup {allowed:?}"
         );
-        // place() clips at the loop end — no onset may ring into the seam
+        // place() clips at the loop end — no note may ring into the seam
         assert!(
-            at < loop_s - 1.4 * (bar_s / 4.0),
-            "seed {seed}: bass onset {at}s rings into the loop seam"
+            dur > 0.0 && at + dur <= loop_s,
+            "seed {seed}: bass note at {at}s held {dur}s rings into the loop seam"
         );
     }
     for &Hit { at, gain, .. } in &s.drums {
@@ -653,12 +741,14 @@ fn every_seed_composes_the_score_it_did() {
                     at,
                     midi: note,
                     vel,
+                    dur,
                 } in lane
                 {
                     words.extend([
                         u64::from(at.to_bits()),
                         u64::from(note),
                         u64::from(vel.to_bits()),
+                        u64::from(dur.to_bits()),
                     ]);
                 }
             }
@@ -682,4 +772,4 @@ fn every_seed_composes_the_score_it_did() {
     assert_eq!(h, EVERY_SEED_GOLDEN, "{h:#018x}");
 }
 
-const EVERY_SEED_GOLDEN: u64 = 0x55a7_84e5_1b76_f2de;
+const EVERY_SEED_GOLDEN: u64 = 0xb46e_9b09_90b2_957b;

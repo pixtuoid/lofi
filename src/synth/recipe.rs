@@ -62,11 +62,9 @@ impl<T: Copy> ByMood<T> {
     }
 }
 
-/// A note lane's recipe: how long each note rings, its stem's low-pass corner
-/// and its stem's peak.
+/// A note lane's recipe: its stem's low-pass corner and its stem's peak.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct NoteRecipe {
-    pub(crate) dur_s: f32,
     pub(crate) cutoff_hz: f32,
     pub(crate) peak: f32,
 }
@@ -84,38 +82,32 @@ pub(crate) struct HitRecipe {
 /// [`render_lane`](super::render_lane) and the lane chains read.
 pub(crate) const SPARKLE: ByMood<NoteRecipe> = ByMood {
     night: NoteRecipe {
-        dur_s: 2.2,
         cutoff_hz: 2800.0,
         peak: 0.5,
     },
     day: NoteRecipe {
-        dur_s: 2.0,
         cutoff_hz: 3200.0,
         peak: 0.6,
     },
 };
 pub(crate) const KEYS: ByMood<NoteRecipe> = ByMood {
     night: NoteRecipe {
-        dur_s: 1.1,
         cutoff_hz: 2000.0,
         peak: 0.7,
     },
     day: NoteRecipe {
-        dur_s: 0.9,
         cutoff_hz: 2400.0,
         peak: 0.8,
     },
 };
 pub(crate) const BASS: ByMood<NoteRecipe> = ByMood {
     night: NoteRecipe {
-        dur_s: 1.7,
         cutoff_hz: 700.0,
-        peak: 0.8,
+        peak: 0.82,
     },
     day: NoteRecipe {
-        dur_s: 1.5,
         cutoff_hz: 900.0,
-        peak: 0.8,
+        peak: 0.704,
     },
 };
 pub(crate) const DRUMS: ByMood<HitRecipe> = ByMood {
@@ -234,14 +226,9 @@ impl Part<'_> {
                 bar_s,
                 mood,
             } => (chord(ChordTone::of(mood), &chords[i], bar_s, sr), 1.0),
-            Part::Notes {
-                events,
-                voice,
-                recipes,
-                mood,
-            } => {
+            Part::Notes { events, voice, .. } => {
                 let n = events[i];
-                (voice(n.midi, recipes.at(mood).dur_s, n.vel, sr), 1.0)
+                (voice(n.midi, n.dur, n.vel, sr), 1.0)
             }
             Part::Hits { hits, .. } => {
                 let h = hits[i];
