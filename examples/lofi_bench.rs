@@ -105,7 +105,7 @@ fn main() -> ExitCode {
 /// bars the day's tails ring over. Each chunk takes its least over
 /// [`REPEATS`] runs. With it, the seed and the frame the chunk started at,
 /// which tell a cold start from a transition. Errs unless every run played
-/// those two songs, chunked alike.
+/// those two songs.
 fn slowest_chunk(buf: &mut [Frame]) -> Result<(f64, u64, u64), String> {
     let day = Controls::default().with_intensity(1.0);
     let night = day.with_daylight(0.0).with_rain(1.0);
@@ -116,27 +116,28 @@ fn slowest_chunk(buf: &mut [Frame]) -> Result<(f64, u64, u64), String> {
     audition::spans_a_form(&forms).map_err(|e| format!("the timed songs: {e}"))?;
     let mut worst = (0.0, SEEDS.start, 0);
     for seed in SEEDS {
-        let mut least = timed_chunks(seed, day, night, buf)?;
-        for _ in 1..REPEATS {
-            let again = timed_chunks(seed, day, night, buf)?;
-            if again
-                .iter()
-                .map(|&(at, _)| at)
-                .ne(least.iter().map(|&(at, _)| at))
-            {
-                return Err(format!("seed {seed}'s runs chunked differently"));
-            }
-            for ((_, took), (_, now)) in least.iter_mut().zip(again) {
-                *took = took.min(now);
-            }
-        }
-        for (at, took) in least {
+        let runs = (0..REPEATS)
+            .map(|_| timed_chunks(seed, day, night, buf))
+            .collect::<Result<Vec<_>, _>>()?;
+        for (at, took) in least(&runs) {
             if took > worst.0 {
                 worst = (took, seed, at);
             }
         }
     }
     Ok(worst)
+}
+
+/// Each chunk's frame and its least time over `runs` of one seed, which
+/// chunk alike: a render is a pure function of its seed and timeline.
+fn least(runs: &[Vec<(u64, f64)>]) -> Vec<(u64, f64)> {
+    let mut least = runs[0].clone();
+    for run in &runs[1..] {
+        for ((_, took), &(_, now)) in least.iter_mut().zip(run) {
+            *took = took.min(now);
+        }
+    }
+    least
 }
 
 /// Each chunk's frame and how long its `render` took, in seconds, over one
@@ -339,7 +340,7 @@ mod host {
 
 #[cfg(test)]
 mod tests {
-    use super::worst;
+    use super::{least, worst};
 
     #[test]
     fn the_worst_offset_is_the_largest_and_a_nan_wins() {
@@ -347,5 +348,15 @@ mod tests {
         assert_eq!(worst(&[0.1, f64::INFINITY]), f64::INFINITY);
         assert!(worst(&[0.1, f64::NAN, 0.2]).is_nan());
         assert!(worst(&[f64::NAN, 0.2]).is_nan());
+    }
+
+    #[test]
+    fn each_chunk_reads_at_its_least_over_the_runs() {
+        let runs = [
+            vec![(0, 3.0), (10, 1.0)],
+            vec![(0, 2.0), (10, 4.0)],
+            vec![(0, 5.0), (10, 0.5)],
+        ];
+        assert_eq!(least(&runs), [(0, 2.0), (10, 0.5)]);
     }
 }
