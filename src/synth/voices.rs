@@ -18,7 +18,8 @@ const EP_VEL_H2_BASE: f32 = 0.18;
 const EP_VEL_H2_GAIN: f32 = 0.45;
 
 /// One soft electric-piano note; `h2` is the 2nd-harmonic weight — the one axis
-/// the hiphop and sleep voices differ on.
+/// Phase 0's anchor EP, which fixes it, and the EP that ships, which keys it to
+/// the velocity, differ on.
 pub(super) fn ep_pluck_h2(midi: u8, dur_s: f32, vel: f32, h2: f32, sr: u32) -> Vec<f32> {
     let n = samples_at(dur_s, sr);
     let f = midi_freq(f32::from(midi));
