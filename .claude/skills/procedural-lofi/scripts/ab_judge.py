@@ -11,7 +11,7 @@ Usage: $J/bin/python ab_judge.py DIR --refs REFS [--corpus-cache CACHE] [--score
   REFS holds each style's reference corpus at REFS/STYLE: audio/ and its
   manifest.json of sha256s. A take is read against the corpus of the style
   its name carries.
-  CACHE holds each corpus's FAD statistics and the panel's screening on it,
+  CACHE holds each corpus's FAD statistics and the judges' screening on it,
   built on a miss.
   --score-identical scores byte-identical pairs too: the proof that they tie.
   --shard ROWS TAKE... and --merge PLAN split a run across containers, for
@@ -295,8 +295,8 @@ def screened(judges, items):
 
 
 def seated(screen):
-    """The panel's judges a corpus's `screened` shares seat, in `PANEL`'s
-    order."""
+    """`PANEL`'s judges a corpus's `screened` shares seat, its panel, in
+    `PANEL`'s order."""
     return [name for name in PANEL if name not in screened_out(screen)]
 
 
@@ -420,8 +420,8 @@ def screen_file(caches, manifest_sha):
     return caches / f"{manifest_sha}-screen-{key(*built)}.json"
 
 
-def cached_screen(caches, fad, panel):
-    """`screened`'s shares for `panel` on the held-out references, read from
+def cached_screen(caches, fad, judges):
+    """`screened`'s shares for `judges` on the held-out references, read from
     `caches` or built into it. Building needs a cache this run can write, as
     `cached_quietest` tries one, and the remote judge's can't."""
     path = screen_file(caches, fad.manifest_sha)
@@ -433,8 +433,8 @@ def cached_screen(caches, fad, panel):
     try:
         tempfile.TemporaryFile(dir=caches).close()
     except OSError:
-        sys.exit("the corpus cache lacks the panel's screening and is read-only: run provision")
-    shares = screened(panel, [fad.read(fad.refs, {"file": f}) for f in sorted(fad.calibration)])
+        sys.exit("the corpus cache lacks the judges' screening and is read-only: run provision")
+    shares = screened(judges, [fad.read(fad.refs, {"file": f}) for f in sorted(fad.calibration)])
     path.write_text(json.dumps(shares) + "\n")
     return shares
 
@@ -594,7 +594,7 @@ def read_commit(side):
 
 
 def scored_rows(args, names, sides):
-    """The seat a run's panel takes and `names`' rows, every judge loaded
+    """The seat a run's judges take and `names`' rows, every judge loaded
     once and each take read against its style's corpus. A corpus's level is
     its style's takes' among `names` alone, which `merged` holds to one
     across a run's shards."""
@@ -606,8 +606,8 @@ def scored_rows(args, names, sides):
     for style, taken in sorted(by_style.items()):
         takes_lufs = float(np.median([mono_lufs(*sf.read(d / n, dtype="float32")) for n in taken for _, d in sides]))
         corpora[style] = Fad(args.refs / style, takes_lufs, args.corpus_cache)
-    panel = dict(zip(PANEL, (Audiobox(), TuneJury(clap(), device)), strict=True))
-    screens = {style: cached_screen(args.corpus_cache, fad, panel) for style, fad in corpora.items()}
+    loaded = dict(zip(PANEL, (Audiobox(), TuneJury(clap(), device)), strict=True))
+    screens = {style: cached_screen(args.corpus_cache, fad, loaded) for style, fad in corpora.items()}
     panels = {style: seated(screen) for style, screen in screens.items()}
     for style, judges in panels.items():
         if not judges:
@@ -645,7 +645,7 @@ def scored_rows(args, names, sides):
             # the descriptors measure the take as rendered, the judges hear it floored
             row[side] = describe(x, sr)
             takes[side] = floored(x, name, mono_lufs(x, sr)), sr
-            row[side]["scores"] = {j: panel[j].score(*takes[side]) for j in panels[style]}
+            row[side]["scores"] = {j: loaded[j].score(*takes[side]) for j in panels[style]}
         row["base"]["scores"][GUARD], row["cand"]["scores"][GUARD] = fad.score_pair(takes["base"], takes["cand"])
         row["bands_delta_db"] = [c - b for b, c in zip(row["base"]["bands_db"], row["cand"]["bands_db"])]
         b, c = row["base"]["scores"], row["cand"]["scores"]
@@ -664,7 +664,7 @@ def main():
         "--corpus-cache",
         type=Path,
         default=Path(sys.prefix) / "corpus-cache",
-        help="each corpus's FAD statistics and the panel's screening, built here on a miss (default: the venv's)",
+        help="each corpus's FAD statistics and the judges' screening, built here on a miss (default: the venv's)",
     )
     ap.add_argument("--score-identical", action="store_true", help="score byte-identical pairs too")
     mode = ap.add_mutually_exclusive_group()

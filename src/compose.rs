@@ -78,10 +78,10 @@ pub(crate) enum LeadVoice {
     EpVel,
     /// Plucked-string lead ("nylon" family).
     Pluck,
-    /// Plucked-tine lead (day pool) — inharmonic cantilever overtones + a
+    /// Plucked-tine lead (hiphop pool) — inharmonic cantilever overtones + a
     /// resonator-body thump.
     Kalimba,
-    /// Struck-bar lead (night pool) — double-octave tuned partials with the
+    /// Struck-bar lead (sleep pool) — double-octave tuned partials with the
     /// fan tremolo baked in.
     Vibraphone,
 }
@@ -1086,7 +1086,7 @@ pub(crate) const SLEEP_GROOVE: GrooveTemplate = GrooveTemplate {
     // a separate lag on purpose, not a drifted copy of DRAG_KICK_S
     drag_s: 0.018,
     snares: &[1.0, 3.0],
-    snare_gain: NIGHT_SNARE_GAIN,
+    snare_gain: SLEEP_SNARE_GAIN,
     hats: Hats {
         off_eighths_only: true,
         skip_p: 0.45,
@@ -1112,7 +1112,7 @@ const GHOST_KICK: Kick = Kick {
 /// How far behind the grid a snare lands, in seconds.
 const SNARE_DRAG_S: f32 = 0.008;
 const SNARE_GAIN: f32 = 0.85;
-const NIGHT_SNARE_GAIN: f32 = 0.43;
+const SLEEP_SNARE_GAIN: f32 = 0.43;
 
 /// Each bar's velocity wobble, which all its hits share, and each hit's own.
 const WOBBLE: Spread = Spread {

@@ -249,28 +249,28 @@ fn a_bars_lead_notes_keep_their_gap() {
 
 #[test]
 fn lead_voice_pools_are_style_curated() {
-    let mut day_saw = (false, false, false);
-    let mut night_saw = (false, false);
+    let mut hiphop_saw = (false, false, false);
+    let mut sleep_saw = (false, false);
     for seed in 0..SWEEP {
         match compose(&HIPHOP, seed).lead_voice {
-            LeadVoice::EpVel => day_saw.0 = true,
-            LeadVoice::Pluck => day_saw.1 = true,
-            LeadVoice::Kalimba => day_saw.2 = true,
-            LeadVoice::Vibraphone => panic!("seed {seed}: vibraphone is night-pool only"),
+            LeadVoice::EpVel => hiphop_saw.0 = true,
+            LeadVoice::Pluck => hiphop_saw.1 = true,
+            LeadVoice::Kalimba => hiphop_saw.2 = true,
+            LeadVoice::Vibraphone => panic!("seed {seed}: vibraphone is sleep-pool only"),
         }
         match compose(&SLEEP, seed).lead_voice {
-            LeadVoice::EpVel => night_saw.0 = true,
-            LeadVoice::Vibraphone => night_saw.1 = true,
-            v => panic!("seed {seed}: night drew the day-pool {v:?}"),
+            LeadVoice::EpVel => sleep_saw.0 = true,
+            LeadVoice::Vibraphone => sleep_saw.1 = true,
+            v => panic!("seed {seed}: sleep drew the hiphop-pool {v:?}"),
         }
     }
     assert!(
-        day_saw.0 && day_saw.1 && day_saw.2,
-        "all three day lead voices must appear: {day_saw:?}"
+        hiphop_saw.0 && hiphop_saw.1 && hiphop_saw.2,
+        "all three day lead voices must appear: {hiphop_saw:?}"
     );
     assert!(
-        night_saw.0 && night_saw.1,
-        "both night lead voices must appear: {night_saw:?}"
+        sleep_saw.0 && sleep_saw.1,
+        "both night lead voices must appear: {sleep_saw:?}"
     );
 }
 

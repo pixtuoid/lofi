@@ -181,7 +181,7 @@ class CorpusCache(unittest.TestCase):
         self.assertIsNone(cached_quietest(self.caches, self.SHA, self.QUIETEST))
         self.assertEqual(list(self.caches.iterdir()), [])
 
-    def test_a_read_only_cache_without_the_panels_screening_asks_for_provision(self):
+    def test_a_read_only_cache_without_the_judges_screening_asks_for_provision(self):
         fad = mock.Mock(manifest_sha=self.SHA)
         with mock.patch("tempfile.TemporaryFile", side_effect=OSError(errno.EROFS, "Read-only file system")):
             with self.assertRaises(SystemExit) as refused:

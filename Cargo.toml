@@ -26,8 +26,11 @@ missing_docs = "warn"
 # (https://doc.rust-lang.org/1.98.1/rustc/lints/levels.html#forbid): `tests/alloc_budget.rs`'s
 # counting allocator and `lofi_bench`'s wasm imports do. `src/lib.rs` forbids it in the library.
 unsafe_code = "deny"
-# A `#[test]` nested in a fn, which libtest never runs: `cargo test` only warns
-# on it, and no CI job fails on the test build's warnings.
+# A `#[test]` nested in a fn, which "will not fail because it does not run", a
+# warning by default
+# (https://doc.rust-lang.org/1.99.1/rustc/lints/listing/warn-by-default.html#unnameable-test-items):
+# clippy never builds an example's tests, and `cargo test`'s warnings fail no
+# CI job (observed).
 unnameable_test_items = "deny"
 
 # An `allow` outlives the warning it silenced; an `expect` fails once its lint
