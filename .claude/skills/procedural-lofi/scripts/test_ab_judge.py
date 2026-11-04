@@ -26,7 +26,6 @@ from ab_judge import (
     anchor_filter,
     cached_quietest,
     cached_screen,
-    environment,
     floored,
     main,
     mono_lufs,
@@ -38,6 +37,7 @@ from ab_judge import (
     stats_file,
     windows,
 )
+from judge_local import environment
 from scipy import signal
 from verdict import GUARD, JUDGES, PANEL
 
@@ -208,7 +208,7 @@ class CorpusCache(unittest.TestCase):
 
         def installed(version):
             torch = mock.Mock(version=version, metadata={"Name": "Torch"})
-            return mock.patch("ab_judge.distributions", return_value=[torch])
+            return mock.patch("judge_local.distributions", return_value=[torch])
 
         with installed("1"):
             self.assertIn("torch==1", environment())

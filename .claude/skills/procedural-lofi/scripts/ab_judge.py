@@ -71,8 +71,7 @@ import hashlib
 import json
 import sys
 import tempfile
-import platform
-from importlib.metadata import distributions, version
+from importlib.metadata import version
 from pathlib import Path
 
 import fadtk.model_loader
@@ -93,7 +92,7 @@ sys.dont_write_bytecode = True
 HERE = Path(__file__).resolve().parent
 # `judge/` sits beside `scripts/` here and in the Modal image alike
 sys.path[:0] = [str(HERE), str(HERE.parent / "judge")]
-from judge_local import merged
+from judge_local import environment, merged
 from validate_batch import NAME, Invalid, scored, validate
 from verdict import GUARD, JUDGES, PANEL, exit_message, judged
 
@@ -365,12 +364,6 @@ class TuneJury:
                 rewards.append(self.head(features.to(self.device))[:, 0].float().cpu())
         rewards = torch.cat(rewards)
         return float((rewards * weights).sum() / weights.sum())
-
-
-def environment():
-    """The Python and every package this judge runs on, which compute each
-    cache's numbers as much as its models do: a lock bump keys new caches."""
-    return [platform.python_version(), *sorted(f"{d.metadata['Name'].lower()}=={d.version}" for d in distributions())]
 
 
 def key(*built):

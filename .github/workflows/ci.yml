@@ -134,7 +134,7 @@ jobs:
   # The judge's environment, as judge.yml never tries it: that workflow runs the
   # base branch's judge, so a lock bump would first run on the next render PR.
   # A PR that touches the judge runs every model in its own image, with no
-  # corpus; main then provisions the caches the environment keys (`ab_judge.py`'s
+  # corpus; main then provisions the caches the environment keys (`judge_local.py`'s
   # `environment`), which a PR's read-only judge can't build. A run that touches
   # none of it passes, so ci-gate can need it.
   judge-env:
