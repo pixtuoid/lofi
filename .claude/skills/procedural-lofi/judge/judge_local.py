@@ -81,3 +81,15 @@ def published(record, tracks):
         record["fad_calibration"] = sorted(record["fad_calibration"].values())
     return {"outcome": record["overall"], "table": table, "record": record}
 
+
+
+def replaced(corpus, held, local):
+    """Why `upload_refs` refuses `corpus`'s manifest `local` over the one the
+    refs Volume `held`, or None: its stems, keyed by manifest index, and the
+    judge's caches, keyed by the manifest's sha256, would read the old one."""
+    if held in (None, local):
+        return None
+    return (
+        f"the refs Volume holds another {corpus} corpus: a new selection replaces it, so remove /{corpus}"
+        f" there and /stems/{corpus}-* on the study Volume first, then provision if JUDGED reads it"
+    )

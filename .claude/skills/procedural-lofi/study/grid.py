@@ -1,6 +1,6 @@
-"""Where a time falls on a track's beat grid, and how alike its bars are, in
-the standard library alone so `test_grid.py` runs it without the study's
-image."""
+"""Where a time falls on a track's beat grid, how alike its bars are, and
+what a track without a kit has no grid for, in the standard library alone so
+`test_grid.py` runs it without the study's image."""
 
 from bisect import bisect_right
 
@@ -50,3 +50,36 @@ def likeness(line, lag):
         for bar in by_bar
         if bar - lag in by_bar
     ]
+
+
+# a drums stem under this share of the mix's power holds the separation's
+# residue, no kit: it sits between the kitless playlists' highest share and the
+# kit ones' lowest, as the commit that set it records
+MIN_KIT_SHARE = 0.01
+# what each part keeps without a grid, which its tracker's grid only segments:
+# where its notes sit and how they move, a chord's quality and root; never a
+# count a bar, a place on the grid or a drum hit
+UNGRIDDED_BASS = ("register", "legato", "median_note_ms")
+UNGRIDDED_MELODY = ("register", "interval_hist", "pentatonic_share", "step_share")
+UNGRIDDED_HARMONY = ("qualities", "roots")
+
+
+def has_kit(powers):
+    """Whether a track's stems' `powers` hold a drum kit."""
+    return powers["drums"] / sum(powers.values()) >= MIN_KIT_SHARE
+
+
+def without_grid(row):
+    """`row` with every count a bar, every place on the grid and every drum hit
+    unset: a track without a kit has no beat grid, only the fixed one
+    `analyze.py` segments what it keeps on."""
+    def keep(part, fields):
+        return part and {k: (v if k in fields else None) for k, v in part.items()}
+
+    return {
+        **row,
+        **dict.fromkeys(("tempo", "beats", "downbeat", "four_four", "grid_from", "drums", "kick", "snare", "hat")),
+        "harmony": keep(row["harmony"], UNGRIDDED_HARMONY),
+        "bass": keep(row["bass"], UNGRIDDED_BASS),
+        "melody": keep(row["melody"], UNGRIDDED_MELODY),
+    }

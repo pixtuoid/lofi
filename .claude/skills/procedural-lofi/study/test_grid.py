@@ -8,7 +8,7 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from grid import STEPS, likeness, placed, placement
+from grid import STEPS, has_kit, likeness, placed, placement, without_grid
 
 # beats a second apart from a downbeat at 0, two bars of them
 BEATS = [float(t) for t in range(9)]
@@ -74,6 +74,56 @@ class Likeness(unittest.TestCase):
 
     def test_a_bar_with_none_lag_before_counts_for_nothing(self):
         self.assertEqual(likeness([(0, 60), (STEPS, 60)], 16), [])
+
+
+
+class WithoutGrid(unittest.TestCase):
+    ROW = {
+        "powers": {"drums": 0.0005, "bass": 0.5, "other": 0.4995},
+        "tempo": 79.5,
+        "beats": 200,
+        "downbeat": 1,
+        "four_four": 0.9,
+        "grid_from": "beat-this",
+        "drums": {"kick": {"per_bar": 8.3}},
+        "kick": {"decay_ms": 168.0},
+        "snare": {"centroid_hz": 184.0},
+        "hat": {"centroid_hz": 187.0},
+        "harmony": {"qualities": {"maj": 3}, "roots": {"0": 3}, "beats_per_chord": 30.2, "cycle_bars": 1, "bar_tokens": {"0:maj": 3}},
+        "bass": {"register": [40.0], "legato": 0.8, "notes_per_bar": 0.7, "on_beat_share": 0.3},
+        "melody": {"register": [50.0, 54.5, 59.0], "pentatonic_share": 0.96, "onsets_per_bar": 6.9, "repeat_at_bars": {"4": 0.05}},
+        "polyphony": 3.2,
+    }
+
+    def test_a_drums_stem_of_residue_holds_no_kit_and_a_beat_holds_one(self):
+        self.assertFalse(has_kit(self.ROW["powers"]))
+        self.assertTrue(has_kit({"drums": 0.1, "bass": 0.4, "other": 0.5}))
+
+    def test_a_track_without_a_kit_counts_nothing_by_its_grid_or_its_hits(self):
+        row = without_grid(self.ROW)
+        for field in ("tempo", "beats", "downbeat", "four_four", "grid_from", "drums", "kick", "snare", "hat"):
+            self.assertIsNone(row[field], field)
+        self.assertIsNone(row["harmony"]["beats_per_chord"])
+        self.assertIsNone(row["harmony"]["cycle_bars"])
+        self.assertIsNone(row["harmony"]["bar_tokens"])
+        self.assertIsNone(row["bass"]["notes_per_bar"])
+        self.assertIsNone(row["bass"]["on_beat_share"])
+        self.assertIsNone(row["melody"]["onsets_per_bar"])
+        self.assertIsNone(row["melody"]["repeat_at_bars"])
+
+    def test_what_needs_no_grid_stays(self):
+        row = without_grid(self.ROW)
+        self.assertEqual(row["harmony"]["qualities"], {"maj": 3})
+        self.assertEqual(row["harmony"]["roots"], {"0": 3})
+        self.assertEqual(row["bass"]["legato"], 0.8)
+        self.assertEqual(row["melody"]["pentatonic_share"], 0.96)
+        self.assertEqual(row["melody"]["register"], [50.0, 54.5, 59.0])
+        self.assertEqual(row["polyphony"], 3.2)
+
+    def test_a_missing_line_stays_missing(self):
+        row = without_grid({**self.ROW, "bass": None, "melody": None})
+        self.assertIsNone(row["bass"])
+        self.assertIsNone(row["melody"])
 
 
 if __name__ == "__main__":

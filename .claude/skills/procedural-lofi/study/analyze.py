@@ -2,8 +2,10 @@
 bass, the harmony, the top line. A take of our own goes through the same code,
 so its known score is this measure's control.
 
-  modal run analyze.py::run --out DIR --prefix take-NAME_
-  modal run analyze.py::run --out DIR --hints JSON      the references
+  modal run analyze.py::run --out DIR --prefix PREFIX
+
+PREFIX picks the stems: a style's references, `STYLE-`, or a commit's takes,
+`take-NAME_`; both go through the same code.
 
 Each track's statistics, its drum grid and chord counts among them, come home
 in DIR's study*.json, which stays private: only their quartiles are committed,
@@ -17,7 +19,7 @@ from pathlib import Path
 
 import modal
 
-from grid import BEATS_PER_BAR, STEPS, STEPS_PER_BEAT, likeness, placed, placement
+from grid import BEATS_PER_BAR, STEPS, STEPS_PER_BEAT, has_kit, likeness, placed, placement, without_grid
 
 STUDY = "/study"
 CONCURRENT = 24
@@ -55,6 +57,14 @@ PITCH = {
     "G": 7, "G#": 8, "Ab": 8, "A": 9, "A#": 10, "Bb": 10, "B": 11, "Cb": 11,
 }
 TEMPO_AGREES = 0.08
+# the tempo prior a beat grid is checked against: `librosa.feature.tempo`'s
+# default, log-normal over log2 of the tempo
+# (https://github.com/librosa/librosa/blob/0.10.2/librosa/feature/rhythm.py#L437),
+# so its width is in octaves, centred on LOFI-BIBLE.md's BPM centre; the width
+# is the one that agreed most with the hand hints it replaced, as the commit
+# that set it records
+PRIOR_BPM = 77.0
+PRIOR_OCTAVES = 0.5
 # Krumhansl & Kessler's key profiles
 MAJOR = (6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88)
 MINOR = (6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17)
@@ -134,12 +144,12 @@ def drum_hits(drums):
     return rows[:, 0], rows[:, 1].astype(int), rows[:, 2]
 
 
-def beat_grid(mix, drums, times, voices, hint):
+def beat_grid(mix, drums, times, voices):
     """Beats, tempo, the first downbeat's index, the share of 4-beat bars and
     who said so. Beat This! (Foscarin et al., ISMIR 2024) unless it disagrees
-    with `hint`, a tempo from a measure whose controls passed: on swung beats
-    Beat This! reads 2/3 or 3/2 of it. Then librosa's tracker follows `hint`,
-    and the downbeat puts the kicks on 1 and the snares on 2 and 4."""
+    with the drums' tempo under the prior: on swung beats Beat This! reads 2/3
+    or 3/2 of it. Then librosa's tracker follows the prior's tempo, and the
+    downbeat puts the kicks on 1 and the snares on 2 and 4."""
     import librosa
     import numpy as np
     from beat_this.inference import File2Beats
@@ -147,12 +157,13 @@ def beat_grid(mix, drums, times, voices, hint):
     beats, downbeats = File2Beats(checkpoint_path="final0", device="cpu", dbn=False)(str(mix))
     beats, downbeats = np.asarray(beats), np.asarray(downbeats)
     ibi = float(np.median(np.diff(beats)))
-    if hint is None or abs(60.0 / ibi / hint - 1.0) <= TEMPO_AGREES:
+    onset = librosa.onset.onset_strength(y=drums, sr=SR, hop_length=HOP)
+    prior = float(librosa.feature.tempo(onset_envelope=onset, sr=SR, hop_length=HOP, start_bpm=PRIOR_BPM, std_bpm=PRIOR_OCTAVES)[0])
+    if abs(60.0 / ibi / prior - 1.0) <= TEMPO_AGREES:
         first = int(np.argmin(np.abs(beats - downbeats[0])))
         lengths = np.round(np.diff(downbeats) / ibi)
         return beats, 60.0 / ibi, first, round(float(np.mean(lengths == BEATS_PER_BAR)), 3) if lengths.size else 0.0, "beat-this"
-    onset = librosa.onset.onset_strength(y=drums, sr=SR, hop_length=HOP)
-    _, frames = librosa.beat.beat_track(onset_envelope=onset, sr=SR, hop_length=HOP, bpm=hint, tightness=BEAT_TIGHTNESS, trim=False)
+    _, frames = librosa.beat.beat_track(onset_envelope=onset, sr=SR, hop_length=HOP, bpm=prior, tightness=BEAT_TIGHTNESS, trim=False)
     beats = librosa.frames_to_time(frames, sr=SR, hop_length=HOP)
     kicks, snares = times[voices == KICK], times[voices == SNARE]
 
@@ -391,17 +402,21 @@ def bounce(root, names, out):
     cpu=CPU, memory=MEMORY_MIB, timeout=TIMEOUT_S, max_containers=CONCURRENT,
     volumes={STUDY: study.with_mount_options(read_only=True)},
 )
-def one(job):
+def one(key):
     import numpy as np
 
-    key, hint = job
     root = Path(STUDY) / "stems" / key
     powers = json.loads((root / "done").read_text())
     mix = bounce(root, ("drums", "bass", "other", "vocals"), f"/tmp/{key}-mix.wav")
     pitched = bounce(root, ("bass", "other"), f"/tmp/{key}-pitched.wav")
     drums = stem(root, "drums")
     times, voices, levels = drum_hits(drums)
-    beats, tempo, downbeat, four_four, grid_from = beat_grid(mix, drums, times, voices, hint)
+    if has_kit(powers):
+        beats, tempo, downbeat, four_four, grid_from = beat_grid(mix, drums, times, voices)
+    else:
+        # no kit, no beat to track: a fixed grid at the prior's tempo segments
+        # what `without_grid` keeps, so no tracker's choice moves it
+        beats, tempo, downbeat, four_four, grid_from = np.arange(0.0, drums.size / SR, 60.0 / PRIOR_BPM), PRIOR_BPM, 0, None, "fixed"
     bar_times = beats[downbeat:]
     sixteenths = np.interp(np.arange(0, (bar_times.size - 1) * STEPS_PER_BEAT + 1) / STEPS_PER_BEAT, np.arange(bar_times.size), bar_times)
     bass_notes = transcribe(root / "bass.flac", BASS_LOW_HZ, BASS_HIGH_HZ)
@@ -410,7 +425,7 @@ def one(job):
     tonic, mode, confidence = key_of(chroma_of(other_notes + bass_notes, beat_edges).sum(axis=0))
     chords = chords_of(pitched, beat_edges)
     n_bars = max(1, (bar_times.size - 1) // BEATS_PER_BAR)
-    return {
+    row = {
         "key": key,
         "powers": powers,
         "tempo": round(tempo, 1),
@@ -431,30 +446,26 @@ def one(job):
         "polyphony": round(sum(e - s for s, e, _, _ in other_notes) / max(float(bar_times[-1] - bar_times[0]), 1.0), 2),
         "melody": melody(skyline(other_notes, sixteenths), tonic, mode, n_bars),
     }
+    return row if has_kit(powers) else without_grid(row)
 
 
 
 @app.local_entrypoint()
-def run(out: str, prefix: str = "", hints: str = ""):
-    # a reference's beat tracker misreads swing without its hint, so its grid and
-    # every per-bar row would move in silence
-    if not prefix and not hints:
-        sys.exit("analyze.py: the references need --hints, a JSON of each stem key's tempo")
-    keys = sorted(e.path.rsplit("/", 1)[1] for e in study.listdir("/stems"))
-    keys = [k for k in keys if k.startswith(prefix)] if prefix else keys
-    # a reference's tempo hint, keyed as its stems are; a take's grid needs none
-    hints = json.loads(Path(hints).read_text()) if hints else {}
-    rows = list(one.map([(k, hints.get(k)) for k in keys], return_exceptions=True))
+def run(out: str, prefix: str):
+    keys = sorted(k for k in (e.path.rsplit("/", 1)[1] for e in study.listdir("/stems")) if k.startswith(prefix))
+    if not keys:
+        sys.exit(f"analyze.py: no stems start with {prefix!r}")
+    rows = list(one.map(keys, return_exceptions=True))
     good = [r for r in rows if isinstance(r, dict)]
     print(f"{len(good)} of {len(keys)} analysed")
     for key, row in zip(keys, rows):
         if not isinstance(row, dict):
             print("failed:", key, repr(row)[:ERROR_CHARS])
-    path = Path(out, f"study{'-' + prefix.strip('-') if prefix else ''}.json")
-    previous = json.loads(path.read_text()) if path.exists() else {}
-    previous.update({r["key"]: r for r in good})
-    path.write_text(json.dumps(previous, indent=0) + "\n")
-    print("wrote", path.name, len(previous))
+    path = Path(out, f"study-{prefix.strip('-')}.json")
+    # the file is the prefix's, so this run's rows are all of it: a corpus
+    # selected anew keeps none of the old one's
+    path.write_text(json.dumps({r["key"]: r for r in good}, indent=0) + "\n")
+    print("wrote", path.name, len(good))
     # the good rows are kept, but a card over them would read like one over every take
     if len(good) != len(keys):
         sys.exit(f"analyze.py: {len(keys) - len(good)} of {len(keys)} failed")

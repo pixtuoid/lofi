@@ -4,16 +4,24 @@
 import contextlib
 import io
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.dont_write_bytecode = True
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+import scorecard
+from grid import without_grid
 from scorecard import BASS, LAYERS, STEMFAD, STUDY, TARGETS, TIMBRE, card, main, outside_key, path, row, targets
+
+# stems' powers with a kit and with only a separation's residue
+KIT = {"drums": 2, "bass": 3, "other": 5}
+NO_KIT = {"drums": 0.0001, "bass": 3, "other": 5}
 
 # one row of each source, every value distinct, so a reader of the wrong field
 # reads the wrong number
@@ -158,7 +166,7 @@ class Scorecard(unittest.TestCase):
 
     def test_a_row_the_takes_never_measured_says_so(self):
         target = {"2 rhythm": {"tempo bpm": [73, 77, 81]}}
-        lines = list(card(target, {STUDY: [{}]}))
+        lines = list(card(target, {STUDY: {"a": {}}}))
         self.assertEqual(lines, [("2 rhythm", "tempo bpm", [73, 77, 81], None)])
 
     def test_a_chord_root_outside_a_tracks_mode_counts_against_that_mode(self):
@@ -170,19 +178,85 @@ class Scorecard(unittest.TestCase):
         self.assertIsNone(path("drums", "kick")({"drums": {}}))
         self.assertIsNone(path("decay_ms")({"decay_ms": None}))
 
-    def test_targets_are_true_quartiles_and_hold_nothing_else(self):
-        rows = [{"tempo": t} for t in (70, 75, 80, 85)]
-        made = targets({STUDY: rows, TIMBRE: [], BASS: [], STEMFAD: []})
-        self.assertEqual(made["2 rhythm"], {"tempo bpm": [73.75, 77.5, 81.25]})
+    def test_targets_are_true_quartiles_and_a_row_no_track_measures_is_null(self):
+        rows = {f"s-{i}": {"powers": KIT, "tempo": t} for i, t in enumerate((70, 75, 80, 85))}
+        made = targets({STUDY: rows, TIMBRE: {}, BASS: {}, STEMFAD: {}})
+        self.assertEqual(made["2 rhythm"]["tempo bpm"], [73.75, 77.5, 81.25])
+        self.assertIsNone(made["2 rhythm"]["kicks /bar"])
 
-    def test_the_committed_targets_cover_every_row_in_order(self):
+    def test_a_style_mostly_without_a_kit_has_no_target_only_its_kits_measure(self):
+        kitless = {f"s-{i}": {"powers": NO_KIT, "tempo": None, "polyphony": 3.0} for i in range(3)}
+        kits = {"s-9": {"powers": KIT, "tempo": 75.0, "polyphony": 4.0}}
+        made = targets({
+            STUDY: kitless | kits,
+            TIMBRE: {"a.wav": {"onsets_per_s": 2.0}},
+            BASS: {},
+            STEMFAD: {"s-0": {"bass": 0.2}, "s-9": {"drums": 0.5, "bass": 0.3}},
+        })
+        self.assertIsNone(made["2 rhythm"]["tempo bpm"])
+        self.assertIsNone(made["4 source"]["drums FAD"])
+        self.assertEqual(made["3 melody"]["polyphony"], [3.0, 3.0, 3.25])
+        self.assertEqual(made["4 source"]["bass FAD"], [0.225, 0.25, 0.275])
+        self.assertEqual(made["2 rhythm"]["onsets /s"], [2.0, 2.0, 2.0])
+
+    def test_a_measure_that_isnt_finite_is_no_measure(self):
+        rows = {f"s-{i}": {"powers": KIT, "tempo": t} for i, t in enumerate((70.0, 80.0, float("nan")))}
+        made = targets({STUDY: rows, TIMBRE: {"a.wav": {"lr_correlation": float("nan")}}, BASS: {}, STEMFAD: {}})
+        self.assertEqual(made["2 rhythm"]["tempo bpm"], [72.5, 75.0, 77.5])
+        self.assertIsNone(made["7 space"]["LR correlation"])
+        lines = list(card({"2 rhythm": {"tempo bpm": [70, 75, 80]}}, {STUDY: {"a": {"tempo": float("inf")}}}))
+        self.assertEqual(lines, [("2 rhythm", "tempo bpm", [70, 75, 80], None)])
+
+    def test_a_style_mostly_with_a_kit_keeps_a_row_few_tracks_measure(self):
+        kits = {f"s-{i}": {"powers": KIT, "snare": {"centroid_hz": None}} for i in range(3)}
+        kits["s-9"] = {"powers": KIT, "snare": {"centroid_hz": 900.0}}
+        made = targets({STUDY: kits, TIMBRE: {}, BASS: {}, STEMFAD: {}})
+        self.assertEqual(made["4 source"]["snare centroid Hz"], [900.0, 900.0, 900.0])
+
+    def test_every_styles_committed_targets_cover_every_row_in_order(self):
         committed = json.loads(TARGETS.read_text())
-        self.assertEqual(
-            {layer: sorted(rows) for layer, rows in committed.items()},
-            {layer: sorted(label for label, _, _ in rows) for layer, rows in LAYERS},
-        )
-        for rows in committed.values():
-            self.assertTrue(all(low <= mid <= high for low, mid, high in rows.values()))
+        self.assertTrue(committed)
+        for style, layers in committed.items():
+            self.assertEqual(
+                {layer: sorted(rows) for layer, rows in layers.items()},
+                {layer: sorted(label for label, _, _ in rows) for layer, rows in LAYERS},
+                style,
+            )
+            for rows in layers.values():
+                held = [q for q in rows.values() if q is not None]
+                self.assertTrue(all(low <= mid <= high for low, mid, high in held), style)
+
+    def test_a_styles_targets_come_from_its_own_tracks_and_leave_the_others(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            committed = Path(tmp, "targets.json")
+            committed.write_text(json.dumps({"other": {"kept": {}}}))
+            refs = Path(tmp, "refs")
+            refs.mkdir()
+            files = {
+                "study-sleep.json": {f"sleep-{i:03d}": {"powers": KIT, "tempo": t} for i, t in enumerate((70, 75, 80, 85))}
+                | {"jazz-000": {"powers": KIT, "tempo": 500}},
+                "timbre.json": {},
+                "basstone.json": {},
+                "stemfad.json": {},
+            }
+            for name, rows in files.items():
+                Path(refs, name).write_text(json.dumps(rows))
+            with mock.patch.object(scorecard, "TARGETS", committed):
+                main(["targets", "sleep", str(refs)])
+            made = json.loads(committed.read_text())
+        self.assertEqual(made["other"], {"kept": {}})
+        self.assertEqual(made["sleep"]["2 rhythm"]["tempo bpm"], [73.75, 77.5, 81.25])
+
+    def test_a_row_its_styles_tracks_never_measure_says_so(self):
+        target = {"2 rhythm": {"kicks /bar": None}}
+        lines = list(card(target, {STUDY: {"a": {"drums": {"kick": {"per_bar": 2.0}}}}}))
+        self.assertEqual(lines, [("2 rhythm", "kicks /bar", None, (2.0, False, None))])
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            scorecard.show(lines)
+        self.assertRegex(printed.getvalue(), r"kicks /bar\s+.*not in the style's tracks")
+        # a row with no range is no row in range or out of it, but a gap of its own
+        self.assertIn("0 of 0 rows inside the tracks' interquartile range; 1 measured that the style's tracks lack", printed.getvalue())
 
     def test_a_card_reads_only_the_prefixs_takes(self):
         def take(tempo, fad):
@@ -200,12 +274,29 @@ class Scorecard(unittest.TestCase):
                 Path(tmp, name).write_text(json.dumps(rows))
             printed = io.StringIO()
             with contextlib.redirect_stdout(printed):
-                main(["score", tmp, "take-a_"])
+                main(["score", tmp, "take-a_", "hiphop"])
         card_text = printed.getvalue()
         self.assertRegex(card_text, r"drums FAD\s.*\s0\.40\s")
         self.assertRegex(card_text, r"bass centroid Hz\s.*\s301\.00\s")
         self.assertRegex(card_text, r"tempo bpm\s.*\s77\.00\s")
         self.assertNotIn("9000000000", card_text)
+
+
+    def test_a_track_without_a_kit_loses_exactly_the_rows_read_off_a_grid_or_a_hit(self):
+        row = without_grid({**FIXTURE[STUDY], "powers": NO_KIT})
+        lost = {label for _, rows in LAYERS for label, source, read in rows if source == STUDY and read(row) is None}
+        self.assertEqual(lost, {
+            "beats a chord", "loop bars", "tempo bpm", "kicks /bar", "snares /bar", "hats /bar", "off-eighth",
+            "snare behind kick ms", "kick level sd dB", "hat level sd dB", "bass notes /bar", "bass on a beat",
+            "bass on an off-eighth", "bass with a kick", "top-line onsets /bar", "on eighth grid", "repeat at 4 bars",
+            "repeat at 8 bars", "repeat at 16 bars", "kick decay ms", "snare centroid Hz", "snare decay ms",
+            "hat centroid Hz", "hat decay ms",
+        })
+
+    def test_the_cli_runs_isolated_as_targets_and_score_run_it(self):
+        ran = subprocess.run([sys.executable, "-I", str(HERE / "scorecard.py")], capture_output=True, text=True)
+        self.assertNotIn("Error", ran.stderr)
+        self.assertIn("scorecard.py targets STYLE DIR", ran.stderr)
 
 
 if __name__ == "__main__":

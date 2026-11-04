@@ -3,9 +3,10 @@ reference corpus and the models two Volumes cache, for a batch this machine
 uploads.
 
 Usage, with modal-requirements.txt's client and a configured token:
-  modal run modal_judge.py::upload_refs --refs-dir REFS
-                                          the corpus, from REFS to the Volume
-  modal run modal_judge.py::provision     build the caches over it
+  modal run modal_judge.py::upload_refs --refs-dir REFS --corpus STYLE
+                                          STYLE's corpus, from REFS to the
+                                          Volume's /STYLE
+  modal run modal_judge.py::provision     build the caches over JUDGED's corpus
   modal run modal_judge.py::check         run every model in this lock's image
                                           on the warm-up take, offline
   modal run modal_judge.py::judge --batch DIR --base SHA --cand SHA [--out OUT] [--force-score]
@@ -36,8 +37,11 @@ HERE = Path(__file__).resolve().parent
 SCRIPTS = HERE.parent / "scripts" if modal.is_local() else Path(REMOTE_SCRIPTS)
 JUDGE = HERE if modal.is_local() else Path(REMOTE_JUDGE)
 MODELS, REFS, BATCH = "/models", "/refs", "/batch"
+# the style whose corpus judges every take until #93's step 4 splits the batch
+# by style
+JUDGED = "hiphop"
 sys.path.insert(0, str(JUDGE))
-from judge_local import dealt, exit_code, published, redact, select
+from judge_local import dealt, exit_code, published, redact, replaced, select
 
 # the uv the image and SKILL.md's install run, which modal-requirements.in
 # pins where Dependabot moves it
@@ -95,7 +99,7 @@ refs = modal.Volume.from_name("lofi-judge-refs", create_if_missing=True)
 
 
 def tracks():
-    return json.loads((Path(REFS) / "manifest.json").read_text())["tracks"]
+    return json.loads((Path(REFS) / JUDGED / "manifest.json").read_text())["tracks"]
 
 
 def sha256(data):
@@ -121,7 +125,7 @@ def run_judge(batch, *flags, **options):
     """`ab_judge.py` over `batch` and the corpus, in a child whose output
     goes nowhere until a caller masks it: nothing a model or a library prints
     reaches a public log."""
-    command = [sys.executable, f"{REMOTE_SCRIPTS}/ab_judge.py", str(batch), "--refs", REFS, "--corpus-cache", f"{REFS}/corpus-cache"]
+    command = [sys.executable, f"{REMOTE_SCRIPTS}/ab_judge.py", str(batch), "--refs", f"{REFS}/{JUDGED}", "--corpus-cache", f"{REFS}/corpus-cache"]
     return subprocess.run([*command, *flags], capture_output=True, text=True, **options)
 
 
@@ -232,8 +236,8 @@ def score(batch, paired, changed):
 
 @app.local_entrypoint()
 def provision():
-    """Builds the caches over the corpus in the refs Volume, which `Fad`
-    refuses unless every reference matches the manifest."""
+    """Builds the caches over the judged corpus in the refs Volume, which
+    `Fad` refuses unless every reference matches the manifest."""
     report = build.remote()
     print(f"caches: {report}")
     if not report["built"]:
@@ -287,18 +291,26 @@ def judge(batch: str, base: str, cand: str, out: str = "", force_score: bool = F
 
 
 @app.local_entrypoint()
-def upload_refs(refs_dir: str):
-    """Uploads from `refs_dir` every reference, once its sha256 matches the
-    manifest, over any the refs Volume holds under its name, then the
-    manifest, last: a judge never reads a manifest whose audio isn't there."""
+def upload_refs(refs_dir: str, corpus: str):
+    """Uploads from `refs_dir` every reference of `corpus`, once its sha256
+    matches the manifest, then the manifest, last: a judge never reads a
+    manifest whose audio isn't there, and never over another selection of
+    `corpus` (`judge_local.replaced`). The corpora share `corpus-cache`."""
     local = Path(refs_dir)
+    try:
+        held = b"".join(refs.read_file(f"/{corpus}/manifest.json"))
+    except FileNotFoundError:
+        held = None
+    refusal = replaced(corpus, held, (local / "manifest.json").read_bytes())
+    if refusal:
+        raise SystemExit(refusal)
     manifest = json.loads((local / "manifest.json").read_text())["tracks"]
     with refs.batch_upload(force=True) as upload:
         for i, t in enumerate(manifest):
             path = local / "audio" / t["file"]
             if sha256(path.read_bytes()) != t["sha256"]:
                 raise SystemExit(f"reference {i} doesn't match its manifest sha256 here")
-            upload.put_file(str(path), f"/audio/{t['file']}")
+            upload.put_file(str(path), f"/{corpus}/audio/{t['file']}")
     with refs.batch_upload(force=True) as upload:
-        upload.put_file(str(local / "manifest.json"), "/manifest.json")
-    print(f"uploaded {len(manifest)} references and the manifest")
+        upload.put_file(str(local / "manifest.json"), f"/{corpus}/manifest.json")
+    print(f"uploaded {corpus}'s {len(manifest)} references and its manifest")

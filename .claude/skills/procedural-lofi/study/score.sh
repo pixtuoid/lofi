@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Prints the scorecard for TREE's committed head: renders the judge batch,
-# splits the working rooms' takes into stems on Modal, measures them as the
-# references were measured, and reads them against targets.json.
+# Prints TREE's committed head's scorecards, one per style its rooms play:
+# renders the judge batch, splits the working rooms' takes into stems on Modal,
+# measures them as their style's references were measured (`targets.sh`), and
+# reads them against that style's targets.json entry.
 #
 #   score.sh TREE OUT
 #
@@ -10,6 +11,9 @@
 # take's name, which the head's sha makes fresh, so a dirty tree is refused
 # rather than scored under a commit that isn't what played.
 set -euo pipefail
+
+# each mood's style: the playlist its record is fitted to (#93)
+styles=(day:hiphop night:sleep)
 
 tree=$1 out=$2
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -26,9 +30,11 @@ prefix="take-${name}_"
 mkdir -p "$out/in"
 
 # the rooms where every lane plays, as every lane does in the tracks' stems
-for room in day_busy day_moderate night_busy night_moderate; do
-    for take in "$out/all/gen_${room}_"*.wav; do
-        ln -f "$take" "$out/in/${name}_$(basename "$take")"
+for pair in "${styles[@]}"; do
+    for room in "${pair%%:*}_busy" "${pair%%:*}_moderate"; do
+        for take in "$out/all/gen_${room}_"*.wav; do
+            ln -f "$take" "$out/in/${name}_$(basename "$take")"
+        done
     done
 done
 
@@ -38,8 +44,15 @@ modal_run() {
 
 cd "$here"
 modal_run stems.py::split_takes --takes "$out/in"
-modal_run analyze.py::run --prefix "$prefix" --out "$out"
-modal_run basstone.py::run --prefix "$prefix" --out "$out"
-modal_run stemfad.py::run --prefix "$prefix" --out "$out"
-"$HOME/.cache/lofi-judge/bin/python" -I timbre.py "$out/timbre.json" "$out/in/"*.wav
-python3 -I scorecard.py score "$out" "$prefix"
+for pair in "${styles[@]}"; do
+    mood=${pair%%:*} style=${pair#*:}
+    takes="${prefix}gen_${mood}_"
+    dir="$out/$style"
+    mkdir -p "$dir"
+    modal_run analyze.py::run --prefix "$takes" --out "$dir"
+    modal_run basstone.py::run --prefix "$takes" --out "$dir"
+    modal_run stemfad.py::run --corpus "$style" --prefix "$takes" --out "$dir"
+    "$HOME/.cache/lofi-judge/bin/python" -I timbre.py "$dir/timbre.json" "$out/in/${name}_gen_${mood}_"*.wav
+    echo "== $style: the $mood rooms"
+    python3 -I scorecard.py score "$dir" "$takes" "$style"
+done
