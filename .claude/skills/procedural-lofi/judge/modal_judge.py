@@ -1,6 +1,6 @@
 """`ab_judge.py` on Modal's T4s, a shard of the pairs on each, over each
 style's reference corpus and the models two Volumes cache, for a batch this
-machine uploads.
+machine uploads unless a third keeps its verdict.
 
 Usage, with modal-requirements.txt's client and a configured token:
   modal run modal_judge.py::upload_refs --refs-dir REFS --corpus STYLE
@@ -19,7 +19,6 @@ never leave Modal in anything this prints or returns, which names a reference
 by its style and manifest index.
 """
 
-import hashlib
 import json
 import os
 import re
@@ -37,9 +36,9 @@ REMOTE_SCRIPTS, REMOTE_JUDGE = "/root/scripts", "/root/judge"
 HERE = Path(__file__).resolve().parent
 SCRIPTS = HERE.parent / "scripts" if modal.is_local() else Path(REMOTE_SCRIPTS)
 JUDGE = HERE if modal.is_local() else Path(REMOTE_JUDGE)
-MODELS, REFS, BATCH = "/models", "/refs", "/batch"
+MODELS, REFS, BATCH, VERDICTS = "/models", "/refs", "/batch", "/verdicts"
 sys.path.insert(0, str(JUDGE))
-from judge_local import dealt, exit_code, published, redact, replaced, select
+from judge_local import batch_key, dealt, environment, exit_code, published, redact, replaced, select, sha256, verdict_key
 from verdict import STYLES
 
 # the uv the image and SKILL.md's install run, which modal-requirements.in
@@ -95,15 +94,29 @@ image = (
 app = modal.App("lofi-judge", image=image)
 models = modal.Volume.from_name("lofi-judge-models", create_if_missing=True)
 refs = modal.Volume.from_name("lofi-judge-refs", create_if_missing=True)
+# each verdict under the key of what decided it, as Bazel's action cache maps
+# "action hashes to action result metadata"
+# (https://bazel.build/remote/caching): a push that renders the same bytes
+# reads its verdict instead of taking a T4 a shard again. Only `score` writes
+# it, in the job that holds the token, as that page has "only your CI system"
+# write the remote cache
+verdicts = modal.Volume.from_name("lofi-judge-verdicts", create_if_missing=True)
+
+
+def manifests():
+    """Each style's manifest as the refs Volume holds it."""
+    return {style: (Path(REFS) / style / "manifest.json").read_bytes() for style in STYLES}
 
 
 def corpora():
     """Each style's manifest tracks, whose names `redact` masks."""
-    return {style: json.loads((Path(REFS) / style / "manifest.json").read_text())["tracks"] for style in STYLES}
+    return {style: json.loads(manifest)["tracks"] for style, manifest in manifests().items()}
 
 
-def sha256(data):
-    return hashlib.sha256(data).hexdigest()
+def kept_file(key):
+    """Where `batch_key`'s `key` keeps its verdict, under the corpora and the
+    environment of the image this runs in, the judge's own."""
+    return Path(VERDICTS) / f"{verdict_key(key, manifests(), environment())}.json"
 
 
 def took(started, shards=()):
@@ -205,13 +218,23 @@ def score_shard(names):
     return {**json.loads(rows.read_text()), **took(started)}
 
 
+@app.function(volumes={REFS: refs.with_mount_options(read_only=True), VERDICTS: verdicts.with_mount_options(read_only=True)})
+def kept(key):
+    """The verdict `score` kept under `batch_key`'s `key` and today's
+    corpora, or None."""
+    path = kept_file(key)
+    return json.loads(path.read_text()) if path.is_file() else None
+
+
 # no T4 of its own: it runs the tests before any shard takes one, then waits
 @app.function(cpu=CPU, memory=MEMORY_MIB, timeout=JUDGE_TIMEOUT_S)
-def score(batch, paired, changed):
+def score(batch, paired, changed, key):
     """Judges the pairs `changed` of `paired` on the Volume `batch`, which
-    the caller mounts here too, a shard to each container, and returns what's
-    safe to publish: the table, the record without the corpora's names, and
-    what the run took."""
+    the caller mounts here too with the verdicts, a shard to each container,
+    and returns what's safe to publish: the table, the record without the
+    corpora's names, and what the run took. A verdict, never an infra
+    failure, is kept under `batch_key`'s `key` and the corpora read, without
+    what this run took, which a run that reads it doesn't take."""
     started = time.time()
     known = corpora()
     # the tests that need this venv, which runs nowhere else: a broken floor
@@ -232,7 +255,10 @@ def score(batch, paired, changed):
     if not written.is_file():
         print(redact(run.stdout + run.stderr, known))
         return {"outcome": "infra failure", "message": "the judge stopped before a verdict; its log, names masked, is Modal's", **took(started, shards)}
-    return {**published(json.loads(written.read_text()), known), **took(started, shards)}
+    result = published(json.loads(written.read_text()), known)
+    kept_file(key).write_text(json.dumps(result) + "\n")
+    verdicts.commit()
+    return {**result, **took(started, shards)}
 
 
 @app.local_entrypoint()
@@ -261,20 +287,28 @@ def judge(batch: str, base: str, cand: str, out: str = "", force_score: bool = F
     `cand`, through a Volume that lives as long as the run, prints the table,
     and writes the result to `out`. Only the pairs `judge_local.select` picks
     go up, so a batch with none makes no remote call; `force_score` sends and
-    scores every pair, the proof that identical ones tie."""
+    scores every pair, the proof that identical ones tie. Bytes a run already
+    judged under this judge and these corpora go nowhere: their kept verdict
+    is the result."""
     root = Path(batch)
     takes, differ = select(root, base, cand, force_score)
     if differ:
-        with modal.Volume.ephemeral() as vol:
-            with vol.batch_upload() as upload:
-                for side in ("base", "cand"):
-                    upload.put_file(str(root / side / "COMMIT"), f"/{side}/COMMIT")
-                    for n in differ:
-                        upload.put_file(str(root / side / n), f"/{side}/{n}")
-            result = score.with_options(volumes=mounted(vol)).remote(vol, takes.paired, differ)
+        key = batch_key(root, takes.paired, differ, (SCRIPTS, JUDGE))
+        result = kept.remote(key)
+        if result is None:
+            with modal.Volume.ephemeral() as vol:
+                with vol.batch_upload() as upload:
+                    for side in ("base", "cand"):
+                        upload.put_file(str(root / side / "COMMIT"), f"/{side}/COMMIT")
+                        for n in differ:
+                            upload.put_file(str(root / side / n), f"/{side}/{n}")
+                result = score.with_options(volumes={**mounted(vol), VERDICTS: verdicts}).remote(vol, takes.paired, differ, key)
+            ran = f"wall {result['wall_s']:.0f} s, judge CPU {result['cpu_s']:.0f} s, peak RSS {result['peak_rss_mib']:.0f} MiB"
+        else:
+            ran = "kept: a run judged these bytes under this judge and these corpora, so nothing was sent or scored"
         print(result.get("table", result.get("message")))
         print(f"\nverdict: {result['outcome']}")
-        print(f"\nwall {result['wall_s']:.0f} s, judge CPU {result['cpu_s']:.0f} s, peak RSS {result['peak_rss_mib']:.0f} MiB")
+        print(f"\n{ran}")
     else:
         result = {"outcome": "UNCHANGED"}
         print(f"verdict: UNCHANGED, all {len(takes.paired)} pairs byte-identical; nothing was sent or scored")

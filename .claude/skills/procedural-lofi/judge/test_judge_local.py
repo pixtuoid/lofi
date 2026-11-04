@@ -4,6 +4,7 @@
 import contextlib
 import io
 import re
+import shutil
 import sys
 import tempfile
 import unittest
@@ -11,7 +12,19 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from judge_local import NOT_A_SCORE, SHARDS, dealt, exit_code, merged, published, redact, replaced, select
+from judge_local import (
+    NOT_A_SCORE,
+    SHARDS,
+    batch_key,
+    dealt,
+    exit_code,
+    merged,
+    published,
+    redact,
+    replaced,
+    select,
+    verdict_key,
+)
 from test_validate_batch import write_wav
 from validate_batch import Takes, stage, validate
 
@@ -77,6 +90,79 @@ class Selection(unittest.TestCase):
     def test_a_missing_commit_is_refused(self):
         (self.dir / "cand" / "COMMIT").unlink()
         self.assertRefused(BASE, CAND, "cand/COMMIT doesn't name")
+
+
+class Keys(unittest.TestCase):
+    """A verdict is kept under the bytes that decide it, so a push that
+    renders them again reads it instead of scoring them again."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        self.batch = self.dir / "batch"
+        for side, sha in (("base", BASE), ("cand", CAND)):
+            (self.batch / side).mkdir(parents=True)
+            (self.batch / side / "COMMIT").write_text(sha + "\n")
+            for i, name in enumerate(PAIRS):
+                write_wav(self.batch / side / name, frames=8 + i + (side == "cand"))
+        self.code = [self.dir / "scripts", self.dir / "judge"]
+        for d in self.code:
+            d.mkdir()
+            (d / f"{d.name}.py").write_text("x = 1\n")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def key(self, batch=None, paired=PAIRS, sent=PAIRS):
+        return batch_key(batch or self.batch, paired, sent, self.code)
+
+    def test_the_same_bytes_anywhere_keep_one_key(self):
+        moved = self.dir / "moved"
+        shutil.copytree(self.batch, moved)
+        self.assertEqual(self.key(), self.key(moved))
+
+    def test_a_byte_of_either_side_of_a_sent_take_moves_the_key(self):
+        before = self.key()
+        for side in ("base", "cand"):
+            take = self.batch / side / PAIRS[1]
+            data = take.read_bytes()
+            take.write_bytes(data[:-1] + bytes([data[-1] ^ 1]))
+            self.assertNotEqual(self.key(), before, side)
+            take.write_bytes(data)
+
+    def test_a_commit_the_bytes_rendered_at_keeps_the_key(self):
+        before = self.key()
+        (self.batch / "cand" / "COMMIT").write_text("c" * 40 + "\n")
+        self.assertEqual(self.key(), before)
+
+    def test_another_pairing_or_another_set_sent_moves_the_key(self):
+        before = self.key()
+        self.assertNotEqual(self.key(paired=[*PAIRS, "gen_rain_busy_hiphop_002.wav"]), before)
+        self.assertNotEqual(self.key(sent=PAIRS[1:]), before)
+
+    def test_an_edit_to_the_judge_moves_the_key_and_its_bytecode_doesnt(self):
+        before = self.key()
+        cache = self.code[0] / "__pycache__"
+        cache.mkdir()
+        (cache / "scripts.cpython-312.pyc").write_bytes(b"\0")
+        self.assertEqual(self.key(), before)
+        (self.code[1] / "judge.py").write_text("x = 2\n")
+        self.assertNotEqual(self.key(), before)
+
+    def test_a_file_moved_between_the_judges_directories_moves_the_key(self):
+        before = self.key()
+        (self.code[0] / "scripts.py").rename(self.code[1] / "scripts.py")
+        self.assertNotEqual(self.key(), before)
+
+    def test_another_selection_of_a_corpus_or_environment_moves_the_key_and_their_order_doesnt(self):
+        batch = self.key()
+        corpora = {"hiphop": b'{"tracks": [1]}', "sleep": b'{"tracks": [2]}'}
+        installed = ["3.12.15", "torch==2.14.1"]
+        before = verdict_key(batch, corpora, installed)
+        self.assertEqual(verdict_key(batch, dict(reversed(corpora.items())), installed), before)
+        self.assertNotEqual(verdict_key(batch, {**corpora, "sleep": b'{"tracks": [3]}'}, installed), before)
+        self.assertNotEqual(verdict_key(batch, corpora, ["3.12.16", "torch==2.14.1"]), before)
+        self.assertNotEqual(verdict_key("0" * 64, corpora, installed), before)
 
 
 class Outcomes(unittest.TestCase):

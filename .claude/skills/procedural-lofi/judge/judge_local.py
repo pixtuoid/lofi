@@ -1,8 +1,12 @@
 """What `modal_judge.py` decides, in the standard library alone so
 `test_judge_local.py` runs it without the Modal client."""
 
+import hashlib
+import json
+import platform
 import re
 import sys
+from importlib.metadata import distributions
 from pathlib import Path
 
 sys.dont_write_bytecode = True
@@ -40,6 +44,45 @@ def select(root, base_sha, cand_sha, force_score):
         print(f"invalid batch: {e}", file=sys.stderr)
         raise SystemExit(NOT_A_SCORE) from None
     return takes, scored(root, takes, force_score)
+
+
+def sha256(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def batch_key(root, paired, sent, code):
+    """The key a verdict on `root`'s pairs `paired` is kept under, before its
+    corpora join it (`verdict_key`): the pairs, the ones `sent` and both
+    sides' bytes of each, and every file of the judge under `code`, the
+    directories its image holds, bytecode aside, so an edit to the judge
+    scores anew. No COMMIT is in it: a push that renders the same bytes at a
+    new commit reads the verdict they already have."""
+    takes = {}
+    for side in ("base", "cand"):
+        for name in sorted(sent):
+            with open(root / side / name, "rb") as f:
+                takes[f"{side}/{name}"] = hashlib.file_digest(f, "sha256").hexdigest()
+    judge = {}
+    for d in code:
+        for f in sorted(d.rglob("*")):
+            if f.is_file() and "__pycache__" not in f.relative_to(d).parts:
+                judge[str(f.relative_to(d.parent))] = sha256(f.read_bytes())
+    return sha256(json.dumps({"paired": sorted(paired), "takes": takes, "judge": judge}, sort_keys=True).encode())
+
+
+def environment():
+    """The Python and every package the judge runs on, which compute its
+    numbers as much as its models do: a lock bump, or an image rebuilt on
+    another Python, keys new caches and new verdicts."""
+    return [platform.python_version(), *sorted(f"{d.metadata['Name'].lower()}=={d.version}" for d in distributions())]
+
+
+def verdict_key(batch, manifests, installed):
+    """`batch_key`'s `batch` joined by each style's corpus `manifests` holds
+    as bytes and the `environment` `installed`, so another selection of a
+    corpus, or another environment, scores anew."""
+    corpora = {style: sha256(manifest) for style, manifest in manifests.items()}
+    return sha256(json.dumps({"batch": batch, "corpora": corpora, "environment": installed}, sort_keys=True).encode())
 
 
 def dealt(pairs):
