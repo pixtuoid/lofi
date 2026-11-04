@@ -608,8 +608,8 @@ def scored_rows(args, names, sides):
         corpora[style] = Fad(args.refs / style, takes_lufs, args.corpus_cache)
     panel = dict(zip(PANEL, (Audiobox(), TuneJury(clap(), device)), strict=True))
     screens = {style: cached_screen(args.corpus_cache, fad, panel) for style, fad in corpora.items()}
-    seats = {style: seated(screen) for style, screen in screens.items()}
-    for style, judges in seats.items():
+    panels = {style: seated(screen) for style, screen in screens.items()}
+    for style, judges in panels.items():
         if not judges:
             sys.exit(
                 f"every judge rated BS.1534-3's mid-range anchor of {style}'s held-out references unimpaired past"
@@ -628,7 +628,7 @@ def scored_rows(args, names, sides):
                 "refs": str(fad.refs.resolve()),
                 "lufs": fad.lufs,
                 "screen": screens[style],
-                "panel": seats[style],
+                "panel": panels[style],
                 "fad_calibration": fad.calibration,
             }
             for style, fad in corpora.items()
@@ -645,7 +645,7 @@ def scored_rows(args, names, sides):
             # the descriptors measure the take as rendered, the judges hear it floored
             row[side] = describe(x, sr)
             takes[side] = floored(x, name, mono_lufs(x, sr)), sr
-            row[side]["scores"] = {j: panel[j].score(*takes[side]) for j in seats[style]}
+            row[side]["scores"] = {j: panel[j].score(*takes[side]) for j in panels[style]}
         row["base"]["scores"][GUARD], row["cand"]["scores"][GUARD] = fad.score_pair(takes["base"], takes["cand"])
         row["bands_delta_db"] = [c - b for b, c in zip(row["base"]["bands_db"], row["cand"]["bands_db"])]
         b, c = row["base"]["scores"], row["cand"]["scores"]

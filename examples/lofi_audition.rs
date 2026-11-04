@@ -489,47 +489,48 @@ mod tests {
             _ => Ok(()),
         });
         assert_eq!(failed.expect_err("take 1 fails").to_string(), "it clips");
-        #[test]
-        fn the_judge_batch_names_each_take_once_by_its_group_mix_style_and_seed() {
-            let takes = parsed(&["--batch", "judge"])
-                .takes()
-                .expect("the takes' names are distinct");
-            // `ab_judge.py` groups a take by its name's first word, reads it
-            // against its style's corpus, and pairs it by the whole name
-            let mut named: Vec<[String; 3]> = (takes.iter())
-                .map(|take| {
-                    let [group, mix, style, seed] = (take.name.strip_prefix("gen_"))
-                        .and_then(|n| n.strip_suffix(".wav"))
-                        .map(|n| n.splitn(4, '_').collect::<Vec<_>>())
-                        .and_then(|parts| parts.try_into().ok())
-                        .expect("gen_GROUP_MIX_STYLE_SEED.wav");
-                    assert_eq!(seed, format!("{:03}", take.seed), "{}", take.name);
-                    [group, mix, style].map(str::to_owned)
-                })
-                .collect();
-            named.sort();
-            named.dedup();
-            let want = [
-                ["hiphop", "busy", "hiphop"],
-                ["hiphop", "empty", "hiphop"],
-                ["hiphop", "moderate", "hiphop"],
-                ["rain", "moderate", "hiphop"],
-                ["sleep", "busy", "sleep"],
-                ["sleep", "empty", "sleep"],
-                ["sleep", "moderate", "sleep"],
-                ["twilight", "quarter", "sleep"],
-                ["twilight", "threequarters", "hiphop"],
-            ];
-            assert_eq!(named, want.map(|name| name.map(str::to_owned)));
-            assert!(
-                Args::parse(
-                    ["--batch", "judge", "--solo", "pad"]
-                        .map(str::to_owned)
-                        .into_iter()
-                )
-                .is_err()
-            );
-        }
+    }
+
+    #[test]
+    fn the_judge_batch_names_each_take_once_by_its_group_mix_style_and_seed() {
+        let takes = parsed(&["--batch", "judge"])
+            .takes()
+            .expect("the takes' names are distinct");
+        // `ab_judge.py` groups a take by its name's first word, reads it
+        // against its style's corpus, and pairs it by the whole name
+        let mut named: Vec<[String; 3]> = (takes.iter())
+            .map(|take| {
+                let [group, mix, style, seed] = (take.name.strip_prefix("gen_"))
+                    .and_then(|n| n.strip_suffix(".wav"))
+                    .map(|n| n.splitn(4, '_').collect::<Vec<_>>())
+                    .and_then(|parts| parts.try_into().ok())
+                    .expect("gen_GROUP_MIX_STYLE_SEED.wav");
+                assert_eq!(seed, format!("{:03}", take.seed), "{}", take.name);
+                [group, mix, style].map(str::to_owned)
+            })
+            .collect();
+        named.sort();
+        named.dedup();
+        let want = [
+            ["hiphop", "busy", "hiphop"],
+            ["hiphop", "empty", "hiphop"],
+            ["hiphop", "moderate", "hiphop"],
+            ["rain", "moderate", "hiphop"],
+            ["sleep", "busy", "sleep"],
+            ["sleep", "empty", "sleep"],
+            ["sleep", "moderate", "sleep"],
+            ["twilight", "quarter", "sleep"],
+            ["twilight", "threequarters", "hiphop"],
+        ];
+        assert_eq!(named, want.map(|name| name.map(str::to_owned)));
+        assert!(
+            Args::parse(
+                ["--batch", "judge", "--solo", "pad"]
+                    .map(str::to_owned)
+                    .into_iter()
+            )
+            .is_err()
+        );
     }
 
     /// One peak over the target's reach costs that take a little level, not

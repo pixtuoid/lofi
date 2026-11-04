@@ -102,6 +102,11 @@ class Redaction(unittest.TestCase):
             "/refs/hiphop/audio/hiphop#1 failed; hiphop#0 decoded; hiphop#0 too; sleep#0 too",
         )
 
+    def test_a_label_is_never_masked_again(self):
+        # a corpus holding a reference whose stem is a label's own word
+        corpora = {"sleep": [{"file": "sleep.mp3"}]}
+        self.assertEqual(redact("sleep.mp3 failed; sleep decoded", corpora), "sleep#0 failed; sleep#0 decoded")
+
 
 class Publishing(unittest.TestCase):
     CORPORA = Redaction.CORPORA
@@ -179,12 +184,12 @@ class Merging(unittest.TestCase):
         with self.assertRaises(SystemExit):
             merged([self.shard(*PAIRS), self.shard(PAIRS[0])], PAIRS)
 
-    def test_a_shard_seated_at_another_level_in_a_corpus_is_refused(self):
+    def test_a_shard_that_read_a_corpus_at_another_level_is_refused(self):
         other = {"hiphop": {"lufs": -21.0}}
         with self.assertRaises(SystemExit):
             merged([self.shard(PAIRS[0]), self.shard(PAIRS[1], corpora=other)], PAIRS)
 
-    def test_a_shard_that_sat_another_panel_is_refused(self):
+    def test_a_shard_run_in_another_environment_is_refused(self):
         other = {"fad": {"embedding": "other"}}
         with self.assertRaises(SystemExit):
             merged([self.shard(PAIRS[0]), self.shard(PAIRS[1], judges=other)], PAIRS)

@@ -104,8 +104,8 @@ pub(super) const BEATS_PER_BAR: f32 = 4.0;
 /// Eighth notes in one bar: the comp's and the hats' slots.
 const EIGHTHS_PER_BAR: usize = 8;
 
-/// Drum event kinds. The night groove plays no open hat (the sleepy register);
-/// the day grooves carry the full kit.
+/// Drum event kinds. The sleep groove plays no open hat (the sleepy register);
+/// the hiphop grooves carry the full kit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum DrumKind {
     Kick,
@@ -157,7 +157,7 @@ pub struct Score {
 pub(super) const GEN_LOOP_BARS: usize = 8;
 
 /// Bars in a phrase: the lead's statement and answer each span one, and the
-/// day kit's ghost kick and open hat mark each one's end.
+/// hiphop kit's ghost kick and open hat mark each one's end.
 const PHRASE_BARS: usize = GEN_LOOP_BARS / 2;
 
 /// How far a hat may land from its slot, end to end: each lands within half of
@@ -983,7 +983,7 @@ pub(crate) const HIPHOP_GROOVES: [GrooveTemplate; 4] = [
         drag_s: DRAG_KICK_S,
         snares: &[1.0, 3.0],
         snare_gain: SNARE_GAIN,
-        hats: DAY_HATS.skipping(0.15),
+        hats: HIPHOP_HATS.skipping(0.15),
         open_hat: true,
     },
     // boom-bap again, its hats dragged as far as about a quarter of
@@ -1022,7 +1022,7 @@ pub(crate) const HIPHOP_GROOVES: [GrooveTemplate; 4] = [
         drag_s: DRAG_KICK_S,
         snares: &[2.0],
         snare_gain: SNARE_GAIN,
-        hats: DAY_HATS.skipping(0.30),
+        hats: HIPHOP_HATS.skipping(0.30),
         open_hat: true,
     },
     // sparse: quiet-focus, on the backbeat most of Lofi Girl's tracks keep
@@ -1041,13 +1041,13 @@ pub(crate) const HIPHOP_GROOVES: [GrooveTemplate; 4] = [
         drag_s: DRAG_KICK_S,
         snares: &[1.0, 3.0],
         snare_gain: SNARE_GAIN,
-        hats: DAY_HATS.skipping(0.45),
+        hats: HIPHOP_HATS.skipping(0.45),
         open_hat: false,
     },
 ];
 
-/// The day kit's hats, but for how often they skip.
-const DAY_HATS: Hats = Hats {
+/// The hiphop kit's hats, but for how often they skip.
+const HIPHOP_HATS: Hats = Hats {
     off_eighths_only: false,
     skip_p: 0.0,
     swing: 0.56,
@@ -1057,10 +1057,10 @@ const DAY_HATS: Hats = Hats {
     },
 };
 
-/// [`DAY_HATS`] swung hard.
+/// [`HIPHOP_HATS`] swung hard.
 const SWUNG_HATS: Hats = Hats {
     swing: 0.74,
-    ..DAY_HATS
+    ..HIPHOP_HATS
 };
 
 impl Hats {
@@ -1069,8 +1069,8 @@ impl Hats {
     }
 }
 
-/// The night groove: kick, soft closed hats and a backbeat under the day's by
-/// LOFI-BIBLE.md §3's sleepy snare (the sleepy register).
+/// The sleep groove: kick, soft closed hats and a backbeat under the hiphop
+/// grooves' by LOFI-BIBLE.md §3's sleepy snare (the sleepy register).
 pub(crate) const SLEEP_GROOVE: GrooveTemplate = GrooveTemplate {
     kicks: [
         Kick {

@@ -1,6 +1,7 @@
 """What `modal_judge.py` decides, in the standard library alone so
 `test_judge_local.py` runs it without the Modal client."""
 
+import re
 import sys
 from pathlib import Path
 
@@ -48,11 +49,11 @@ def dealt(pairs):
 
 
 def merged(shards, changed):
-    """The seat `shards` share and their rows by take: one panel, and each
-    corpus a shard read. A shard takes its own takes' level in each corpus,
-    and a row is comparable to another only under one panel and one seat in
-    its corpus, so anything but each pair in `changed` once, so seated, ends
-    the run rather than reach a verdict."""
+    """The seat `shards` share and their rows by take: one environment the
+    judges ran in, and each corpus a shard read. A shard takes its own takes'
+    level in each corpus, and a row is comparable to another only under one
+    environment and one reading of its corpus, so anything but each pair in
+    `changed` once, so read, ends the run rather than reach a verdict."""
     rows = [row for shard in shards for row in shard["rows"].items()]
     if sorted(name for name, _ in rows) != sorted(changed):
         sys.exit("the shards' rows aren't each pair sent, once")
@@ -60,23 +61,29 @@ def merged(shards, changed):
     if not seats:
         return {}, {}
     if any(seat["judges"] != seats[0]["judges"] for seat in seats):
-        sys.exit("the shards sat different panels")
+        sys.exit("the shards ran in different environments")
     corpora = {}
     for seat in seats:
         for style, corpus in seat["corpora"].items():
             if corpora.setdefault(style, corpus) != corpus:
-                sys.exit(f"the shards read the {style} corpus at different seats")
+                sys.exit(f"the shards read the {style} corpus differently")
     return {"judges": seats[0]["judges"], "corpora": dict(sorted(corpora.items()))}, dict(rows)
 
 
 def redact(text, corpora):
     """`text` with every reference's file name, and its stem, replaced by its
-    style and manifest index, `corpora` each style's manifest tracks: longest
-    first, so a name holding another's whole goes first."""
-    named = [(t["file"], f"{style}#{i}") for style, tracks in corpora.items() for i, t in enumerate(tracks)]
-    for file, label in sorted(named, key=lambda n: -len(n[0])):
-        text = text.replace(file, label).replace(Path(file).stem, label)
-    return text
+    style and manifest index, `corpora` each style's manifest tracks: in one
+    pass, so no label is read again, and longest first, so a name holding
+    another's whole goes first."""
+    labels = {}
+    for style, tracks in corpora.items():
+        for i, t in enumerate(tracks):
+            for name in (t["file"], Path(t["file"]).stem):
+                labels.setdefault(name, f"{style}#{i}")
+    if not labels:
+        return text
+    names = re.compile("|".join(map(re.escape, sorted(labels, key=len, reverse=True))))
+    return names.sub(lambda m: labels[m[0]], text)
 
 
 def published(record, corpora):
