@@ -128,8 +128,8 @@ impl End {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Outro {
     Ends(End),
-    /// The loop's first chord on the pad, then a bar of the room alone, which
-    /// outlasts the chord's tail.
+    /// The pad's chord of the loop bar after the body, then a bar of the room
+    /// alone, which outlasts the chord's tail.
     RingOut,
 }
 
@@ -157,7 +157,7 @@ const fn bars(n: usize) -> NonZeroUsize {
     }
 }
 
-/// One song's form: an intro, a body of whole loops starting on loop bar 0,
+/// One song's form: an intro, a body of whole phrases starting on loop bar 0,
 /// and an outro, each bar naming the layers that strike in it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Form {
@@ -192,9 +192,9 @@ impl Form {
         self.intro.bars()
     }
 
-    /// Bars in the body, a whole number of loops.
+    /// Bars in the body, a whole number of phrases.
     pub fn body(&self) -> usize {
-        self.phrases * GEN_LOOP_BARS
+        self.phrases * PHRASE_BARS
     }
 
     /// Bars after the body.
@@ -224,7 +224,7 @@ impl Form {
 
     /// The song bar whose music lanes low-pass for one bar, if any.
     pub(crate) fn dip(&self) -> Option<usize> {
-        (self.dip).then(|| self.intro() + (DIP_PHRASE + 1) * GEN_LOOP_BARS - 1)
+        (self.dip).then(|| self.intro() + (DIP_PHRASE + 1) * PHRASE_BARS - 1)
     }
 
     /// Whether the song closes on a ring-out, whose last bar the pad sits out.
@@ -288,17 +288,23 @@ impl Form {
     }
 
     /// The song a test of a mechanism a form would mute plays: every layer
-    /// for [`PLAIN_LOOPS`] loops, as every song played before it had a form.
+    /// for [`PLAIN_PHRASES`] phrases, as every song played before it had a form.
     #[cfg(test)]
     pub(crate) fn plain() -> Self {
-        let plays = vec![Plays::ALL; PLAIN_LOOPS * GEN_LOOP_BARS];
-        Self::new(End::Cold, PLAIN_LOOPS, Outro::Ends(End::Cold), false, plays)
+        let plays = vec![Plays::ALL; PLAIN_PHRASES * PHRASE_BARS];
+        Self::new(
+            End::Cold,
+            PLAIN_PHRASES,
+            Outro::Ends(End::Cold),
+            false,
+            plays,
+        )
     }
 }
 
-/// The loops a song played before it had a form.
+/// The phrases a song played before it had a form, a loop each then.
 #[cfg(test)]
-const PLAIN_LOOPS: usize = 4;
+const PLAIN_PHRASES: usize = 4;
 
 /// Whether `forms` span a form: a proof over songs that mute no layer, or
 /// that no edge moves, proves nothing of one.
@@ -452,8 +458,12 @@ const THINNINGS: [(Thinning, u32); 3] = [
 const INTRO_BARS: [NonZeroUsize; 2] = [bars(4), bars(8)];
 const LONG_INTRO_P: f32 = 0.65;
 
-/// The body's phrases, each a loop: drawn at even odds (opinion), which puts
-/// the median song between the two corpora's.
+/// Bars in a phrase, R11's "8-bar phrase": the body's unit, which its
+/// thinning, its cuts and its dip fall on.
+const PHRASE_BARS: usize = 8;
+
+/// The body's phrases, drawn at even odds (opinion), which puts the median
+/// song between the two corpora's.
 const PHRASES: [usize; 3] = [4, 5, 6];
 
 /// A sparse or edged outro's bars, short or long, the long one's share for
@@ -532,10 +542,10 @@ pub(crate) fn arrange(seed: u64) -> Form {
     };
     let mut plays = vec![intro_plays; intro.bars()];
 
-    let mut body = vec![Plays::ALL; phrases * GEN_LOOP_BARS];
+    let mut body = vec![Plays::ALL; phrases * PHRASE_BARS];
     let thin = phrases / 2;
-    let phrase = |p: usize| p * GEN_LOOP_BARS..(p + 1) * GEN_LOOP_BARS;
-    let half = |p: usize| p * GEN_LOOP_BARS + GEN_LOOP_BARS / 2..(p + 1) * GEN_LOOP_BARS;
+    let phrase = |p: usize| p * PHRASE_BARS..(p + 1) * PHRASE_BARS;
+    let half = |p: usize| p * PHRASE_BARS + PHRASE_BARS / 2..(p + 1) * PHRASE_BARS;
     let span = if whole { phrase(thin) } else { half(thin) };
     let keeps_low = match thinning {
         Thinning::Break => {
@@ -563,7 +573,7 @@ pub(crate) fn arrange(seed: u64) -> Form {
             && p != thin
             && opens_on_beat(p + 1)
         {
-            let end = (p + 1) * GEN_LOOP_BARS;
+            let end = (p + 1) * PHRASE_BARS;
             for bar in &mut body[end - len..end] {
                 bar.set(Layer::Drums, false);
                 bar.set(Layer::Bass, bar.has(Layer::Bass) && !low);
@@ -687,7 +697,7 @@ mod tests {
                     );
                 }
             }
-            let last_phrase = body.end - GEN_LOOP_BARS..body.end;
+            let last_phrase = body.end - PHRASE_BARS..body.end;
             for &(first, len) in &cuts {
                 assert!(
                     !last_phrase.contains(&first),
@@ -702,7 +712,7 @@ mod tests {
                     at(&format!("a cut at {first} touches a beat-out bar"))
                 );
                 assert_eq!(
-                    (first + len - form.intro()) % GEN_LOOP_BARS,
+                    (first + len - form.intro()) % PHRASE_BARS,
                     0,
                     "{}",
                     at("a cut ends a phrase")

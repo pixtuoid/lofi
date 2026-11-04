@@ -2,8 +2,8 @@
 //! a pure function `seed -> Score`. Harmony walks a measured loop grammar,
 //! and the lead follows melody rules: chord tones on strong beats,
 //! diatonic passing tones, leaps bounded to a fifth and resolved by a step,
-//! and two phrases, the answer quoting the statement, peaking, and closing
-//! the loop when its last bar sings. A quoted, peaking or closing note may
+//! and a statement and its answer, the answer quoting the statement, peaking,
+//! and closing the period when its last bar sings. A quoted, peaking or closing note may
 //! leap further, and a resolving step may land off the chord; the tests pin
 //! each rule with its exceptions.
 //!
@@ -154,11 +154,23 @@ pub struct Score {
     pub(super) lead_voice: LeadVoice,
 }
 
+/// Bars in the loop every lane plays in lockstep, which each song's bars cut
+/// from: neither the form's phrase nor the lead's period, so it can lengthen
+/// alone (#86).
 pub(super) const GEN_LOOP_BARS: usize = 8;
 
-/// Bars in a phrase: the lead's statement and answer each span one, and the
-/// hiphop kit's ghost kick and open hat mark each one's end.
-const PHRASE_BARS: usize = GEN_LOOP_BARS / 2;
+/// Bars in the lead's statement, and in its answer: the hiphop kit's ghost
+/// kick and open hat mark each one's end.
+const STATEMENT_BARS: usize = 4;
+
+/// Bars the lead sings before its line comes round: a statement and its
+/// answer, which opens on the statement's first notes, as a period's
+/// antecedent and consequent each begin "with the same basic motif"
+/// (<https://en.wikipedia.org/wiki/Period_(music)>).
+const PERIOD_BARS: usize = 2 * STATEMENT_BARS;
+
+// the loop holds whole periods, so none is cut where the loop comes round
+const _: () = assert!(GEN_LOOP_BARS.is_multiple_of(PERIOD_BARS));
 
 /// How far a hat may land from its slot, end to end: each lands within half of
 /// it either side, so a downbeat's hat may sound that much before its bar.
@@ -688,7 +700,7 @@ const FALLBACK_STATEMENT: [(usize, f32); 2] = [(0, 1.0), (2, 2.0)];
 /// The statement's first notes, which the answer opens by quoting.
 const QUOTE_NOTES: usize = 2;
 /// The answer's peak, in the bar after the quote.
-const PEAK_BAR: usize = PHRASE_BARS + 1;
+const PEAK_BAR: usize = STATEMENT_BARS + 1;
 
 /// The lead starts on the first chord's tone in its register's top octave
 /// nearest this far over the register's middle.
@@ -723,7 +735,7 @@ const LEAD_ACCENT: Spread = Spread {
 enum Role {
     /// The answer opens on the statement's opening notes.
     Quote,
-    /// The loop's last note returns near the opening, onto a chord tone.
+    /// The period's last note returns near the opening, onto a chord tone.
     Close,
     /// The answer's peak: a lift onto a chord tone.
     Peak,
@@ -765,7 +777,7 @@ fn lead(rng: &mut NoiseStream, harmony: &Harmony, style: &LeadStyle, beat_s: f32
 
 /// The statement's rhythm: each of its bars' beats.
 fn statement(rng: &mut NoiseStream, style: &LeadStyle) -> Vec<Vec<f32>> {
-    let mut bars: Vec<Vec<f32>> = (0..PHRASE_BARS)
+    let mut bars: Vec<Vec<f32>> = (0..STATEMENT_BARS)
         .map(|_| {
             if style.rest_p.is_some_and(|p| chance(rng, p)) {
                 return Vec::new();
@@ -780,7 +792,7 @@ fn statement(rng: &mut NoiseStream, style: &LeadStyle) -> Vec<Vec<f32>> {
             beats
         })
         .collect();
-    // a style that rests can rest through the whole phrase, and a take with no
+    // a style that rests can rest through the whole statement, and a take with no
     // lead has lost its singable identity
     if bars.iter().map(Vec::len).sum::<usize>() < FALLBACK_STATEMENT.len() {
         for (bar, beat) in FALLBACK_STATEMENT {
@@ -869,7 +881,7 @@ fn melody(
             let last = bar == last_bar && i == beats.len() - 1;
             // an anticipation is a pushed strong beat, not a passing tone
             let strong = beat.fract() == 0.0 || beat.fract() == 1.0 - SIXTEENTH_BEATS;
-            let role = if bar == PHRASE_BARS && i < head.len() && !last {
+            let role = if bar == STATEMENT_BARS && i < head.len() && !last {
                 Role::Quote
             } else if last {
                 Role::Close
@@ -936,7 +948,7 @@ fn melody(
 pub(crate) struct GrooveTemplate {
     /// The bar's downbeat kick, then its second.
     kicks: [Kick; 2],
-    /// Whether a ghost kick picks up into each phrase's next bar.
+    /// Whether a ghost kick picks up out of each statement and answer.
     ghost_pickup: bool,
     /// How far behind the grid the kicks land, in seconds.
     drag_s: f32,
@@ -944,7 +956,7 @@ pub(crate) struct GrooveTemplate {
     snares: &'static [f32],
     snare_gain: f32,
     hats: Hats,
-    /// Whether each phrase's last hat opens.
+    /// Whether each statement's and answer's last hat opens.
     open_hat: bool,
 }
 
@@ -1209,8 +1221,8 @@ fn groove(rng: &mut NoiseStream, g: &GrooveTemplate, beat_s: f32) -> Vec<Hit> {
             beat_s,
             wobble: WOBBLE.draw(rng),
         };
-        let phrase_end = bar % PHRASE_BARS == PHRASE_BARS - 1;
-        let ghost = (g.ghost_pickup && phrase_end).then_some(&GHOST_KICK);
+        let statement_end = bar % STATEMENT_BARS == STATEMENT_BARS - 1;
+        let ghost = (g.ghost_pickup && statement_end).then_some(&GHOST_KICK);
         for kick in g.kicks.iter().chain(ghost) {
             push_kick(&mut out, at, g.drag_s, kick.beats[bar % 2], kick.gain, rng);
         }
@@ -1232,7 +1244,7 @@ fn groove(rng: &mut NoiseStream, g: &GrooveTemplate, beat_s: f32) -> Vec<Hit> {
                 t += swing_delay(hats.swing, at.eighth());
             }
             t += HAT_JITTER.draw(rng);
-            let kind = if g.open_hat && phrase_end && e == EIGHTHS_PER_BAR - 1 {
+            let kind = if g.open_hat && statement_end && e == EIGHTHS_PER_BAR - 1 {
                 DrumKind::OpenHat
             } else {
                 DrumKind::Hat
