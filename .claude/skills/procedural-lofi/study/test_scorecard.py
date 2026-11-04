@@ -247,6 +247,8 @@ class Scorecard(unittest.TestCase):
         with contextlib.redirect_stdout(printed):
             scorecard.show(lines)
         self.assertRegex(printed.getvalue(), r"kicks /bar\s+.*not in the style's tracks")
+        # a row with no range is no row in range or out of it, but a gap of its own
+        self.assertIn("0 of 0 rows inside the tracks' interquartile range; 1 measured that the style's tracks lack", printed.getvalue())
 
     def test_a_card_reads_only_the_prefixs_takes(self):
         def take(tempo, fad):

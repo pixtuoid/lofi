@@ -462,7 +462,8 @@ def run(out: str, prefix: str):
         if not isinstance(row, dict):
             print("failed:", key, repr(row)[:ERROR_CHARS])
     path = Path(out, f"study-{prefix.strip('-')}.json")
-    previous = json.loads(path.read_text()) if path.exists() else {}
+    # the prefix's rows are this run's alone, so a corpus selected anew keeps none of the old one's
+    previous = {k: v for k, v in (json.loads(path.read_text()) if path.exists() else {}).items() if not k.startswith(prefix)}
     previous.update({r["key"]: r for r in good})
     path.write_text(json.dumps(previous, indent=0) + "\n")
     print("wrote", path.name, len(previous))

@@ -210,14 +210,14 @@ def card(target, sources):
 
 
 def show(lines):
-    held = total = 0
+    held = total = lacked = 0
     shown = None
     for layer, label, quartile, ours in lines:
         if layer != shown:
             print(f"\n{layer}\n{'':24}{'P25':>9}{'P50':>9}{'P75':>9}{'ours':>9}")
             shown = layer
         if quartile is None:
-            total += ours is not None
+            lacked += ours is not None
             print(f"{label:24}{'':27}{'' if ours is None else f'{ours[0]:9.2f}'}  not in the style's tracks")
             continue
         low, mid, high = quartile
@@ -229,7 +229,7 @@ def show(lines):
         held += holds
         width = "flat" if gap is None else f"{gap:4.1f}"
         print(f"{label:24}{low:9.2f}{mid:9.2f}{high:9.2f}{value:9.2f}  {'ok ' if holds else 'OFF'} {width}")
-    print(f"\n{held} of {total} rows inside the tracks' interquartile range")
+    print(f"\n{held} of {total} rows inside the tracks' interquartile range; {lacked} measured that the style's tracks lack")
 
 
 def load(file):

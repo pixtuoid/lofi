@@ -136,7 +136,8 @@ pub(crate) static NIGHT: Style = Style {
     name: "night",
     writing: Writing {
         harmony: HarmonyStyle { major_share: 0.42 },
-        // the slower half of the scorecard's `tempo bpm` quartiles
+        // the slower half of the one card's `tempo bpm` quartiles before #93
+        // split it by style; #93's step 3 fits NIGHT to its own playlist
         bpm: Spread::between(73.0, 77.0),
         lead: LeadStyle {
             lo: 60,

@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from judge_local import NOT_A_SCORE, SHARDS, dealt, exit_code, merged, published, redact, select
+from judge_local import NOT_A_SCORE, SHARDS, dealt, exit_code, merged, published, redact, replaced, select
 from test_validate_batch import write_wav
 from validate_batch import Takes, stage, validate
 
@@ -166,6 +166,18 @@ class RustCopies(unittest.TestCase):
         self.assertIsNotNone(py, "no WARMUP_RATE in modal_judge.py")
         self.assertEqual(int(py[1]), int(rust[1].replace("_", "")))
 
+
+
+
+class Replaced(unittest.TestCase):
+    def test_a_corpus_the_volume_lacks_or_holds_alike_uploads(self):
+        self.assertIsNone(replaced("sleep", None, b"{}"))
+        self.assertIsNone(replaced("sleep", b"{}", b"{}"))
+
+    def test_a_corpus_the_volume_holds_otherwise_is_refused_and_says_what_to_clear(self):
+        refusal = replaced("sleep", b'{"tracks": [1]}', b'{"tracks": [2]}')
+        self.assertIn("/sleep", refusal)
+        self.assertIn("/stems/sleep-*", refusal)
 
 
 if __name__ == "__main__":

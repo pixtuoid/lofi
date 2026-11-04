@@ -41,7 +41,7 @@ MODELS, REFS, BATCH = "/models", "/refs", "/batch"
 # by style
 JUDGED = "hiphop"
 sys.path.insert(0, str(JUDGE))
-from judge_local import dealt, exit_code, published, redact, select
+from judge_local import dealt, exit_code, published, redact, replaced, select
 
 # the uv the image and SKILL.md's install run, which modal-requirements.in
 # pins where Dependabot moves it
@@ -294,20 +294,16 @@ def judge(batch: str, base: str, cand: str, out: str = "", force_score: bool = F
 def upload_refs(refs_dir: str, corpus: str):
     """Uploads from `refs_dir` every reference of `corpus`, once its sha256
     matches the manifest, then the manifest, last: a judge never reads a
-    manifest whose audio isn't there. A corpus the Volume holds under another
-    manifest is refused, since its stems, keyed by manifest index, and the
-    judge's caches, keyed by the manifest's sha256, would read the old one.
-    The corpora share `corpus-cache`."""
+    manifest whose audio isn't there, and never over another selection of
+    `corpus` (`judge_local.replaced`). The corpora share `corpus-cache`."""
     local = Path(refs_dir)
     try:
         held = b"".join(refs.read_file(f"/{corpus}/manifest.json"))
     except FileNotFoundError:
         held = None
-    if held not in (None, (local / "manifest.json").read_bytes()):
-        raise SystemExit(
-            f"the refs Volume holds another {corpus} corpus: a new selection replaces it, so remove /{corpus}"
-            f" there and /stems/{corpus}-* on the study Volume first, then provision if JUDGED reads it"
-        )
+    refusal = replaced(corpus, held, (local / "manifest.json").read_bytes())
+    if refusal:
+        raise SystemExit(refusal)
     manifest = json.loads((local / "manifest.json").read_text())["tracks"]
     with refs.batch_upload(force=True) as upload:
         for i, t in enumerate(manifest):
