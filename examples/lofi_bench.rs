@@ -121,7 +121,7 @@ fn slowest_chunk(buf: &mut [Frame]) -> Result<(f64, u64, u64), String> {
             .unzip();
         // every run renders a pure function of the same seed and timeline,
         // so the first plays the two songs if any does
-        played(seed, day, night, &ends[0])?;
+        plays_day_then_night(seed, day, night, &ends[0])?;
         for (at, took) in least(&runs) {
             if took > worst.0 {
                 worst = (took, seed, at);
@@ -190,7 +190,7 @@ fn timed_chunks(
 
 /// Errs unless the run of `seed` whose first chunk played `opening` and whose
 /// last played `closing` played its day song, then its rainy `night` one.
-fn played(
+fn plays_day_then_night(
     seed: u64,
     day: Controls,
     night: Controls,
