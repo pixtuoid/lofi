@@ -189,6 +189,11 @@ impl Score {
         self.lead_voice.name()
     }
 
+    /// The name of the style this score was written in.
+    pub fn style_name(&self) -> &'static str {
+        self.style.name
+    }
+
     /// This score with its drums gone: what a room whose drums don't sound
     /// plays, so no lane ducks under a kick nobody hears.
     pub(crate) fn unbeaten(&self) -> Self {
@@ -961,7 +966,7 @@ struct Hats {
 
 const DOWNBEAT: f32 = 0.0;
 
-pub(crate) const DAY_GROOVES: [GrooveTemplate; 4] = [
+pub(crate) const HIPHOP_GROOVES: [GrooveTemplate; 4] = [
     // boom-bap: backbeats on 2&4
     GrooveTemplate {
         kicks: [
@@ -1066,7 +1071,7 @@ impl Hats {
 
 /// The night groove: kick, soft closed hats and a backbeat under the day's by
 /// LOFI-BIBLE.md §3's sleepy snare (the sleepy register).
-pub(crate) const NIGHT_GROOVE: GrooveTemplate = GrooveTemplate {
+pub(crate) const SLEEP_GROOVE: GrooveTemplate = GrooveTemplate {
     kicks: [
         Kick {
             beats: [DOWNBEAT; 2],

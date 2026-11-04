@@ -48,37 +48,46 @@ def dealt(pairs):
 
 
 def merged(shards, changed):
-    """The seat `shards` share and their rows by take. A shard takes its own
-    batch's level, and a row is comparable to another only under one seat, so
-    anything but each pair in `changed` once, under one seat, ends the run
-    rather than reach a verdict."""
+    """The seat `shards` share and their rows by take: one panel, and each
+    corpus a shard read. A shard takes its own takes' level in each corpus,
+    and a row is comparable to another only under one panel and one seat in
+    its corpus, so anything but each pair in `changed` once, so seated, ends
+    the run rather than reach a verdict."""
     rows = [row for shard in shards for row in shard["rows"].items()]
     if sorted(name for name, _ in rows) != sorted(changed):
         sys.exit("the shards' rows aren't each pair sent, once")
     seats = [shard["seat"] for shard in shards]
-    if any(seat != seats[0] for seat in seats):
+    if not seats:
+        return {}, {}
+    if any(seat["judges"] != seats[0]["judges"] for seat in seats):
         sys.exit("the shards sat different panels")
-    return next(iter(seats), {}), dict(rows)
+    corpora = {}
+    for seat in seats:
+        for style, corpus in seat["corpora"].items():
+            if corpora.setdefault(style, corpus) != corpus:
+                sys.exit(f"the shards read the {style} corpus at different seats")
+    return {"judges": seats[0]["judges"], "corpora": dict(sorted(corpora.items()))}, dict(rows)
 
 
-def redact(text, tracks):
+def redact(text, corpora):
     """`text` with every reference's file name, and its stem, replaced by its
-    manifest index: longest first, so a name holding another's whole goes
-    first."""
-    for i, t in sorted(enumerate(tracks), key=lambda it: -len(it[1]["file"])):
-        text = text.replace(t["file"], f"ref#{i}").replace(Path(t["file"]).stem, f"ref#{i}")
+    style and manifest index, `corpora` each style's manifest tracks: longest
+    first, so a name holding another's whole goes first."""
+    named = [(t["file"], f"{style}#{i}") for style, tracks in corpora.items() for i, t in enumerate(tracks)]
+    for file, label in sorted(named, key=lambda n: -len(n[0])):
+        text = text.replace(file, label).replace(Path(file).stem, label)
     return text
 
 
-def published(record, tracks):
+def published(record, corpora):
     """`ab_judge.py`'s judge.json as `score` returns it: the outcome, the
-    table it printed with every reference name masked, and the rest without
-    the corpus's paths and names."""
-    table = redact(record.pop("table"), tracks)
+    table it printed with every reference name of `corpora` masked, and the
+    rest without the corpora's paths and names."""
+    table = redact(record.pop("table"), corpora)
     record.pop("dir", None)
-    record.get("judges", {}).get("fad", {}).pop("refs", None)
-    if "fad_calibration" in record:
-        record["fad_calibration"] = sorted(record["fad_calibration"].values())
+    for corpus in record.get("corpora", {}).values():
+        corpus.pop("refs", None)
+        corpus["fad_calibration"] = sorted(corpus["fad_calibration"].values())
     return {"outcome": record["overall"], "table": table, "record": record}
 
 
@@ -91,5 +100,5 @@ def replaced(corpus, held, local):
         return None
     return (
         f"the refs Volume holds another {corpus} corpus: a new selection replaces it, so remove /{corpus}"
-        f" there and /stems/{corpus}-* on the study Volume first, then provision if JUDGED reads it"
+        f" there and /stems/{corpus}-* on the study Volume first, then provision if verdict.STYLES names it"
     )

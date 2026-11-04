@@ -61,10 +61,10 @@ def tally(pairs):
     counts = Counter()
     for p in pairs:
         m = NAME.fullmatch(p["name"])
-        counts[(m["mood"], m["mix"]), p["verdict"]] += 1
-    print(f"\n{'mood':<6} {'mix':<9}" + "".join(f" {v:>5}" for v in VERDICTS))
+        counts[(m["group"], m["mix"]), p["verdict"]] += 1
+    print(f"\n{'group':<8} {'mix':<13}" + "".join(f" {v:>5}" for v in VERDICTS))
     for group in sorted({g for g, _ in counts}):
-        print(f"{group[0]:<6} {group[1]:<9}" + "".join(f" {counts[group, v]:>5}" for v in VERDICTS))
+        print(f"{group[0]:<8} {group[1]:<13}" + "".join(f" {counts[group, v]:>5}" for v in VERDICTS))
 
 
 def main():

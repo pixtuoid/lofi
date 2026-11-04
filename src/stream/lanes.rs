@@ -17,7 +17,7 @@ use super::ramp::{Ramp, Shape};
 use crate::Controls;
 use crate::compose::Lane;
 use crate::dsp::NoiseStream;
-use crate::style::{DAY, NIGHT, Style};
+use crate::style::{HIPHOP, SLEEP, Style};
 use crate::synth::{
     DRIVE, DUCK_DB, DUCK_RELEASE_S, HEAD_BUMP_HZ, HEAD_BUMP_MIX, HISS_HZ, HISS_LEVEL, HUM_HZ,
     HUM_SWELL_HZ, PadTone, Part, ROLLOFF_HZ, SIDECHAIN_ATTACK_S, SIDECHAIN_DB, SIDECHAIN_RELEASE_S,
@@ -397,7 +397,7 @@ fn pieces<'a>(
 impl Grade {
     /// The styles whose recipes a grade runs between, at no daylight and at
     /// full daylight.
-    const ENDS: [&Style; 2] = [&NIGHT, &DAY];
+    const ENDS: [&Style; 2] = [&SLEEP, &HIPHOP];
 
     fn new(corners_hz: [f32; 2], drives: [f32; 2]) -> Self {
         Self { corners_hz, drives }
@@ -749,7 +749,7 @@ mod tests {
 
     /// A daylight a `style` song is chosen at.
     fn controls(style: &Style) -> Controls {
-        let daylight = if *style == NIGHT { 0.0 } else { 1.0 };
+        let daylight = if *style == SLEEP { 0.0 } else { 1.0 };
         Controls::default().with_daylight(daylight)
     }
 
@@ -782,7 +782,7 @@ mod tests {
         let part = Part::Hits {
             hits: &hits,
             recipe: |sound| sound.drums,
-            sound: &DAY.sound,
+            sound: &HIPHOP.sound,
         };
         let (kick, gain) = part.note(0, &mut NoiseStream::new(9), sr);
         let mut echoes = Vec::new();
@@ -869,7 +869,7 @@ mod tests {
             Lane::Bass,
         ] {
             let [dry, wet] = [0.0, 1.0].map(|rain| {
-                let mut tape = tape(&DAY, lane, Controls::default().with_rain(rain));
+                let mut tape = tape(&HIPHOP, lane, Controls::default().with_rain(rain));
                 let mut buf = noise.clone();
                 tape.process(&mut buf);
                 buf.iter().map(|&v| v as f32).collect::<Vec<f32>>()
@@ -898,7 +898,7 @@ mod tests {
         let latch = n / 2;
         let play = |rain: f64, ramp: bool| {
             let mut tape = tape(
-                &DAY,
+                &HIPHOP,
                 Lane::Drums,
                 Controls::default().with_rain(rain as f32),
             );
@@ -955,7 +955,7 @@ mod tests {
                     assert_eq!(got, recipe(end, lane), "{style:?} {lane:?} at {daylight}");
                 }
             }
-            let tape = graded_tape(&DAY, lane, 1.0);
+            let tape = graded_tape(&HIPHOP, lane, 1.0);
             let grade = tape.tape.grade().expect("the lane grades");
             let steps: Vec<(f32, f64)> = (0..=16)
                 .map(|i| f64::from(i) / 16.0)
@@ -976,10 +976,10 @@ mod tests {
             );
         }
         for lane in [Lane::Pad, Lane::Texture] {
-            let score = crate::compose::compose(&DAY, 0);
+            let score = crate::compose::compose(&HIPHOP, 0);
             let automation = Automation::new(Controls::default().with_daylight(0.5), None);
             let chain = Chain::new(
-                &DAY,
+                &HIPHOP,
                 lane,
                 &part(&score, lane),
                 1,
@@ -993,7 +993,7 @@ mod tests {
 
     #[test]
     fn a_grade_lands_on_its_target_at_its_end_and_tunes_to_it_exactly() {
-        let mut tape = graded_tape(&DAY, Lane::Drums, 0.6);
+        let mut tape = graded_tape(&HIPHOP, Lane::Drums, 0.6);
         let (latch, over) = (1000, samples_at(2.0, SAMPLE_RATE));
         tape.automation.daylight.toward(latch, 1.0, over);
         let mut rng = NoiseStream::new(4);
@@ -1014,13 +1014,13 @@ mod tests {
             grade.corner_hz(1.0),
             "no recompute at the ramp's end"
         );
-        assert_eq!(tape.own().1, recipe(&DAY, Lane::Drums).1);
+        assert_eq!(tape.own().1, recipe(&HIPHOP, Lane::Drums).1);
     }
 
     #[test]
     fn a_swept_grading_tape_plays_the_same_however_it_is_chunked() {
         let make = || {
-            let mut tape = graded_tape(&DAY, Lane::Drums, 1.0);
+            let mut tape = graded_tape(&HIPHOP, Lane::Drums, 1.0);
             tape.automation.daylight.toward(1001, 0.0, 5003);
             // segments that start and end between coefficient blocks, one
             // across the grade's ramp
@@ -1034,7 +1034,7 @@ mod tests {
     #[test]
     fn a_grading_tape_plays_the_same_however_it_is_chunked() {
         let make = || {
-            let mut tape = graded_tape(&DAY, Lane::Drums, 1.0);
+            let mut tape = graded_tape(&HIPHOP, Lane::Drums, 1.0);
             // through odd lengths, so the ramp starts and ends between
             // coefficient blocks
             tape.automation.daylight.toward(1001, 0.0, 5003);
@@ -1054,7 +1054,7 @@ mod tests {
             .map(|_| f64::from(rng.norm()) * 0.3)
             .collect();
         let play = |from: f32, to: Option<f32>| {
-            let mut tape = graded_tape(&DAY, Lane::Drums, from);
+            let mut tape = graded_tape(&HIPHOP, Lane::Drums, from);
             if let Some(to) = to {
                 tape.automation.daylight.toward(latch, f64::from(to), over);
             }
@@ -1091,7 +1091,7 @@ mod tests {
             cutoff_hz: cutoff,
             drive,
             ..
-        } = DAY.sound.drums;
+        } = HIPHOP.sound.drums;
         let play = |input: &[f32]| -> Vec<f32> {
             let own = Tone::Fixed {
                 corner_hz: cutoff,
@@ -1145,7 +1145,7 @@ mod tests {
             (TAU * f64::from(hz) * n as f64 / f64::from(sr)).rem_euclid(TAU) as f32
         };
         let room = Room::new(0, &[], [1.0, 1.0], sr);
-        let pad = DAY.sound.pad;
+        let pad = HIPHOP.sound.pad;
         let own = Tone::Fixed {
             corner_hz: pad.cutoff_hz,
             drive: f64::from(DRIVE),
@@ -1208,8 +1208,8 @@ mod tests {
         // misses it by 4.5 LU
         const TOLERANCE_LU: f64 = 1.5;
         let whole_lane: [(&Style, [f64; Lane::ALL.len()]); 2] = [
-            (&DAY, [-13.00, -18.20, -17.33, -20.92, -34.91, -12.03]),
-            (&NIGHT, [-11.92, -20.24, -17.52, -22.83, -36.13, -10.52]),
+            (&HIPHOP, [-13.00, -18.20, -17.33, -20.92, -34.91, -12.03]),
+            (&SLEEP, [-11.92, -20.24, -17.52, -22.83, -36.13, -10.52]),
         ];
         let sr = SAMPLE_RATE;
         let mut off = Vec::new();

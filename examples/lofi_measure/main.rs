@@ -8,7 +8,7 @@
 //!
 //! Usage:
 //!   cargo run --release --example lofi_measure -- \
-//!     [--engine whole|stream] [--mood day|night] [--seeds N] [--start S] [--tier empty|moderate|busy] \
+//!     [--engine whole|stream] [--style hiphop|sleep] [--seeds N] [--start S] [--tier empty|moderate|busy] \
 //!     [--sweep intensity|twilight|rain] [--songs 1] [--batch judge]
 //!   A take plays one song, so a run of more is refused.
 //!   cargo run --release --example lofi_measure -- [--corpus DIR]
@@ -149,7 +149,7 @@ fn run() -> io::Result<()> {
             let loop_len = audition::samples_at(score.loop_secs(), SAMPLE_RATE);
             println!(
                 "{} seed {seed}: {}; lead {}, loop {:.2} s; song {:.1} s: {}",
-                batch.mood_name(),
+                batch.group_name(),
                 rail(f64::from(score.bpm()), BPM_RAIL, " bpm"),
                 score.lead_voice_name(),
                 loop_len as f64 / SR,
@@ -210,7 +210,7 @@ fn run() -> io::Result<()> {
         if mix_lufs.len() > 1 {
             println!(
                 "{} {} mix through {}, seeds {:?}: gated loudness sd {:.4} LU",
-                batch.mood_name(),
+                batch.group_name(),
                 batch.mix_name(),
                 batch.engine.name(),
                 batch.seeds(),

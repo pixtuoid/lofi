@@ -1,21 +1,22 @@
-"""`ab_judge.py` on Modal's T4s, a shard of the pairs on each, over the
-reference corpus and the models two Volumes cache, for a batch this machine
-uploads.
+"""`ab_judge.py` on Modal's T4s, a shard of the pairs on each, over each
+style's reference corpus and the models two Volumes cache, for a batch this
+machine uploads.
 
 Usage, with modal-requirements.txt's client and a configured token:
   modal run modal_judge.py::upload_refs --refs-dir REFS --corpus STYLE
                                           STYLE's corpus, from REFS to the
                                           Volume's /STYLE
-  modal run modal_judge.py::provision     build the caches over JUDGED's corpus
+  modal run modal_judge.py::provision     build the caches over each style's
+                                          corpus
   modal run modal_judge.py::check         run every model in this lock's image
                                           on the warm-up take, offline
   modal run modal_judge.py::judge --batch DIR --base SHA --cand SHA [--out OUT] [--force-score]
                                           judge DIR's base/ and cand/, rendered
                                           at the commits their COMMIT files name
 
-REFS is the private corpus: its manifest's names and its audio never leave
-Modal in anything this prints or returns, which names a reference by its
-manifest index.
+REFS holds each style's private corpus: its manifest's names and its audio
+never leave Modal in anything this prints or returns, which names a reference
+by its style and manifest index.
 """
 
 import hashlib
@@ -37,11 +38,9 @@ HERE = Path(__file__).resolve().parent
 SCRIPTS = HERE.parent / "scripts" if modal.is_local() else Path(REMOTE_SCRIPTS)
 JUDGE = HERE if modal.is_local() else Path(REMOTE_JUDGE)
 MODELS, REFS, BATCH = "/models", "/refs", "/batch"
-# the style whose corpus judges every take until #93's step 4 splits the batch
-# by style
-JUDGED = "hiphop"
 sys.path.insert(0, str(JUDGE))
 from judge_local import dealt, exit_code, published, redact, replaced, select
+from verdict import STYLES
 
 # the uv the image and SKILL.md's install run, which modal-requirements.in
 # pins where Dependabot moves it
@@ -98,8 +97,9 @@ models = modal.Volume.from_name("lofi-judge-models", create_if_missing=True)
 refs = modal.Volume.from_name("lofi-judge-refs", create_if_missing=True)
 
 
-def tracks():
-    return json.loads((Path(REFS) / JUDGED / "manifest.json").read_text())["tracks"]
+def corpora():
+    """Each style's manifest tracks, whose names `redact` masks."""
+    return {style: json.loads((Path(REFS) / style / "manifest.json").read_text())["tracks"] for style in STYLES}
 
 
 def sha256(data):
@@ -122,10 +122,10 @@ def offline():
 
 
 def run_judge(batch, *flags, **options):
-    """`ab_judge.py` over `batch` and the corpus, in a child whose output
+    """`ab_judge.py` over `batch` and the corpora, in a child whose output
     goes nowhere until a caller masks it: nothing a model or a library prints
     reaches a public log."""
-    command = [sys.executable, f"{REMOTE_SCRIPTS}/ab_judge.py", str(batch), "--refs", f"{REFS}/{JUDGED}", "--corpus-cache", f"{REFS}/corpus-cache"]
+    command = [sys.executable, f"{REMOTE_SCRIPTS}/ab_judge.py", str(batch), "--refs", REFS, "--corpus-cache", f"{REFS}/corpus-cache"]
     return subprocess.run([*command, *flags], capture_output=True, text=True, **options)
 
 
@@ -150,12 +150,13 @@ def write_warm(path, gain):
 
 @app.function(gpu="T4", cpu=CPU, memory=MEMORY_MIB, volumes={MODELS: models, REFS: refs}, timeout=JUDGE_TIMEOUT_S)
 def build():
-    """Caches every model, the corpus's FAD statistics and the panel's
-    screening by judging a warm-up pair as a batch would be judged, online,
-    then measures what it took."""
+    """Caches every model, and each style's FAD statistics and the panel's
+    screening on its corpus, by judging a warm-up pair a style as a batch
+    would be judged, online, then measures what it took."""
     warm = Path("/tmp/warm")
     for side, gain in (("base", 1.0), ("cand", WARMUP_CAND_GAIN)):
-        write_warm(warm / side / "gen_day_empty_000.wav", gain)
+        for style in STYLES:
+            write_warm(warm / side / f"gen_{style}_empty_{style}_000.wav", gain)
         (warm / side / "COMMIT").write_text("0" * 40 + "\n")
     started = time.time()
     run = run_judge(warm)
@@ -163,7 +164,7 @@ def build():
     refs.commit()
     built = (warm / "judge.json").is_file()
     if not built:
-        print(redact(run.stdout + run.stderr, tracks()))
+        print(redact(run.stdout + run.stderr, corpora()))
     return {"built": built, **took(started)}
 
 
@@ -199,7 +200,7 @@ def score_shard(names):
     rows = Path("/tmp/rows.json")
     run = run_judge(BATCH, "--shard", str(rows), *names, env=offline())
     if not rows.is_file():
-        print(redact(run.stdout + run.stderr, tracks()))
+        print(redact(run.stdout + run.stderr, corpora()))
         return None
     return {**json.loads(rows.read_text()), **took(started)}
 
@@ -209,10 +210,10 @@ def score_shard(names):
 def score(batch, paired, changed):
     """Judges the pairs `changed` of `paired` on the Volume `batch`, which
     the caller mounts here too, a shard to each container, and returns what's
-    safe to publish: the table, the record without the corpus's names, and
+    safe to publish: the table, the record without the corpora's names, and
     what the run took."""
     started = time.time()
-    known = tracks()
+    known = corpora()
     # the tests that need this venv, which runs nowhere else: a broken floor
     # or corpus cache still prints a verdict
     tests = subprocess.run(
@@ -236,8 +237,8 @@ def score(batch, paired, changed):
 
 @app.local_entrypoint()
 def provision():
-    """Builds the caches over the judged corpus in the refs Volume, which
-    `Fad` refuses unless every reference matches the manifest."""
+    """Builds the caches over each style's corpus in the refs Volume, which
+    `Fad` refuses unless every reference matches its manifest."""
     report = build.remote()
     print(f"caches: {report}")
     if not report["built"]:

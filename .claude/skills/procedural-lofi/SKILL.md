@@ -177,9 +177,9 @@ constraint and re-batch), and every taste axis is a data table or named const wi
 |----------------------------|----------------------------------------------------------|
 | what to work on next       | `study/score.sh TREE OUT`'s scorecard, top layer first; one factor's A/B: `study/ab.sh` |
 | harmony vocabulary         | `MAJOR_LOOPS` / `MINOR_LOOPS` (rows of `Degree`s)        |
-| a style's tempo, harmony lean (`major_share`), lead register and density, comping, bass, voice weights, lane tones, staging | `style.rs`: the `DAY` / `NIGHT` records |
+| a style's tempo, harmony lean (`major_share`), lead register and density, comping, bass, voice weights, lane tones, staging | `style.rs`: the `HIPHOP` / `SLEEP` records |
 | melody rules               | the lead stage's consts and its `Role`s (quote, close, peak, leap bound, grid) |
-| groove feel                | `DAY_GROOVES` / `NIGHT_GROOVE` templates + the swing consts |
+| groove feel                | `HIPHOP_GROOVES` / `SLEEP_GROOVE` templates + the swing consts |
 | room-tone crackle          | `synth::CRACKLE_POPS_PER_SEC` (one knob, both beds)      |
 | lane gains, mix level      | `stream::master`: `tier_gains`; `Performance::MASTER_GAIN` |
 | bed crossfade              | `stream::lanes::BED_CROSSFADE_S`                         |
@@ -199,7 +199,7 @@ constraint and re-batch), and every taste axis is a data table or named const wi
    the branch into `DIR/cand`, DIR durable and outside the repo (`~/Desktop/lofi-listen/<change>`),
    each from a clean tree with its `git rev-parse HEAD` in `DIR/{base,cand}/COMMIT`, and
    `ab_judge.py` gates them (its header holds each measure's blind spots; `verdict.judged` holds the verdict rule)
-   against REFS, the judged style's private corpus (`modal_judge.py`'s `JUDGED`; `audio/` and its `manifest.json` of sha256s, never
+   against REFS, which holds each style's private corpus at REFS/STYLE (`audio/` and its `manifest.json` of sha256s, never
    committed), from a venv outside the repo, set up once; CI's `judge.yml` renders the same batch and
    judges it on Modal (`judge/modal_judge.py`) for every PR that changes the render:
    ```bash

@@ -24,10 +24,10 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True
 
-# lofi_audition's unshuffled names, gen_<mood>_<tier, sweep start or solo
-# lane>_<seed>.wav: a --shuffle run draws its own take_XX order, so equal
-# names there would pair two takes
-NAME = re.compile(r"gen_(?P<mood>[a-z]+)_(?P<mix>[a-z]+)_\d+\.wav")
+# lofi_audition's unshuffled names, gen_<group>_<tier, sweep start or solo
+# lane>_<style>_<seed>.wav: a --shuffle run draws its own take_XX order, so
+# equal names there would pair two takes
+NAME = re.compile(r"gen_(?P<group>[a-z]+)_(?P<mix>[a-z]+)_(?P<style>[a-z]+)_\d+\.wav")
 
 COMMIT = re.compile(r"[0-9a-f]{40}\n?")
 

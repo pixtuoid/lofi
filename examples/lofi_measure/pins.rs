@@ -14,11 +14,11 @@ use pixtuoid_lofi::audition::{
 };
 use pixtuoid_lofi::dsp::SAMPLE_RATE;
 
-use crate::batch::{Batch, Engine, MOODS, SOLO_SAFE_LUFS, Tier, heard_score, lane_gains};
+use crate::batch::{Batch, Engine, SOLO_SAFE_LUFS, STYLES, Tier, heard_score, lane_gains};
 use crate::staging::median;
 use crate::{frames_lufs, mono_lufs, parse, staging};
 
-/// The seeds the plate's sends were measured over, both moods.
+/// The seeds the plate's sends were measured over, both styles.
 const PLATE_SEEDS: Range<u64> = 0..6;
 
 /// The tier each wet lane's return is read at, the commit that set the
@@ -38,16 +38,16 @@ pub(crate) fn print() {
     staging::print();
 }
 
-/// The batch `--engine`, `--tier` and `--mood` select over `seeds`, as the
+/// The batch `--engine`, `--tier` and `--style` select over `seeds`, as the
 /// flags select it.
-fn batch(engine: Engine, tier: Tier, mood: &str, seeds: Range<u64>) -> Batch {
+fn batch(engine: Engine, tier: Tier, style: &str, seeds: Range<u64>) -> Batch {
     let args = [
         "--engine".into(),
         engine.name().into(),
         "--tier".into(),
         tier.name().into(),
-        "--mood".into(),
-        mood.into(),
+        "--style".into(),
+        style.into(),
         "--start".into(),
         seeds.start.to_string(),
         "--seeds".into(),
@@ -78,7 +78,7 @@ fn over<T: Send>(seeds: Range<u64>, f: impl Fn(u64) -> T + Sync) -> Vec<T> {
 }
 
 /// [`WHOLE_LANE_LUFS_SD`]'s rows, each measured over [`LUFS_SEEDS`] through
-/// the whole engine at its tier and mood.
+/// the whole engine at its tier and style.
 fn spreads() {
     println!(
         "// WHOLE_LANE_LUFS_SD: each row's loudness sd over LUFS_SEEDS through the whole engine"
@@ -87,10 +87,10 @@ fn spreads() {
         let index = (TIER_INTENSITIES.iter())
             .position(|&i| i == intensity)
             .expect("a pinned row's intensity is a tier's");
-        let (mood, _) = (MOODS.into_iter())
+        let (style, _) = (STYLES.into_iter())
             .find(|&(_, d)| d == daylight)
-            .expect("a pinned row's daylight is a mood's");
-        let batch = batch(Engine::WholeLane, Tier::ALL[index], mood, LUFS_SEEDS);
+            .expect("a pinned row's daylight is a style's");
+        let batch = batch(Engine::WholeLane, Tier::ALL[index], style, LUFS_SEEDS);
         let lufs = over(LUFS_SEEDS, |seed| {
             mono_lufs(&batch.whole(seed, lane_gains).remove(0).mix())
         });
@@ -102,16 +102,16 @@ fn spreads() {
 }
 
 /// [`SOLO_SAFE_LUFS`]: the quietest of every solo take's safe level, both
-/// moods and [`LUFS_SEEDS`], as `lofi_audition --solo` renders them.
+/// styles and [`LUFS_SEEDS`], as `lofi_audition --solo` renders them.
 fn solo() {
     let mut safest: Option<(f64, String)> = None;
-    for (mood, _) in MOODS {
-        let batch = batch(Engine::WholeLane, Tier::default(), mood, LUFS_SEEDS);
+    for (style, _) in STYLES {
+        let batch = batch(Engine::WholeLane, Tier::default(), style, LUFS_SEEDS);
         for lane in Lane::ALL {
             let safe = over(LUFS_SEEDS, |seed| safe_lufs(&batch.take(seed, Some(lane))));
             for (seed, safe) in LUFS_SEEDS.zip(safe) {
                 if safest.as_ref().is_none_or(|&(s, _)| safe < s) {
-                    safest = Some((safe, format!("{mood} {}, seed {seed}", lane.name())));
+                    safest = Some((safe, format!("{style} {}, seed {seed}", lane.name())));
                 }
             }
         }
@@ -131,14 +131,14 @@ fn safe_lufs(take: &[Frame]) -> f64 {
 
 /// The plate's sends: the send that puts each wet lane's return as far
 /// under its dry lane on the fold as `plate.rs` asks, from its return at
-/// unity, the median over [`PLATE_SEEDS`] in both moods.
+/// unity, the median over [`PLATE_SEEDS`] in both styles.
 fn plate() {
     println!("// the plate's sends, each from its return at unity over PLATE_SEEDS");
     for (lane, tier) in PLATE_TIERS {
         let (held, under) = audition::plate_wet(lane).expect("a wet lane sends");
         let mut gaps = Vec::new();
-        for (mood, _) in MOODS {
-            let batch = batch(Engine::Stream, tier, mood, PLATE_SEEDS);
+        for (style, _) in STYLES {
+            let batch = batch(Engine::Stream, tier, style, PLATE_SEEDS);
             gaps.extend(over(PLATE_SEEDS, |seed| unity_gap(&batch, seed, lane)));
         }
         let gap = median(gaps);

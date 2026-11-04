@@ -6,8 +6,8 @@
 use std::fmt;
 
 use crate::compose::{
-    BassStyle, Comp, DAY_GROOVES, Density, Grooves, HarmonyStyle, KeysStyle, Lane, LeadStyle,
-    LeadVoice, NIGHT_GROOVE, Spread, Writing,
+    BassStyle, Comp, Density, Grooves, HIPHOP_GROOVES, HarmonyStyle, KeysStyle, Lane, LeadStyle,
+    LeadVoice, SLEEP_GROOVE, Spread, Writing,
 };
 use crate::synth::{Bed, ChordTone, HitRecipe, NoteRecipe, PadTone, Sound};
 
@@ -16,8 +16,10 @@ use crate::synth::{Bed, ChordTone, HitRecipe, NoteRecipe, PadTone, Sound};
 /// pointers to the static refer to the same allocation"
 /// (<https://doc.rust-lang.org/reference/items/static-items.html>).
 pub(crate) struct Style {
-    /// What its `Debug` prints in place of every knob.
-    name: &'static str,
+    /// The playlist it learns from, which names it everywhere: its `Debug`
+    /// prints this in place of every knob, and the judge reads a take's
+    /// corpus from it.
+    pub(crate) name: &'static str,
     pub(crate) writing: Writing,
     pub(crate) sound: Sound,
     /// Each lane's fixed gains `[in, out]` in the stream, in [`Lane::ALL`]
@@ -45,10 +47,10 @@ impl fmt::Debug for Style {
 
 /// Every style, which the tests sweep.
 #[cfg(test)]
-pub(crate) const STYLES: [&Style; 2] = [&DAY, &NIGHT];
+pub(crate) const STYLES: [&Style; 2] = [&HIPHOP, &SLEEP];
 
-pub(crate) static DAY: Style = Style {
-    name: "day",
+pub(crate) static HIPHOP: Style = Style {
+    name: "hiphop",
     writing: Writing {
         harmony: HarmonyStyle { major_share: 0.8 },
         bpm: Spread::between(70.0, 82.0),
@@ -72,7 +74,7 @@ pub(crate) static DAY: Style = Style {
             comp: Comp::Shell,
             dur: 0.9,
         },
-        drums: Grooves::Drawn(&DAY_GROOVES),
+        drums: Grooves::Drawn(&HIPHOP_GROOVES),
         bass: BassStyle {
             fifth_p: 0.4,
             pickup_p: Some(0.25),
@@ -132,12 +134,12 @@ pub(crate) static DAY: Style = Style {
     ],
 };
 
-pub(crate) static NIGHT: Style = Style {
-    name: "night",
+pub(crate) static SLEEP: Style = Style {
+    name: "sleep",
     writing: Writing {
         harmony: HarmonyStyle { major_share: 0.42 },
         // the slower half of the one card's `tempo bpm` quartiles before #93
-        // split it by style; #93's step 3 fits NIGHT to its own playlist
+        // split it by style; #93's step 3 fits SLEEP to its own playlist
         bpm: Spread::between(73.0, 77.0),
         lead: LeadStyle {
             lo: 60,
@@ -161,7 +163,7 @@ pub(crate) static NIGHT: Style = Style {
             comp: Comp::Single,
             dur: 1.1,
         },
-        drums: Grooves::Fixed(&NIGHT_GROOVE),
+        drums: Grooves::Fixed(&SLEEP_GROOVE),
         bass: BassStyle {
             fifth_p: 0.2,
             pickup_p: None,

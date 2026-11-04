@@ -7,11 +7,11 @@
 //!
 //! Usage:
 //!   cargo run --release --example lofi_audition -- \
-//!     [--engine whole|stream] [--mood day|night] [--seeds N] [--start S] [--out DIR] \
+//!     [--engine whole|stream] [--style hiphop|sleep] [--seeds N] [--start S] [--out DIR] \
 //!     [--tier empty|moderate|busy | --solo pad|sparkle|keys|drums|texture|bass] \
 //!     [--sweep intensity|dusk|twilight|rain] [--songs N] [--batch judge] [--shuffle KEYFILE]
 //!   `--solo` renders a lane whole, so it takes `--engine whole`. `--batch judge`
-//!   renders what `ab_judge.py` scores in place of the mood, tier and seeds.
+//!   renders what `ab_judge.py` scores in place of the style, tier and seeds.
 
 #[path = "common/batch.rs"]
 mod batch;
@@ -196,9 +196,10 @@ impl Args {
         Ok(parsed)
     }
 
-    /// Every take of every run. No engine changes a name, so `ab_listen.py`
-    /// pairs a whole-lane batch with a stream batch; an error if two share
-    /// one, since the second would overwrite the first's file.
+    /// Every take of every run, named for its group, its mix, the style its
+    /// first song plays, whose corpus the judge reads it against, and its
+    /// seed. No engine changes a name, so `ab_listen.py` pairs a whole-lane
+    /// batch with a stream batch.
     fn takes(&self) -> io::Result<Vec<Take>> {
         let runs = self.batch.runs();
         let takes = runs.iter().flat_map(|run| {
@@ -206,23 +207,17 @@ impl Args {
                 Some(lane) => lane.name(),
                 None => run.mix_name(),
             };
-            let mood = run.mood_name();
+            let group = run.group_name();
             (run.seeds()).map(move |seed| Take {
                 run: *run,
                 seed,
-                name: format!("gen_{mood}_{mix}_{seed:03}.wav"),
+                name: format!(
+                    "gen_{group}_{mix}_{}_{seed:03}.wav",
+                    run.score(seed).style_name()
+                ),
             })
         });
-        let takes: Vec<Take> = takes.collect();
-        let mut names: Vec<&str> = takes.iter().map(|take| take.name.as_str()).collect();
-        names.sort_unstable();
-        match names.windows(2).find(|pair| pair[0] == pair[1]) {
-            Some(pair) => Err(usage_error(format!(
-                "two takes would both write {}",
-                pair[0]
-            ))),
-            None => Ok(takes),
-        }
+        distinct(takes.collect())
     }
 
     /// `seed`'s take in `run` at its target loudness, as near as its peak lets
@@ -247,6 +242,20 @@ impl Args {
             Some(_) => SOLO_TARGET_LUFS,
             None => TARGET_LUFS,
         }
+    }
+}
+
+/// `takes`, or an error if two share a name, since the second would overwrite
+/// the first's file.
+fn distinct(takes: Vec<Take>) -> io::Result<Vec<Take>> {
+    let mut names: Vec<&str> = takes.iter().map(|take| take.name.as_str()).collect();
+    names.sort_unstable();
+    match names.windows(2).find(|pair| pair[0] == pair[1]) {
+        Some(pair) => Err(usage_error(format!(
+            "two takes would both write {}",
+            pair[0]
+        ))),
+        None => Ok(takes),
     }
 }
 
@@ -356,7 +365,7 @@ mod tests {
     use std::sync::Mutex;
 
     use super::*;
-    use batch::Sweep;
+    use batch::{STYLES, Sweep};
     use pixtuoid_lofi::{Controls, audition};
 
     #[test]
@@ -430,7 +439,7 @@ mod tests {
     #[test]
     fn a_take_keeps_its_name_under_either_engine() {
         let [whole, stream] = ["whole", "stream"].map(|engine| {
-            parsed(&["--engine", engine, "--mood", "night", "--tier", "empty"])
+            parsed(&["--engine", engine, "--style", "sleep", "--tier", "empty"])
                 .takes()
                 .expect("the takes' names are distinct")
         });
@@ -443,7 +452,7 @@ mod tests {
         let (whole, stream) = (names(whole), names(stream));
         assert_eq!(whole, stream);
         // the shape `ab_listen.py`'s NAME pairs
-        assert_eq!(whole[0], (0, "gen_night_empty_000.wav".to_owned()));
+        assert_eq!(whole[0], (0, "gen_sleep_empty_sleep_000.wav".to_owned()));
     }
 
     #[test]
@@ -480,48 +489,47 @@ mod tests {
             _ => Ok(()),
         });
         assert_eq!(failed.expect_err("take 1 fails").to_string(), "it clips");
-    }
-
-    #[test]
-    fn the_judge_batch_names_each_take_once_by_its_group_mix_and_seed() {
-        let takes = parsed(&["--batch", "judge"])
-            .takes()
-            .expect("the takes' names are distinct");
-        // `ab_judge.py` groups a take by its name's first word, and pairs it
-        // by the rest
-        let mut named: Vec<(String, String)> = (takes.iter())
-            .map(|take| {
-                let [group, mix, seed] = (take.name.strip_prefix("gen_"))
-                    .and_then(|n| n.strip_suffix(".wav"))
-                    .map(|n| n.splitn(3, '_').collect::<Vec<_>>())
-                    .and_then(|parts| parts.try_into().ok())
-                    .expect("gen_GROUP_MIX_SEED.wav");
-                assert_eq!(seed, format!("{:03}", take.seed), "{}", take.name);
-                (group.to_owned(), mix.to_owned())
-            })
-            .collect();
-        named.sort();
-        named.dedup();
-        let want = [
-            ("day", "busy"),
-            ("day", "empty"),
-            ("day", "moderate"),
-            ("night", "busy"),
-            ("night", "empty"),
-            ("night", "moderate"),
-            ("rain", "moderate"),
-            ("twilight", "quarter"),
-            ("twilight", "threequarters"),
-        ];
-        assert_eq!(named, want.map(|(g, m)| (g.to_owned(), m.to_owned())));
-        assert!(
-            Args::parse(
-                ["--batch", "judge", "--solo", "pad"]
-                    .map(str::to_owned)
-                    .into_iter()
-            )
-            .is_err()
-        );
+        #[test]
+        fn the_judge_batch_names_each_take_once_by_its_group_mix_style_and_seed() {
+            let takes = parsed(&["--batch", "judge"])
+                .takes()
+                .expect("the takes' names are distinct");
+            // `ab_judge.py` groups a take by its name's first word, reads it
+            // against its style's corpus, and pairs it by the whole name
+            let mut named: Vec<[String; 3]> = (takes.iter())
+                .map(|take| {
+                    let [group, mix, style, seed] = (take.name.strip_prefix("gen_"))
+                        .and_then(|n| n.strip_suffix(".wav"))
+                        .map(|n| n.splitn(4, '_').collect::<Vec<_>>())
+                        .and_then(|parts| parts.try_into().ok())
+                        .expect("gen_GROUP_MIX_STYLE_SEED.wav");
+                    assert_eq!(seed, format!("{:03}", take.seed), "{}", take.name);
+                    [group, mix, style].map(str::to_owned)
+                })
+                .collect();
+            named.sort();
+            named.dedup();
+            let want = [
+                ["hiphop", "busy", "hiphop"],
+                ["hiphop", "empty", "hiphop"],
+                ["hiphop", "moderate", "hiphop"],
+                ["rain", "moderate", "hiphop"],
+                ["sleep", "busy", "sleep"],
+                ["sleep", "empty", "sleep"],
+                ["sleep", "moderate", "sleep"],
+                ["twilight", "quarter", "sleep"],
+                ["twilight", "threequarters", "hiphop"],
+            ];
+            assert_eq!(named, want.map(|name| name.map(str::to_owned)));
+            assert!(
+                Args::parse(
+                    ["--batch", "judge", "--solo", "pad"]
+                        .map(str::to_owned)
+                        .into_iter()
+                )
+                .is_err()
+            );
+        }
     }
 
     /// One peak over the target's reach costs that take a little level, not
@@ -658,25 +666,28 @@ mod tests {
 
     #[test]
     fn a_run_whose_takes_share_a_file_name_is_refused() {
-        // the twilight takes, both named for the lane past the parse's guard
-        let mut args = parsed(&["--engine", "whole", "--sweep", "twilight"]);
-        args.solo = Some(Lane::Pad);
-        assert!(args.takes().is_err());
-        assert!(parsed(&["--sweep", "twilight"]).takes().is_ok());
+        let take = |seed, name: &str| Take {
+            run: Batch::default(),
+            seed,
+            name: name.to_owned(),
+        };
+        let named = |names: [&str; 2]| distinct(vec![take(0, names[0]), take(1, names[1])]);
+        assert!(named(["gen_a_b_c_000.wav"; 2]).is_err());
+        assert!(named(["gen_a_b_c_000.wav", "gen_a_b_c_001.wav"]).is_ok());
     }
 
     /// [`SOLO_TARGET_LUFS`] sits under every lane's peak: a solo stopped short
     /// of it would compare at another level.
     #[test]
     fn every_lane_writes_a_solo_take_at_the_solo_target() {
-        for mood in ["day", "night"] {
+        for (style, _) in STYLES {
             for lane in Lane::NAMES {
-                let take = rendered(&["--engine", "whole", "--mood", mood, "--solo", lane], 0);
+                let take = rendered(&["--engine", "whole", "--style", style, "--solo", lane], 0);
                 let [left, right] = channels(&take);
                 let lufs = gated_lufs(&[&left, &right], SAMPLE_RATE);
                 assert!(
                     (lufs - SOLO_TARGET_LUFS).abs() <= 0.1,
-                    "{mood} {lane}: {lufs:.3} LUFS"
+                    "{style} {lane}: {lufs:.3} LUFS"
                 );
             }
         }

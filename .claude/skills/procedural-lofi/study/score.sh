@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Prints TREE's committed head's scorecards, one per style its rooms play:
-# renders the judge batch, splits the working rooms' takes into stems on Modal,
-# measures them as their style's references were measured (`targets.sh`), and
-# reads them against that style's targets.json entry.
+# Prints TREE's committed head's scorecards, one per style: renders the judge
+# batch, splits each style's working rooms' takes into stems on Modal,
+# measures them as the style's references were measured (`targets.sh`), and
+# reads them against the style's targets.json entry.
 #
 #   score.sh TREE OUT
 #
@@ -11,9 +11,6 @@
 # take's name, which the head's sha makes fresh, so a dirty tree is refused
 # rather than scored under a commit that isn't what played.
 set -euo pipefail
-
-# each mood's style: the playlist its record is fitted to (#93)
-styles=(day:hiphop night:sleep)
 
 tree=$1 out=$2
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -29,13 +26,14 @@ name=$(basename "$out")
 prefix="take-${name}_"
 mkdir -p "$out/in"
 
-# the rooms where every lane plays, as every lane does in the tracks' stems
-for pair in "${styles[@]}"; do
-    for room in "${pair%%:*}_busy" "${pair%%:*}_moderate"; do
-        for take in "$out/all/gen_${room}_"*.wav; do
-            ln -f "$take" "$out/in/${name}_$(basename "$take")"
-        done
-    done
+# each style's rooms where every lane plays, as every lane does in the
+# tracks' stems: a style's own group, gen_STYLE_MIX_STYLE_SEED.wav
+styles=()
+for take in "$out/all/gen_"*.wav; do
+    IFS=_ read -r _ group mix style _ <<<"$(basename "$take")"
+    [ "$group" = "$style" ] || continue
+    case $mix in busy | moderate) ln -f "$take" "$out/in/${name}_$(basename "$take")" ;; esac
+    case " ${styles[*]-} " in *" $style "*) ;; *) styles+=("$style") ;; esac
 done
 
 modal_run() {
@@ -44,15 +42,14 @@ modal_run() {
 
 cd "$here"
 modal_run stems.py::split_takes --takes "$out/in"
-for pair in "${styles[@]}"; do
-    mood=${pair%%:*} style=${pair#*:}
-    takes="${prefix}gen_${mood}_"
+for style in "${styles[@]}"; do
+    takes="${prefix}gen_${style}_"
     dir="$out/$style"
     mkdir -p "$dir"
     modal_run analyze.py::run --prefix "$takes" --out "$dir"
     modal_run basstone.py::run --prefix "$takes" --out "$dir"
     modal_run stemfad.py::run --corpus "$style" --prefix "$takes" --out "$dir"
-    "$HOME/.cache/lofi-judge/bin/python" -I timbre.py "$dir/timbre.json" "$out/in/${name}_gen_${mood}_"*.wav
-    echo "== $style: the $mood rooms"
+    "$HOME/.cache/lofi-judge/bin/python" -I timbre.py "$dir/timbre.json" "$out/in/${name}_gen_${style}_"*.wav
+    echo "== $style"
     python3 -I scorecard.py score "$dir" "$takes" "$style"
 done

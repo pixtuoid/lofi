@@ -39,10 +39,10 @@ from ab_judge import (
     windows,
 )
 from scipy import signal
-from verdict import JUDGES, PANEL
+from verdict import GUARD, JUDGES, PANEL
 
 SR = 44100
-NAME = "gen_day_empty_000.wav"
+NAME = "gen_hiphop_empty_hiphop_000.wav"
 
 
 def take(seconds=10):
@@ -67,7 +67,7 @@ class Floor(unittest.TestCase):
     def test_both_sides_of_a_pair_draw_the_same_floor(self):
         x = take()
         self.assertTrue(np.array_equal(floored(x, NAME, -20.0), floored(x, NAME, -20.0)))
-        self.assertFalse(np.array_equal(floored(x, NAME, -20.0), floored(x, "gen_day_empty_001.wav", -20.0)))
+        self.assertFalse(np.array_equal(floored(x, NAME, -20.0), floored(x, "gen_hiphop_empty_hiphop_001.wav", -20.0)))
 
 
 class Windows(unittest.TestCase):
@@ -253,7 +253,10 @@ class Smoke(unittest.TestCase):
 
 
 class Shards(unittest.TestCase):
-    NAMES = ["gen_day_empty_000.wav", "gen_day_empty_001.wav", "gen_night_busy_002.wav"]
+    NAMES = ["gen_hiphop_empty_hiphop_000.wav", "gen_hiphop_empty_hiphop_001.wav", "gen_sleep_busy_sleep_002.wav"]
+    # each corpus's FAD of every take read against it, so a row shows which
+    # corpus scored it
+    FAD = {"hiphop": 1.0, "sleep": 2.0}
 
     def setUp(self):
         self.dir = tempfile.TemporaryDirectory()
@@ -265,6 +268,26 @@ class Shards(unittest.TestCase):
             for i, name in enumerate(self.NAMES):
                 x = np.random.default_rng(i).standard_normal((SR, 2)) / 8
                 sf.write(self.batch / side / name, x * gain, SR, subtype="PCM_16")
+        # each `Fad` built, by its corpus's style, with the takes' level it got
+        self.levels = {}
+        # each corpus's screening, which seats every judge unless a test says
+        self.screens = {style: self.screen() for style in self.FAD}
+
+    @staticmethod
+    def screen(*out):
+        """A screening that seats every panel judge but `out`."""
+        return {name: {"scale": 2.0, "anchors": {SCREEN_ANCHOR_HZ: float(name in out)}} for name in PANEL}
+
+    def fad(self, refs, takes_lufs, caches):
+        """A corpus's fake `Fad`, which scores a take its style's `FAD`."""
+        self.levels[refs.name] = takes_lufs
+        distance = self.FAD[refs.name]
+        return mock.Mock(
+            refs=refs,
+            lufs=-20.0,
+            calibration={f"{refs.name}-reference.mp3": 0.1, f"{refs.name}-other.mp3": 0.2},
+            score_pair=lambda base, cand: [distance, distance],
+        )
 
     def run_judge(self, *flags):
         """`main` over fake judges, each score a function of the take alone,
@@ -272,22 +295,16 @@ class Shards(unittest.TestCase):
         heard = lambda x, sr: float(np.abs(x).sum())
         model = mock.Mock(num_features=4)
         model.name = "clap"
-        fad = mock.Mock(
-            model=model,
-            lufs=-20.0,
-            calibration={"reference.mp3": 0.1, "other.mp3": 0.2},
-            score_pair=lambda base, cand: [heard(*base), heard(*cand)],
-        )
         panel = mock.Mock(score=heard)
-        screen = {name: {"scale": 2.0, "anchors": {SCREEN_ANCHOR_HZ: 0.0}} for name in PANEL}
         argv = ["ab_judge", str(self.batch), "--refs", "/refs", "--corpus-cache", "/cache", *flags]
         with (
             mock.patch("sys.argv", argv),
             mock.patch("ab_judge.judge_device", return_value="cpu"),
-            mock.patch("ab_judge.Fad", return_value=fad),
+            mock.patch("ab_judge.clap", return_value=model),
+            mock.patch("ab_judge.Fad", side_effect=self.fad),
             mock.patch("ab_judge.Audiobox", return_value=panel),
             mock.patch("ab_judge.TuneJury", return_value=panel),
-            mock.patch("ab_judge.cached_screen", return_value=screen),
+            mock.patch("ab_judge.cached_screen", side_effect=lambda caches, fad, panel: self.screens[fad.refs.name]),
             contextlib.redirect_stdout(io.StringIO()),
         ):
             try:
@@ -316,6 +333,39 @@ class Shards(unittest.TestCase):
         shard = json.loads(rows.read_text())
         self.assertEqual(list(shard["rows"]), self.NAMES[:1])
         self.assertFalse((self.batch / "judge.json").exists())
+
+    def test_each_take_is_read_against_its_styles_corpus(self):
+        self.run_judge()
+        record = json.loads((self.batch / "judge.json").read_text())
+        self.assertEqual(set(record["corpora"]), set(self.FAD))
+        for p in record["pairs"]:
+            self.assertEqual(p["base"]["scores"][GUARD], self.FAD[p["style"]], p["take"])
+            self.assertEqual(record["corpora"][p["style"]]["refs"], str(Path("/refs", p["style"]).resolve()))
+
+    def test_a_corpus_scores_its_takes_by_the_judges_it_seats_alone(self):
+        self.screens["sleep"] = self.screen("audiobox_ce")
+        self.run_judge()
+        for p in json.loads((self.batch / "judge.json").read_text())["pairs"]:
+            seated = {"tunejury", GUARD} if p["style"] == "sleep" else set(JUDGES)
+            self.assertEqual(set(p["base"]["scores"]), seated, p["take"])
+
+    def test_a_corpus_that_seats_no_judge_judges_nothing(self):
+        self.screens["sleep"] = self.screen(*PANEL)
+        self.run_judge()
+        self.assertFalse((self.batch / "judge.json").exists())
+
+    def test_each_corpus_takes_its_own_styles_takes_level(self):
+        # the sleep take twice as loud on both sides, so a level pooled over
+        # the styles would move the hiphop corpus's
+        for side in ("base", "cand"):
+            path = self.batch / side / self.NAMES[2]
+            x, sr = sf.read(path, dtype="float32")
+            sf.write(path, 2 * x, sr, subtype="PCM_16")
+        self.run_judge()
+        for style in self.FAD:
+            taken = [n for n in self.NAMES if f"_{style}_" in n]
+            want = np.median([mono_lufs(*sf.read(self.batch / side / n, dtype="float32")) for n in taken for side in ("base", "cand")])
+            self.assertAlmostEqual(self.levels[style], want, places=9, msg=style)
 
 
 if __name__ == "__main__":

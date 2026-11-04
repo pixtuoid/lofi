@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 
 use super::*;
 use crate::score;
-use crate::style::{DAY, NIGHT, STYLES};
+use crate::style::{HIPHOP, SLEEP, STYLES};
 
 const SWEEP: u64 = 64;
 
@@ -200,7 +200,7 @@ fn a_style_draws_its_major_share_of_major_loops() {
 fn each_styles_lead_register_is_its_frozen_takes() {
     let day = score::SPARKLE_SCORE.map(|(_, midi, _)| midi);
     let night = score::NIGHT_SPARKLE.map(|n| n.midi);
-    for (style, take) in [(&DAY, &day[..]), (&NIGHT, &night[..])] {
+    for (style, take) in [(&HIPHOP, &day[..]), (&SLEEP, &night[..])] {
         let span = (take.iter().min().copied(), take.iter().max().copied());
         let lead = &style.writing.lead;
         assert_eq!(span, (Some(lead.lo), Some(lead.hi)), "{style:?}");
@@ -217,8 +217,8 @@ fn a_lead_sings_over_its_comp_and_less_by_night() {
         notes as f32 / (SWEEP as usize * GEN_LOOP_BARS) as f32
     };
     let lead = |s: &Score| s.sparkle.len();
-    let (day, night) = (per_bar(&DAY, lead), per_bar(&NIGHT, lead));
-    let night_keys = per_bar(&NIGHT, |s| s.keys.len());
+    let (day, night) = (per_bar(&HIPHOP, lead), per_bar(&SLEEP, lead));
+    let night_keys = per_bar(&SLEEP, |s| s.keys.len());
     assert!((2.0..=4.0).contains(&day), "{day}");
     assert!(
         (night_keys..day).contains(&night),
@@ -252,13 +252,13 @@ fn lead_voice_pools_are_style_curated() {
     let mut day_saw = (false, false, false);
     let mut night_saw = (false, false);
     for seed in 0..SWEEP {
-        match compose(&DAY, seed).lead_voice {
+        match compose(&HIPHOP, seed).lead_voice {
             LeadVoice::EpVel => day_saw.0 = true,
             LeadVoice::Pluck => day_saw.1 = true,
             LeadVoice::Kalimba => day_saw.2 = true,
             LeadVoice::Vibraphone => panic!("seed {seed}: vibraphone is night-pool only"),
         }
-        match compose(&NIGHT, seed).lead_voice {
+        match compose(&SLEEP, seed).lead_voice {
             LeadVoice::EpVel => night_saw.0 = true,
             LeadVoice::Vibraphone => night_saw.1 = true,
             v => panic!("seed {seed}: night drew the day-pool {v:?}"),
@@ -281,12 +281,12 @@ fn lead_voice_distribution_tracks_the_draw_weights() {
     // unlucky sample does not
     let (mut plucks, mut kalimbas, mut vibes) = (0usize, 0usize, 0usize);
     for s in 0..400 {
-        match compose(&DAY, s).lead_voice {
+        match compose(&HIPHOP, s).lead_voice {
             LeadVoice::Pluck => plucks += 1,
             LeadVoice::Kalimba => kalimbas += 1,
             _ => {}
         }
-        if compose(&NIGHT, s).lead_voice == LeadVoice::Vibraphone {
+        if compose(&SLEEP, s).lead_voice == LeadVoice::Vibraphone {
             vibes += 1;
         }
     }
@@ -313,7 +313,7 @@ fn the_bass_starts_its_notes_as_bass_step_p_weighs_each_16th() {
     const SEEDS: u64 = 400;
     let mut onsets = [0usize; BASS_STEP_P.len()];
     for seed in 0..SEEDS {
-        let s = compose(&DAY, seed);
+        let s = compose(&HIPHOP, seed);
         let (bar_s, step_s) = (s.bar_s(), s.beat_s() * SIXTEENTH_BEATS);
         let mut first_beat = [0usize; GEN_LOOP_BARS];
         for &Note { at, .. } in &s.bass {
@@ -409,7 +409,7 @@ fn every_seed_is_well_formed() {
             }
             let kinds = |k: DrumKind| s.drums.iter().any(|&Hit { kind, .. }| kind == k);
             assert!(kinds(DrumKind::Snare), "seed {seed}: no backbeat");
-            if *style == NIGHT {
+            if *style == SLEEP {
                 assert!(
                     !kinds(DrumKind::OpenHat),
                     "seed {seed}: night grew an open hat"
@@ -706,7 +706,7 @@ fn a_shell_is_a_chords_third_and_seventh() {
 #[test]
 fn day_keys_comp_in_rolled_shell_pairs() {
     for seed in 0..SWEEP {
-        let s = compose(&DAY, seed);
+        let s = compose(&HIPHOP, seed);
         assert_eq!(s.keys.len() % 2, 0, "seed {seed}: unpaired shell note");
         for pair in s.keys.chunks(2) {
             let (a, b) = (pair[0], pair[1]);
@@ -732,7 +732,7 @@ fn day_keys_comp_in_rolled_shell_pairs() {
 fn day_lead_uses_sixteenth_anticipations_somewhere_in_the_sweep() {
     let mut seen_push = false;
     for seed in 0..SWEEP {
-        let s = compose(&DAY, seed);
+        let s = compose(&HIPHOP, seed);
         let beat_s = s.beat_s();
         for &Note { at, .. } in &s.sparkle {
             // strip the played-not-sequenced lag before reading the grid
@@ -777,7 +777,7 @@ fn the_answer_quotes_the_statements_opening() {
 fn a_seeded_groove_lays_every_hit_where_it_did() {
     let mut words = Vec::new();
     let beat_s = 60.0 / 74.0;
-    for g in DAY_GROOVES.iter().chain([&NIGHT_GROOVE]) {
+    for g in HIPHOP_GROOVES.iter().chain([&SLEEP_GROOVE]) {
         let hits = groove(&mut NoiseStream::new(7), g, beat_s);
         for &Hit { at, kind, gain } in &hits {
             words.extend([at.to_bits(), kind as u32, gain.to_bits()]);
@@ -828,7 +828,7 @@ fn every_seed_composes_the_score_it_did() {
             }
             // the night kicks again, as the hash was recorded while a night
             // score kept a second list of them
-            if *style == NIGHT {
+            if *style == SLEEP {
                 words.extend(s.kicks().map(|t| u64::from(t.to_bits())));
             }
             words.extend(s.bar_chords.iter().flatten().map(|&n| u64::from(n)));

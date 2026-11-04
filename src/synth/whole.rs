@@ -376,7 +376,7 @@ mod tests {
     use super::*;
     use crate::dsp::{band_energy_share, centroid_hz};
     use crate::score;
-    use crate::style::DAY;
+    use crate::style::HIPHOP;
 
     #[test]
     fn a_late_kicks_dip_wraps_the_loop() {
@@ -391,7 +391,7 @@ mod tests {
     /// with: a staged pad falls to the floor a kick's attack after it.
     #[test]
     fn a_staged_lane_reaches_the_floor_under_a_kick() {
-        let score = crate::compose::compose(&DAY, 0);
+        let score = crate::compose::compose(&HIPHOP, 0);
         let core = render_part(
             &part(&score, Lane::Pad),
             score.loop_secs(),
@@ -442,7 +442,7 @@ mod tests {
     #[test]
     fn a_day_lead_sits_above_its_pad() {
         use crate::compose::compose;
-        let score = compose(&DAY, 0);
+        let score = compose(&HIPHOP, 0);
         let mut rng = NoiseStream::new(0);
         let pad = render_lane(&score, Lane::Pad, &mut rng);
         let sparkle = render_lane(&score, Lane::Sparkle, &mut rng);
@@ -519,7 +519,7 @@ mod tests {
     /// under one: a bed, a chord lane and a hit lane each.
     #[test]
     fn a_staged_lane_is_its_core_brightened() {
-        let score = crate::compose::compose(&DAY, 0);
+        let score = crate::compose::compose(&HIPHOP, 0);
         for lane in [Lane::Texture, Lane::Pad, Lane::Drums] {
             let core = render_part(
                 &part(&score, lane),

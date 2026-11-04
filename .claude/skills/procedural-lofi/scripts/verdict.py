@@ -13,7 +13,7 @@ ALPHA = 0.05
 # median of normalized scores of all listeners that remain after
 # post-screening" (§9), `ab_judge.screened` the post-screening
 PANEL = ("audiobox_ce", "tunejury")
-# the genre guard: nearness to the corpus by per-song FAD, which no
+# the genre guard: nearness to a take's style's corpus by per-song FAD, which no
 # listener's preference trained
 GUARD = "fad"
 JUDGES = PANEL + (GUARD,)
@@ -26,9 +26,13 @@ GATES = ("panel", "guard")
 # so a move the corpus's own spread dwarfs leaves no genre (opinion)
 SMALL_EFFECT = 0.2
 
-# the groups the judge batch holds, a take's first name: `examples/common/batch.rs`'s
-# `MOODS`, then its `JUDGE_SWEEPS`
-GROUPS = ("day", "night", "twilight", "rain")
+# the styles a take plays, each read against its own corpus:
+# `examples/common/batch.rs`'s `STYLES`
+STYLES = ("hiphop", "sleep")
+# the groups the judge batch holds, a take's first name: a group of each
+# style's own takes, then one of each of batch.rs's `JUDGE_SWEEPS`, which may
+# hold several styles' takes
+GROUPS = STYLES + ("twilight", "rain")
 
 # from worst: a group's verdict, and the batch's
 RANKS = ("REGRESSION", "INSUFFICIENT", "PASS", "UNCHANGED")
@@ -81,15 +85,15 @@ def pooled(gains, scales):
 
 
 def margin(held):
-    """How far a take may move from the corpus before the guard counts it:
-    `SMALL_EFFECT` of the spread the held-out references' own FADs show."""
+    """How far a take may move from its corpus before the guard counts it:
+    `SMALL_EFFECT` of the spread that corpus's held-out references' own FADs show."""
     return SMALL_EFFECT * stdev(held)
 
 
 def grouped(pairs):
     """Each group's pairs, then every pair as "all": the changed ones, and how
     many were byte-identical, which no judge scores."""
-    groups = {mood: [p for p in pairs if p["mood"] == mood] for mood in sorted({p["mood"] for p in pairs})}
+    groups = {name: [p for p in pairs if p["group"] == name] for name in sorted({p["group"] for p in pairs})}
     groups["all"] = pairs
     return {
         group: {
@@ -101,34 +105,38 @@ def grouped(pairs):
 
 
 def judged(pairs, held, scales):
-    """The verdict on `pairs`, each a dict of its group as `mood`, whether it
-    is `identical`, and otherwise its `gains` on each of `JUDGES`; `held` the
-    held-out references' FADs, and `scales` each panel judge's spread.
+    """The verdict on `pairs`, each a dict of its `group`, its `style`,
+    whether it is `identical`, and otherwise its `gains` on the guard and on
+    each panel judge its style's corpus seats; `held` each style's held-out
+    references' FADs, and `scales` each style's seated judges' spreads over
+    them. A pair is read in its own style's units, since each style is judged
+    against its own corpus.
 
     Each group with a changed pair gets two sign tests, at ALPHA split
     Bonferroni over every such test: the panel's `pooled` gains, and the
-    guard's FAD gains past `margin`, a test of the median against it as the
-    sign test takes one. Either one significant is a REGRESSION. A group with none is
+    guard's FAD gains past its style's `margin`, a test of the median against
+    it as the sign test takes one. Either one significant is a REGRESSION. A group with none is
     UNCHANGED. The pooled "all" group is tested alike but gates nothing,
     since it repeats the groups' pairs. Each judge's own test is kept, and
     the judges that significantly favour base on theirs in a gating group no
     gate fails are its `dissent`, which the verdict names but doesn't fail
     on."""
     groups = grouped(pairs)
-    moods = [g for g in groups if g != "all"]
-    tests = len(GATES) * sum(bool(groups[m]["changed"]) for m in moods)
+    gating = [g for g in groups if g != "all"]
+    tests = len(GATES) * sum(bool(groups[g]["changed"]) for g in gating)
     alpha = ALPHA / tests if tests else ALPHA
-    # a batch nothing changed in has no held-out FADs, since nothing loaded the corpus
-    within = margin(held) if tests else None
+    # only the styles a changed pair plays have held-out FADs: no other
+    # loaded its corpus
+    within = {style: margin(fads) for style, fads in held.items()}
     for group in groups.values():
         if not group["changed"]:
             group["verdict"] = "UNCHANGED"
             continue
         changed = group["changed"]
-        group["judges"] = {j: sign_test([p["gains"][j] for p in changed], alpha) for j in JUDGES}
+        group["judges"] = {j: sign_test([p["gains"][j] for p in changed if j in p["gains"]], alpha) for j in JUDGES}
         gains = {
-            "panel": [pooled(p["gains"], scales) for p in changed],
-            "guard": [p["gains"][GUARD] + within for p in changed],
+            "panel": [pooled(p["gains"], scales[p["style"]]) for p in changed],
+            "guard": [p["gains"][GUARD] + within[p["style"]] for p in changed],
         }
         group["tests"] = {g: sign_test(gains[g], alpha) for g in GATES}
         group["verdict"] = (
@@ -138,12 +146,12 @@ def judged(pairs, held, scales):
             if not all(t["decidable"] for t in group["tests"].values())
             else "PASS"
         )
-    gating = {groups[m]["verdict"] for m in moods}
+    verdicts = {groups[g]["verdict"] for g in gating}
     dissent = {
-        m: against
-        for m in moods
-        if groups[m]["verdict"] != "REGRESSION"
-        and (against := [j for j, t in groups[m].get("judges", {}).items() if t["significant"]])
+        g: against
+        for g in gating
+        if groups[g]["verdict"] != "REGRESSION"
+        and (against := [j for j, t in groups[g].get("judges", {}).items() if t["significant"]])
     }
     return {
         "alpha": alpha,
@@ -151,7 +159,7 @@ def judged(pairs, held, scales):
         "margin": within,
         "groups": groups,
         "dissent": dissent,
-        "overall": next((r for r in RANKS if r in gating), "UNCHANGED"),
+        "overall": next((r for r in RANKS if r in verdicts), "UNCHANGED"),
     }
 
 
