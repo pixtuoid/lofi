@@ -208,21 +208,21 @@ fn each_styles_lead_register_is_its_frozen_takes() {
 }
 
 /// A lead sparser than its comp lets the keys take the top line, which then
-/// hops between them: the day sings LOFI-BIBLE R10's density, the night under
-/// it but over its keys' single tones.
+/// hops between them: hiphop sings LOFI-BIBLE R10's density, sleep under it
+/// but over its keys' single tones.
 #[test]
-fn a_lead_sings_over_its_comp_and_less_by_night() {
+fn a_lead_sings_over_its_comp_and_less_in_sleep() {
     let per_bar = |style, part: fn(&Score) -> usize| {
         let notes: usize = (0..SWEEP).map(|seed| part(&compose(style, seed))).sum();
         notes as f32 / (SWEEP as usize * GEN_LOOP_BARS) as f32
     };
     let lead = |s: &Score| s.sparkle.len();
-    let (day, night) = (per_bar(&HIPHOP, lead), per_bar(&SLEEP, lead));
-    let night_keys = per_bar(&SLEEP, |s| s.keys.len());
-    assert!((2.0..=4.0).contains(&day), "{day}");
+    let (hiphop, sleep) = (per_bar(&HIPHOP, lead), per_bar(&SLEEP, lead));
+    let sleep_keys = per_bar(&SLEEP, |s| s.keys.len());
+    assert!((2.0..=4.0).contains(&hiphop), "{hiphop}");
     assert!(
-        (night_keys..day).contains(&night),
-        "{night} against {night_keys} and {day}"
+        (sleep_keys..hiphop).contains(&sleep),
+        "{sleep} against {sleep_keys} and {hiphop}"
     );
 }
 
@@ -276,7 +276,7 @@ fn lead_voice_pools_are_style_curated() {
 
 #[test]
 fn lead_voice_distribution_tracks_the_draw_weights() {
-    // day p(Pluck)=0.35 / p(Kalimba)=0.25, night p(Vibraphone)=0.35; each band
+    // hiphop p(Pluck)=0.35 / p(Kalimba)=0.25, sleep p(Vibraphone)=0.35; each band
     // is ±3.5σ over 400 seeds, so a biased or misplaced draw fails but an
     // unlucky sample does not
     let (mut plucks, mut kalimbas, mut vibes) = (0usize, 0usize, 0usize);
@@ -412,7 +412,7 @@ fn every_seed_is_well_formed() {
             if *style == SLEEP {
                 assert!(
                     !kinds(DrumKind::OpenHat),
-                    "seed {seed}: night grew an open hat"
+                    "seed {seed}: sleep grew an open hat"
                 );
             }
         }
@@ -704,7 +704,7 @@ fn a_shell_is_a_chords_third_and_seventh() {
 }
 
 #[test]
-fn day_keys_comp_in_rolled_shell_pairs() {
+fn hiphop_keys_comp_in_rolled_shell_pairs() {
     for seed in 0..SWEEP {
         let s = compose(&HIPHOP, seed);
         assert_eq!(s.keys.len() % 2, 0, "seed {seed}: unpaired shell note");
@@ -729,7 +729,7 @@ fn day_keys_comp_in_rolled_shell_pairs() {
 }
 
 #[test]
-fn day_lead_uses_sixteenth_anticipations_somewhere_in_the_sweep() {
+fn hiphop_lead_uses_sixteenth_anticipations_somewhere_in_the_sweep() {
     let mut seen_push = false;
     for seed in 0..SWEEP {
         let s = compose(&HIPHOP, seed);
@@ -826,8 +826,8 @@ fn every_seed_composes_the_score_it_did() {
                     u64::from(gain.to_bits()),
                 ]);
             }
-            // the night kicks again, as the hash was recorded while a night
-            // score kept a second list of them
+            // sleep's kicks again, as the hash was recorded while a sleep score
+            // kept a second list of them
             if *style == SLEEP {
                 words.extend(s.kicks().map(|t| u64::from(t.to_bits())));
             }
