@@ -20,6 +20,7 @@ read a mono fold, so the side rows are the card's alone. That they read harmony 
 """
 
 import json
+import math
 import sys
 from pathlib import Path
 from statistics import median, quantiles
@@ -160,6 +161,16 @@ LAYERS = [
 ]
 
 
+def finite(read):
+    """`read`, with a measure that isn't a finite number, as a silent channel's
+    correlation is, read as none."""
+    def checked(row):
+        value = read(row)
+        return value if value is not None and math.isfinite(value) else None
+
+    return checked
+
+
 def quartiles(values):
     """One value is its own quartiles, as `quantiles` returns it from Python
     3.13 (https://docs.python.org/3/library/statistics.html#statistics.quantiles);
@@ -178,7 +189,7 @@ def targets(sources):
     for layer, rows in LAYERS:
         out[layer] = {}
         for label, source, read in rows:
-            measured = {key: v for key, v in ((k, read(r)) for k, r in sources[source].items()) if v is not None}
+            measured = {key: v for key, v in ((k, finite(read)(r)) for k, r in sources[source].items()) if v is not None}
             # `timbre.json` keys its rows by path, so they can't say which track has a kit
             kits_only = few_kits and set(measured) <= set(study) and not set(measured) & kitless
             values = list(measured.values())
@@ -204,7 +215,7 @@ def card(target, sources):
     for layer, rows in LAYERS:
         for label, source, read in rows:
             if label in target.get(layer, {}):
-                values = [v for v in map(read, sources[source].values()) if v is not None]
+                values = [v for v in map(finite(read), sources[source].values()) if v is not None]
                 quartile = target[layer][label]
                 yield layer, label, quartile, row(quartile, values) if values else None
 

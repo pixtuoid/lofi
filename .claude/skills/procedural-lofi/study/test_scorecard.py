@@ -199,6 +199,14 @@ class Scorecard(unittest.TestCase):
         self.assertEqual(made["4 source"]["bass FAD"], [0.225, 0.25, 0.275])
         self.assertEqual(made["2 rhythm"]["onsets /s"], [2.0, 2.0, 2.0])
 
+    def test_a_measure_that_isnt_finite_is_no_measure(self):
+        rows = {f"s-{i}": {"powers": KIT, "tempo": t} for i, t in enumerate((70.0, 80.0, float("nan")))}
+        made = targets({STUDY: rows, TIMBRE: {"a.wav": {"lr_correlation": float("nan")}}, BASS: {}, STEMFAD: {}})
+        self.assertEqual(made["2 rhythm"]["tempo bpm"], [72.5, 75.0, 77.5])
+        self.assertIsNone(made["7 space"]["LR correlation"])
+        lines = list(card({"2 rhythm": {"tempo bpm": [70, 75, 80]}}, {STUDY: {"a": {"tempo": float("inf")}}}))
+        self.assertEqual(lines, [("2 rhythm", "tempo bpm", [70, 75, 80], None)])
+
     def test_a_style_mostly_with_a_kit_keeps_a_row_few_tracks_measure(self):
         kits = {f"s-{i}": {"powers": KIT, "snare": {"centroid_hz": None}} for i in range(3)}
         kits["s-9"] = {"powers": KIT, "snare": {"centroid_hz": 900.0}}
