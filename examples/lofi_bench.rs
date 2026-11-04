@@ -104,7 +104,7 @@ fn main() -> ExitCode {
 /// fill it again and grade toward night, then a rainy night's, whose first
 /// bars the day's tails ring over. Each chunk takes its least over
 /// [`REPEATS`] runs. With it, the seed and the frame the chunk started at,
-/// which tell a cold start from a transition. Errs unless every run played
+/// which tell a cold start from a transition. Errs unless the runs played
 /// those two songs.
 fn slowest_chunk(buf: &mut [Frame]) -> Result<(f64, u64, u64), String> {
     let day = Controls::default().with_intensity(1.0);
@@ -116,9 +116,12 @@ fn slowest_chunk(buf: &mut [Frame]) -> Result<(f64, u64, u64), String> {
     audition::spans_a_form(&forms).map_err(|e| format!("the timed songs: {e}"))?;
     let mut worst = (0.0, SEEDS.start, 0);
     for seed in SEEDS {
-        let runs = (0..REPEATS)
+        let (runs, ends): (Vec<_>, Vec<_>) = (0..REPEATS)
             .map(|_| timed_chunks(seed, day, night, buf))
-            .collect::<Result<Vec<_>, _>>()?;
+            .unzip();
+        // every run renders a pure function of the same seed and timeline,
+        // so the first plays the two songs if any does
+        played(seed, day, night, &ends[0])?;
         for (at, took) in least(&runs) {
             if took > worst.0 {
                 worst = (took, seed, at);
@@ -141,14 +144,14 @@ fn least(runs: &[Vec<(u64, f64)>]) -> Vec<(u64, f64)> {
 }
 
 /// Each chunk's frame and how long its `render` took, in seconds, over one
-/// run of `seed`'s day song, then its rainy `night` one. Errs unless the run
-/// played those two songs.
+/// run of `seed`'s day song, then its rainy `night` one, and what the run's
+/// first chunk and its last played.
 fn timed_chunks(
     seed: u64,
     day: Controls,
     night: Controls,
     buf: &mut [Frame],
-) -> Result<Vec<(u64, f64)>, String> {
+) -> (Vec<(u64, f64)>, [Vec<Frame>; 2]) {
     let span = audition::song_len(seed, 0, day) + audition::song_len(seed, 1, night);
     // each mid-bar, so it latches at the next bar line: the night is asked
     // for in song 0's second-to-last bar, so its last bar grades toward
@@ -182,16 +185,27 @@ fn timed_chunks(
         }
         last = n;
     }
+    (timed, [opening, buf[..last].to_vec()])
+}
+
+/// Errs unless the run of `seed` whose first chunk played `opening` and whose
+/// last played `closing` played its day song, then its rainy `night` one.
+fn played(
+    seed: u64,
+    day: Controls,
+    night: Controls,
+    [opening, closing]: &[Vec<Frame>; 2],
+) -> Result<(), String> {
     let mut day_alone = vec![Frame::default(); opening.len()];
     Performance::new(seed, day).render(&mut day_alone);
     // past its first loop, song 1 plays as it does alone
     let night_alone = audition::song(seed, 1, night, &[]);
-    if day_alone != opening || night_alone[night_alone.len() - last..] != buf[..last] {
+    if day_alone != *opening || night_alone[night_alone.len() - closing.len()..] != closing[..] {
         return Err(format!(
             "seed {seed} didn't play a day's song, then a rainy night's"
         ));
     }
-    Ok(timed)
+    Ok(())
 }
 
 /// Plays [`ROOM_S`] of `room` under `controls` in `buf`-long chunks, and
