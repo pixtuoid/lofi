@@ -2,8 +2,8 @@
 //! a pure function `seed -> Score`. Harmony walks a measured loop grammar,
 //! and the lead follows melody rules: chord tones on strong beats,
 //! diatonic passing tones, leaps bounded to a fifth and resolved by a step,
-//! and two phrases, the answer quoting the statement, peaking, and closing
-//! the loop when its last bar sings. A quoted, peaking or closing note may
+//! and a statement and its answer, the answer quoting the statement, peaking,
+//! and closing the period when its last bar sings. A quoted, peaking or closing note may
 //! leap further, and a resolving step may land off the chord; the tests pin
 //! each rule with its exceptions.
 //!
@@ -164,9 +164,9 @@ pub(super) const GEN_LOOP_BARS: usize = 8;
 const STATEMENT_BARS: usize = 4;
 
 /// Bars the lead sings before its line comes round: a statement and its
-/// answer, which opens on the statement's first notes, as "a period consists
-/// of two phrases, antecedent and consequent, each of which begins with the
-/// same basic motif" (<https://en.wikipedia.org/wiki/Period_(music)>).
+/// answer, which opens on the statement's first notes, as a period's
+/// antecedent and consequent each begin "with the same basic motif"
+/// (<https://en.wikipedia.org/wiki/Period_(music)>).
 const PERIOD_BARS: usize = 2 * STATEMENT_BARS;
 
 // the loop holds whole periods, so none is cut where the loop comes round
@@ -735,7 +735,7 @@ const LEAD_ACCENT: Spread = Spread {
 enum Role {
     /// The answer opens on the statement's opening notes.
     Quote,
-    /// The loop's last note returns near the opening, onto a chord tone.
+    /// The period's last note returns near the opening, onto a chord tone.
     Close,
     /// The answer's peak: a lift onto a chord tone.
     Peak,

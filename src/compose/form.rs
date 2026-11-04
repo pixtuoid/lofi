@@ -128,8 +128,8 @@ impl End {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Outro {
     Ends(End),
-    /// The loop's first chord on the pad, then a bar of the room alone, which
-    /// outlasts the chord's tail.
+    /// The pad's chord of the loop bar after the body, then a bar of the room
+    /// alone, which outlasts the chord's tail.
     RingOut,
 }
 
@@ -157,7 +157,7 @@ const fn bars(n: usize) -> NonZeroUsize {
     }
 }
 
-/// One song's form: an intro, a body of whole loops starting on loop bar 0,
+/// One song's form: an intro, a body of whole phrases starting on loop bar 0,
 /// and an outro, each bar naming the layers that strike in it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Form {
