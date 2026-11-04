@@ -155,14 +155,14 @@ class Keys(unittest.TestCase):
         self.assertNotEqual(self.key(), before)
 
     def test_another_selection_of_a_corpus_or_environment_moves_the_key_and_their_order_doesnt(self):
-        batch = self.key()
-        corpora = {"hiphop": b'{"tracks": [1]}', "sleep": b'{"tracks": [2]}'}
+        key = self.key()
+        manifests = {"hiphop": b'{"tracks": [1]}', "sleep": b'{"tracks": [2]}'}
         installed = ["3.12.15", "torch==2.14.1"]
-        before = verdict_key(batch, corpora, installed)
-        self.assertEqual(verdict_key(batch, dict(reversed(corpora.items())), installed), before)
-        self.assertNotEqual(verdict_key(batch, {**corpora, "sleep": b'{"tracks": [3]}'}, installed), before)
-        self.assertNotEqual(verdict_key(batch, corpora, ["3.12.16", "torch==2.14.1"]), before)
-        self.assertNotEqual(verdict_key("0" * 64, corpora, installed), before)
+        before = verdict_key(key, manifests, installed)
+        self.assertEqual(verdict_key(key, dict(reversed(manifests.items())), installed), before)
+        self.assertNotEqual(verdict_key(key, {**manifests, "sleep": b'{"tracks": [3]}'}, installed), before)
+        self.assertNotEqual(verdict_key(key, manifests, ["3.12.16", "torch==2.14.1"]), before)
+        self.assertNotEqual(verdict_key("0" * 64, manifests, installed), before)
 
 
 class Outcomes(unittest.TestCase):

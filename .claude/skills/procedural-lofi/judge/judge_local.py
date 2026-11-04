@@ -77,12 +77,12 @@ def environment():
     return [platform.python_version(), *sorted(f"{d.metadata['Name'].lower()}=={d.version}" for d in distributions())]
 
 
-def verdict_key(batch, manifests, installed):
-    """`batch_key`'s `batch` joined by each style's corpus `manifests` holds
+def verdict_key(key, manifests, installed):
+    """`batch_key`'s `key` joined by each style's corpus `manifests` holds
     as bytes and the `environment` `installed`, so another selection of a
     corpus, or another environment, scores anew."""
-    corpora = {style: sha256(manifest) for style, manifest in manifests.items()}
-    return sha256(json.dumps({"batch": batch, "corpora": corpora, "environment": installed}, sort_keys=True).encode())
+    digests = {style: sha256(manifest) for style, manifest in manifests.items()}
+    return sha256(json.dumps({"batch": key, "manifests": digests, "environment": installed}, sort_keys=True).encode())
 
 
 def dealt(pairs):
