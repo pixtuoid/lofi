@@ -304,7 +304,7 @@ class Shards(unittest.TestCase):
             mock.patch("ab_judge.Fad", side_effect=self.fad),
             mock.patch("ab_judge.Audiobox", return_value=panel),
             mock.patch("ab_judge.TuneJury", return_value=panel),
-            mock.patch("ab_judge.cached_screen", side_effect=lambda caches, fad, panel: self.screens[fad.refs.name]),
+            mock.patch("ab_judge.cached_screen", side_effect=lambda caches, fad, judges: self.screens[fad.refs.name]),
             contextlib.redirect_stdout(io.StringIO()),
         ):
             try:

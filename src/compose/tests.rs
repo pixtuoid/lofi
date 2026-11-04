@@ -266,11 +266,11 @@ fn lead_voice_pools_are_style_curated() {
     }
     assert!(
         hiphop_saw.0 && hiphop_saw.1 && hiphop_saw.2,
-        "all three day lead voices must appear: {hiphop_saw:?}"
+        "all three hiphop lead voices must appear: {hiphop_saw:?}"
     );
     assert!(
         sleep_saw.0 && sleep_saw.1,
-        "both night lead voices must appear: {sleep_saw:?}"
+        "both sleep lead voices must appear: {sleep_saw:?}"
     );
 }
 

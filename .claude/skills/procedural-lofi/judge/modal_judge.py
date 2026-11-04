@@ -150,7 +150,7 @@ def write_warm(path, gain):
 
 @app.function(gpu="T4", cpu=CPU, memory=MEMORY_MIB, volumes={MODELS: models, REFS: refs}, timeout=JUDGE_TIMEOUT_S)
 def build():
-    """Caches every model, and each style's FAD statistics and the panel's
+    """Caches every model, and each style's FAD statistics and the judges'
     screening on its corpus, by judging a warm-up pair a style as a batch
     would be judged, online, then measures what it took."""
     warm = Path("/tmp/warm")
