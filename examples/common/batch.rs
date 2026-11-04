@@ -10,9 +10,10 @@ use pixtuoid_lofi::audition::{self, Lane, Score, TIER_INTENSITIES, lane_gain, re
 use pixtuoid_lofi::dsp::SAMPLE_RATE;
 use pixtuoid_lofi::{Controls, Frame, Performance};
 
-/// The `--mood` vocabulary paired with the daylight it plays at, so the parse
-/// and the error message can't list different spellings.
-pub(crate) const MOODS: [(&str, f32); 2] = [("day", 1.0), ("night", 0.0)];
+/// The `--style` vocabulary, each its record's name, paired with a daylight
+/// that plays it, so the parse and the error message can't list different
+/// spellings.
+pub(crate) const STYLES: [(&str, f32); 2] = [("hiphop", 1.0), ("sleep", 0.0)];
 
 /// How busy pixtuoid's office is, which picks the intensity a take plays at.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -75,7 +76,7 @@ impl Engine {
     }
 }
 
-/// A batch `--batch` names, which picks its own moods, tiers and seeds.
+/// A batch `--batch` names, which picks its own styles, tiers and seeds.
 #[derive(Clone, Copy)]
 pub(crate) enum Named {
     /// What `ab_judge.py` scores a sound change on.
@@ -112,12 +113,12 @@ pub(crate) enum Sweep {
     Rain,
 }
 
-/// The songs the dusk sweep spans: a night song follows its dusk, since a
-/// song's family latches at its first bar.
+/// The songs the dusk sweep spans: a sleep song follows its dusk, since a
+/// song's style latches at its first bar.
 const DUSK_SONGS: u64 = 2;
 
 /// The twilight sweep's daylights, named for their takes: one in each
-/// family, between its ends.
+/// style, between its ends.
 const TWILIGHT: [(&str, f32); 2] = [("quarter", 0.25), ("threequarters", 0.75)];
 
 impl Sweep {
@@ -137,7 +138,7 @@ impl Sweep {
     /// Each take's controls to start under, named for what the sweep holds
     /// still in it.
     fn starts(self) -> Vec<(&'static str, Controls)> {
-        let (day, moderate) = (MOODS[0], Tier::Moderate);
+        let (day, moderate) = (STYLES[0], Tier::Moderate);
         let at_day = Controls::default().with_daylight(day.1);
         match self {
             Sweep::Intensity => vec![(day.0, at_day.with_intensity(Tier::Empty.intensity()))],
@@ -175,7 +176,7 @@ impl Sweep {
             }),
             Sweep::Rain => middle_half(bar, bars).map(|on| now.with_rain(f32::from(u8::from(on)))),
             Sweep::Dusk => (bar < first_song_bars).then(|| {
-                let [(_, day), (_, night)] = MOODS;
+                let [(_, day), (_, night)] = STYLES;
                 let done = (bar + 1) as f32 / first_song_bars as f32;
                 now.with_daylight(day + (night - day) * done)
             }),
@@ -205,10 +206,10 @@ pub(crate) struct Timeline {
 }
 
 /// `verdict.py`'s `MIN_UNTIED`, which `test_verdict.py` reads here: the
-/// untied pairs a change to one family reaches in each group that plays it.
+/// untied pairs a change to one style reaches in each group that plays it.
 pub(crate) const JUDGE_MIN_UNTIED: usize = 8;
 
-/// The songs whose lead voices are every voice a mood draws.
+/// The songs whose lead voices are every voice a style draws.
 const VOICE_POOL_SEEDS: u64 = 256;
 
 /// The judge batch's seeds at each louder tier: [`JUDGE_MIN_UNTIED`] or more
@@ -219,8 +220,8 @@ const JUDGE_TIER_SEEDS: u64 = JUDGE_MIN_UNTIED.div_ceil(2) as u64;
 /// listener can judge, which no closed-form test pins.
 const JUDGE_SWEEPS: [Sweep; 2] = [Sweep::Twilight, Sweep::Rain];
 
-/// The seeds each take of a judged sweep plays: a take holds one family, as
-/// the twilight sweep's do one each, so a change to one family alone still
+/// The seeds each take of a judged sweep plays: a take holds one style, as
+/// the twilight sweep's do one each, so a change to one style alone still
 /// reaches [`JUDGE_MIN_UNTIED`]; the room above it is for the pairs a change
 /// leaves tied (opinion).
 const JUDGE_SWEEP_SEEDS: u64 = 12;
@@ -229,7 +230,7 @@ const JUDGE_SWEEP_SEEDS: u64 = 12;
 /// and a base and a candidate render differ only by their change.
 const LANE_SEED: u64 = 9;
 
-/// The loudest gated level at which every lane's solo take, both moods and
+/// The loudest gated level at which every lane's solo take, both styles and
 /// [`audition::LUFS_SEEDS`], keeps its peak under full scale, rounded down:
 /// `lofi_measure --pins` prints it beside this.
 pub(crate) const SOLO_SAFE_LUFS: f64 = -29.9;
@@ -263,11 +264,11 @@ pub(crate) fn parse_choice(v: Option<String>, flag: &str, names: &[&str]) -> io:
 }
 
 /// The takes a run selects: `--seeds` seeds from `--start`, each `--songs`
-/// songs from the run's first, of one `--mood` heard at `--tier` or under a
+/// songs from the run's first, of one `--style` heard at `--tier` or under a
 /// `--sweep`, through `--engine`; or the `--batch` named.
 #[derive(Clone, Copy)]
 pub(crate) struct Batch {
-    mood: usize,
+    style: usize,
     seeds: u64,
     start: u64,
     /// The `--tier` given.
@@ -280,10 +281,10 @@ pub(crate) struct Batch {
     sweep_start: usize,
     /// The `--songs` given.
     pub(crate) songs: Option<u64>,
-    /// Whether `--mood`, `--seeds`, `--start` or `--tier` was given, which a
+    /// Whether `--style`, `--seeds`, `--start` or `--tier` was given, which a
     /// named batch picks itself.
     picked: bool,
-    /// Whether `--mood` or `--tier` was given, which a sweep sets itself.
+    /// Whether `--style` or `--tier` was given, which a sweep sets itself.
     controlled: bool,
 }
 
@@ -293,7 +294,7 @@ const DEFAULT_SEEDS: u64 = 12;
 impl Default for Batch {
     fn default() -> Self {
         Self {
-            mood: 0,
+            style: 0,
             seeds: DEFAULT_SEEDS,
             start: 0,
             tier: None,
@@ -311,7 +312,7 @@ impl Default for Batch {
 /// Every flag [`Batch::parse_flag`] takes, in the order a tool's usage lists
 /// them.
 pub(crate) const FLAGS: [&str; 8] = [
-    "--engine", "--mood", "--seeds", "--start", "--tier", "--sweep", "--songs", "--batch",
+    "--engine", "--style", "--seeds", "--start", "--tier", "--sweep", "--songs", "--batch",
 ];
 
 /// The flags a tool takes, the batch's then its `own`, as its usage error lists
@@ -337,14 +338,16 @@ impl Batch {
         if !FLAGS.contains(&flag) {
             return Ok(false);
         }
-        if matches!(flag, "--mood" | "--seeds" | "--start" | "--tier") {
+        if matches!(flag, "--style" | "--seeds" | "--start" | "--tier") {
             self.picked = true;
         }
-        if matches!(flag, "--mood" | "--tier") {
+        if matches!(flag, "--style" | "--tier") {
             self.controlled = true;
         }
         match flag {
-            "--mood" => self.mood = parse_choice(args.next(), flag, &MOODS.map(|(name, _)| name))?,
+            "--style" => {
+                self.style = parse_choice(args.next(), flag, &STYLES.map(|(name, _)| name))?
+            }
             "--seeds" => {
                 self.seeds = parse_count(args.next(), flag)?;
                 if self.seeds == 0 {
@@ -381,7 +384,7 @@ impl Batch {
         }
         if self.picked && self.named.is_some() {
             return Err(usage_error(
-                "--batch picks its own moods, tiers and seeds, so it takes no --mood, --seeds, --start or --tier"
+                "--batch picks its own styles, tiers and seeds, so it takes no --style, --seeds, --start or --tier"
                     .into(),
             ));
         }
@@ -393,7 +396,7 @@ impl Batch {
         }
         if self.controlled && self.sweep.is_some() {
             return Err(usage_error(
-                "--sweep sets its own controls, so it takes no --mood or --tier".into(),
+                "--sweep sets its own controls, so it takes no --style or --tier".into(),
             ));
         }
         Ok(true)
@@ -418,15 +421,15 @@ impl Batch {
                     picked: true,
                     ..*self
                 };
-                let tiers = (0..MOODS.len()).flat_map(|mood| {
+                let tiers = (0..STYLES.len()).flat_map(|style| {
                     let empty = Batch {
-                        mood,
+                        style,
                         start: 0,
                         tier: Some(Tier::Empty),
                         ..at
                     };
                     // the louder tiers past the pool that bounds empty's seeds,
-                    // so the mood's group holds each seed once: not at empty's
+                    // so the style's group holds each seed once: not at empty's
                     // end, which a lead voice's weight moves, renaming them all
                     let louder = VOICE_POOL_SEEDS;
                     [
@@ -456,9 +459,9 @@ impl Batch {
         }
     }
 
-    /// The take's first name: its sweep's, or else its mood's.
-    pub(crate) fn mood_name(&self) -> &'static str {
-        self.sweep.map_or(MOODS[self.mood].0, Sweep::name)
+    /// The take's first name: its sweep's, or else its style's.
+    pub(crate) fn group_name(&self) -> &'static str {
+        self.sweep.map_or(STYLES[self.style].0, Sweep::name)
     }
 
     /// The take's second name: what its sweep holds still, or else its tier.
@@ -468,7 +471,7 @@ impl Batch {
         })
     }
 
-    /// The fewest seeds from 0 that give every lead voice the take's mood
+    /// The fewest seeds from 0 that give every lead voice the take's style
     /// draws [`JUDGE_MIN_UNTIED`] takes: the judge's `empty` group, where the
     /// lead sings alone over no beat or keys.
     fn lead_floor_seeds(&self) -> u64 {
@@ -493,13 +496,13 @@ impl Batch {
         self.tier.unwrap_or_default()
     }
 
-    /// What every take starts under: its sweep's start, or else the mood's
+    /// What every take starts under: its sweep's start, or else the style's
     /// daylight and the tier's intensity.
     pub(crate) fn controls(&self) -> Controls {
         match self.sweep {
             Some(sweep) => sweep.starts()[self.sweep_start].1,
             None => Controls::default()
-                .with_daylight(MOODS[self.mood].1)
+                .with_daylight(STYLES[self.style].1)
                 .with_intensity(self.tier().intensity()),
         }
     }
@@ -727,9 +730,9 @@ mod tests {
     #[test]
     fn a_whole_take_with_no_beat_ducks_no_lane() {
         let index = |lane| Lane::ALL.iter().position(|&l| l == lane).expect("a lane");
-        for (mood, duck) in [(0, Lane::Pad), (1, Lane::Texture)] {
+        for (style, duck) in [(0, Lane::Pad), (1, Lane::Texture)] {
             let batch = Batch {
-                mood,
+                style,
                 tier: Some(Tier::Empty),
                 ..Batch::default()
             };
@@ -739,11 +742,11 @@ mod tests {
             let score = audition::song_score(seed, 0, controls);
             assert!(
                 song.beds == render_take(&audition::unbeaten(&score)),
-                "mood {mood}: the take isn't the unbeaten score"
+                "style {style}: the take isn't the unbeaten score"
             );
             assert!(
                 song.beds[index(duck)] != render_take(&score)[index(duck)],
-                "mood {mood}: {duck:?} would duck no differently under the drums"
+                "style {style}: {duck:?} would duck no differently under the drums"
             );
         }
     }
@@ -770,7 +773,7 @@ mod tests {
 
     #[test]
     fn every_listed_flag_parses_and_no_other_does() {
-        let values = ["whole", "night", "3", "2", "busy", "rain", "1", "judge"];
+        let values = ["whole", "sleep", "3", "2", "busy", "rain", "1", "judge"];
         for (flag, value) in FLAGS.into_iter().zip(values) {
             let mut batch = Batch::default();
             let applied = batch.parse_flag(flag, &mut std::iter::once(value.to_owned()));
@@ -832,25 +835,28 @@ mod tests {
     }
 
     #[test]
-    fn every_tier_and_mood_plays_under_the_controls_it_names() {
+    fn every_tier_and_style_plays_under_the_controls_it_names() {
         let [empty, moderate, busy] = TIER_INTENSITIES;
         for (name, intensity) in [("empty", empty), ("moderate", moderate), ("busy", busy)] {
             let batch = parsed("--tier", name).expect("the tier parses");
             assert_eq!(batch.controls().intensity, intensity, "{name}");
         }
         assert!(parsed("--tier", "loud").is_err());
-        let [day, night] =
-            ["day", "night"].map(|mood| parsed("--mood", mood).map(|b| b.score(0)).ok());
-        assert!(day != night, "a night take plays a day song");
+        // the parse reads STYLES, and a take's name its score's style
+        for (name, _) in STYLES {
+            let batch = parsed("--style", name).expect("the style parses");
+            assert_eq!(batch.score(0).style_name(), name);
+        }
+        assert!(parsed("--style", "day").is_err());
     }
 
     #[test]
     fn the_judge_batch_gives_every_lead_voice_the_floor_at_empty_and_no_more() {
         let judge = parsed("--batch", "judge").expect("the batch parses").runs();
-        for (mood, (name, _)) in MOODS.iter().enumerate() {
+        for (style, (name, _)) in STYLES.iter().enumerate() {
             let empty = (judge.iter())
-                .find(|run| run.mood == mood && run.tier == Some(Tier::Empty))
-                .expect("the judge batch plays each mood at empty");
+                .find(|run| run.style == style && run.tier == Some(Tier::Empty))
+                .expect("the judge batch plays each style at empty");
             let voices = |seeds: Range<u64>| {
                 let mut counts = BTreeMap::new();
                 for seed in seeds {
@@ -860,7 +866,7 @@ mod tests {
                 }
                 counts
             };
-            // every voice the mood draws over far more seeds than the batch has
+            // every voice the style draws over far more seeds than the batch has
             let pool = voices(0..VOICE_POOL_SEEDS);
             let short = |counts: &BTreeMap<&str, usize>| {
                 (pool.keys())
@@ -910,7 +916,7 @@ mod tests {
         let mut seeds: BTreeMap<&str, Vec<u64>> = BTreeMap::new();
         for run in &judge {
             seeds
-                .entry(run.mood_name())
+                .entry(run.group_name())
                 .or_default()
                 .extend(run.seeds());
         }
@@ -923,23 +929,17 @@ mod tests {
     }
 
     #[test]
-    fn a_change_to_one_family_alone_reaches_the_floor_in_every_group_that_plays_it() {
+    fn a_change_to_one_style_alone_reaches_the_floor_in_every_group_that_plays_it() {
         let judge = parsed("--batch", "judge").expect("the batch parses").runs();
         let mut takes: BTreeMap<(&str, &str), usize> = BTreeMap::new();
         for run in &judge {
             for seed in run.seeds() {
-                let score = run.score(seed);
-                let (family, _) = (MOODS.iter())
-                    .find(|&&(_, daylight)| {
-                        let at = Controls::default().with_daylight(daylight);
-                        audition::song_score(seed, 0, at) == score
-                    })
-                    .expect("every take composes one family's song");
-                *takes.entry((run.mood_name(), family)).or_insert(0) += 1;
+                let style = run.score(seed).style_name();
+                *takes.entry((run.group_name(), style)).or_insert(0) += 1;
             }
         }
-        for ((group, family), n) in takes {
-            assert!(n >= JUDGE_MIN_UNTIED, "{group} plays {n} {family} takes");
+        for ((group, style), n) in takes {
+            assert!(n >= JUDGE_MIN_UNTIED, "{group} plays {n} {style} takes");
         }
     }
 
@@ -947,7 +947,7 @@ mod tests {
     fn a_named_batch_takes_no_pick_of_its_own() {
         for pick in [
             ["--tier", "busy"],
-            ["--mood", "night"],
+            ["--style", "sleep"],
             ["--seeds", "3"],
             ["--start", "2"],
         ] {
@@ -1051,7 +1051,7 @@ mod tests {
 
     #[test]
     fn every_sweep_asks_for_the_controls_it_names() {
-        let [(_, day), (_, night)] = MOODS;
+        let [(_, day), (_, night)] = STYLES;
         let [empty, _, busy] = TIER_INTENSITIES;
         for (sweep, run, seed) in sweep_takes() {
             let timeline = run.timeline(seed);
@@ -1068,10 +1068,10 @@ mod tests {
                 }
                 Sweep::Dusk => {
                     assert_eq!(run.controls().daylight, day);
-                    let families: Vec<f32> =
+                    let latched: Vec<f32> =
                         timeline.songs.iter().map(|&(c, _)| c.daylight).collect();
                     assert_eq!(
-                        families,
+                        latched,
                         [day, night],
                         "seed {seed}: a day song, then a night one"
                     );
@@ -1104,16 +1104,13 @@ mod tests {
     }
 
     #[test]
-    fn the_twilight_sweep_plays_one_take_in_each_family() {
+    fn the_twilight_sweep_plays_one_take_in_each_style() {
         let runs = parsed("--sweep", "twilight")
             .expect("the sweep parses")
             .runs();
-        let [quarter, threequarters] =
-            [0, 1].map(|i| audition::song_score(0, 0, runs[i].controls()));
-        assert!(
-            quarter != threequarters,
-            "both twilight takes compose one family's song"
-        );
+        let styles = runs.iter().map(|run| run.score(0).style_name());
+        let [(hiphop, _), (sleep, _)] = STYLES;
+        assert_eq!(styles.collect::<Vec<_>>(), [sleep, hiphop]);
     }
 
     #[test]
@@ -1138,7 +1135,7 @@ mod tests {
     #[test]
     fn a_sweep_sets_its_own_controls_and_a_named_batch_its_own_songs() {
         for order in [
-            [["--sweep", "dusk"], ["--mood", "night"]],
+            [["--sweep", "dusk"], ["--style", "sleep"]],
             [["--tier", "busy"], ["--sweep", "dusk"]],
             [["--batch", "judge"], ["--sweep", "dusk"]],
             [["--songs", "2"], ["--batch", "judge"]],

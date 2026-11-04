@@ -172,7 +172,7 @@ impl Performance {
     /// It is heard from the latch plus the ceiling's lookahead, `LOOKAHEAD_S`
     /// in `stream::master`. The intensity enters a lane at its first note in
     /// the bar and moves its level within a beat; the daylight grades the
-    /// colour within a bar and picks the next song's day or night family. Of
+    /// colour within a bar and picks the next song's style. Of
     /// several calls before one latch, the last wins.
     pub fn set_controls(&mut self, controls: Controls) {
         self.asked = controls;
@@ -991,7 +991,7 @@ mod tests {
     }
 
     #[test]
-    fn the_daylight_grades_the_playing_song_and_picks_the_next_songs_family() {
+    fn the_daylight_grades_the_playing_song_and_picks_the_next_songs_style() {
         let seed = 6;
         let (bars, boundary) = plain_bars(seed, 0, Controls::default());
         let anticipation = crate::synth::samples_at(ANTICIPATION_S, SAMPLE_RATE);

@@ -8,9 +8,11 @@ real lofi, describes each pair, and writes the verdict.
 Usage: $J/bin/python ab_judge.py DIR --refs REFS [--corpus-cache CACHE] [--score-identical]
   DIR holds base/ and cand/, each with the COMMIT it rendered at; writes
   DIR/judge.json and prints its table.
-  REFS is the reference corpus: audio/ and its manifest.json of sha256s.
-  CACHE holds the corpus's FAD statistics and the panel's screening, built on
-  a miss.
+  REFS holds each style's reference corpus at REFS/STYLE: audio/ and its
+  manifest.json of sha256s. A take is read against the corpus of the style
+  its name carries.
+  CACHE holds each corpus's FAD statistics and the judges' screening on it,
+  built on a miss.
   --score-identical scores byte-identical pairs too: the proof that they tie.
   --shard ROWS TAKE... and --merge PLAN split a run across containers, for
   `modal_judge.py`, whose caller has validated the batch: the first scores
@@ -25,9 +27,10 @@ nothing.
 
 A score is a guard against regression from a base batch to a candidate,
 never an objective to maximize: lofi's character (hiss, crackle, roll-off) is
-held by the descriptors and LOFI-BIBLE.md. A judge sits on the panel only
-while ITU-R BS.1534-3's post-screening seats it on the held-out references
-(`screened`), and it weighs in its own spread over them. Each measure's blind
+held by the descriptors and LOFI-BIBLE.md. A judge sits on a style's panel
+only while ITU-R BS.1534-3's post-screening seats it on that style's held-out
+references (`screened`), as §4.1.2 excludes an assessor "from the aggregated
+responses", and it weighs in its own spread over them. Each measure's blind
 spots:
 
 Audiobox Aesthetics (https://arxiv.org/abs/2502.05139):
@@ -49,9 +52,10 @@ Per-song FAD over fadtk (https://github.com/microsoft/fadtk, MIT), the
 method of https://arxiv.org/abs/2311.01616 (ICASSP 2024):
 - A distance no listener trained, so it guards the genre and never votes
   (`verdict.judged`).
-- The corpus is the most viewed of Lofi Girl's own playlist (its manifest), so
-  this distance guards against drifting away from real lofi. A change steers by
-  the corpus's measures on `study/scorecard.py`'s rows, never by the distance.
+- Each style's corpus is the most viewed of a Lofi Girl playlist of its own
+  (its manifest), so this distance guards a take against drifting away from
+  its style's real lofi. A change steers by its style's measures on
+  `study/scorecard.py`'s rows, never by the distance.
 - FAD is biased by its sample size (§3.3 of
   https://arxiv.org/abs/2311.01616), so both takes of a pair are scored on
   equally many frames.
@@ -62,6 +66,7 @@ revision pinned below).
 """
 
 import argparse
+import functools
 import hashlib
 import json
 import sys
@@ -289,6 +294,12 @@ def screened(judges, items):
     }
 
 
+def seated(screen):
+    """`PANEL`'s judges a corpus's `screened` shares seat, its panel, in
+    `PANEL`'s order."""
+    return [name for name in PANEL if name not in screened_out(screen)]
+
+
 def screened_out(screen):
     """The judges BS.1534-3's post-screening excludes, by `screened`'s shares
     on its mid-range anchor, and any that scores the held-out references
@@ -409,8 +420,8 @@ def screen_file(caches, manifest_sha):
     return caches / f"{manifest_sha}-screen-{key(*built)}.json"
 
 
-def cached_screen(caches, fad, panel):
-    """`screened`'s shares for `panel` on the held-out references, read from
+def cached_screen(caches, fad, judges):
+    """`screened`'s shares for `judges` on the held-out references, read from
     `caches` or built into it. Building needs a cache this run can write, as
     `cached_quietest` tries one, and the remote judge's can't."""
     path = screen_file(caches, fad.manifest_sha)
@@ -422,14 +433,16 @@ def cached_screen(caches, fad, panel):
     try:
         tempfile.TemporaryFile(dir=caches).close()
     except OSError:
-        sys.exit("the corpus cache lacks the panel's screening and is read-only: run provision")
-    shares = screened(panel, [fad.read(fad.refs, {"file": f}) for f in sorted(fad.calibration)])
+        sys.exit("the corpus cache lacks the judges' screening and is read-only: run provision")
+    shares = screened(judges, [fad.read(fad.refs, {"file": f}) for f in sorted(fad.calibration)])
     path.write_text(json.dumps(shares) + "\n")
     return shares
 
 
+@functools.cache
 def clap():
-    """fadtk's LAION-CLAP music model, at the pinned checkpoint."""
+    """fadtk's LAION-CLAP music model, at the pinned checkpoint, loaded once:
+    every corpus's `Fad` and TuneJury hear through it."""
     # fadtk loads whatever sits at its checkpoint path and downloads a missing
     # one from the repo's head
     # (https://github.com/microsoft/fadtk/blob/6f815282007288a7165d037a95dacd6d783b6f32/fadtk/model_loader.py#L303-L310),
@@ -447,7 +460,7 @@ def clap():
 
 
 class Fad:
-    """Per-song FAD from a take to the reference corpus, over fadtk's
+    """Per-song FAD from a take to one style's reference corpus, over fadtk's
     LAION-CLAP embedding: the Fréchet distance between the corpus's frame
     statistics and the take's, as fadtk's `score_individual` takes it."""
 
@@ -460,9 +473,9 @@ class Fad:
         for i, t in enumerate(tracks):
             path = refs / "audio" / t["file"]
             if not path.is_file():
-                sys.exit(f"reference {i} of the manifest is missing; refusing the corpus")
+                sys.exit(f"reference {i} of {refs.name}'s manifest is missing; refusing the corpus")
             if hashlib.sha256(path.read_bytes()).hexdigest() != t["sha256"]:
-                sys.exit(f"reference {i} doesn't match its manifest sha256; refusing the corpus")
+                sys.exit(f"reference {i} of {refs.name}'s manifest doesn't match its sha256; refusing the corpus")
         self.model = clap()
         self.refs, self.manifest_sha = refs, manifest_sha
         if quietest is None:
@@ -581,38 +594,50 @@ def read_commit(side):
 
 
 def scored_rows(args, names, sides):
-    """The seat a run's panel takes and `names`' rows, every judge loaded
-    once. The takes' level is `names`' alone, which `merged` holds to one
+    """The seat a run's judges take and `names`' rows, every judge loaded
+    once and each take read against its style's corpus. A corpus's level is
+    its style's takes' among `names` alone, which `merged` holds to one
     across a run's shards."""
     device = judge_device()
-    takes_lufs = float(np.median([mono_lufs(*sf.read(d / n, dtype="float32")) for n in names for _, d in sides]))
-    fad = Fad(args.refs, takes_lufs, args.corpus_cache)
-    panel = dict(zip(PANEL, (Audiobox(), TuneJury(fad.model, device)), strict=True))
-    screen = cached_screen(args.corpus_cache, fad, panel)
-    if out := screened_out(screen):
-        sys.exit(
-            f"{', '.join(out)} rated BS.1534-3's mid-range anchor of the held-out references unimpaired past"
-            f" §4.1.2's {SCREEN_SHARE:.0%}, or scored them alike ({screen}), so the panel can't seat it"
-        )
+    by_style = {}
+    for name in names:
+        by_style.setdefault(NAME.fullmatch(name)["style"], []).append(name)
+    corpora = {}
+    for style, taken in sorted(by_style.items()):
+        takes_lufs = float(np.median([mono_lufs(*sf.read(d / n, dtype="float32")) for n in taken for _, d in sides]))
+        corpora[style] = Fad(args.refs / style, takes_lufs, args.corpus_cache)
+    loaded = dict(zip(PANEL, (Audiobox(), TuneJury(clap(), device)), strict=True))
+    screens = {style: cached_screen(args.corpus_cache, fad, loaded) for style, fad in corpora.items()}
+    panels = {style: seated(screen) for style, screen in screens.items()}
+    for style, judges in panels.items():
+        if not judges:
+            sys.exit(
+                f"every judge rated BS.1534-3's mid-range anchor of {style}'s held-out references unimpaired past"
+                f" §4.1.2's {SCREEN_SHARE:.0%}, or scored them alike ({screens[style]}), so no panel sits on {style}"
+            )
     seat = {
-        "screen": screen,
         "judges": {
             "audiobox": {"package": version("audiobox_aesthetics"), "checkpoint": AUDIOBOX},
             "tunejury": {"checkpoint": TUNEJURY, "encoders": [LAION_CLAP, MERT]},
-            "fad": {
-                "package": version("fadtk"),
-                "embedding": fad.model.name,
-                "checkpoint": LAION_CLAP,
-                "refs": str(args.refs.resolve()),
-                "lufs": fad.lufs,
-            },
+            "fad": {"package": version("fadtk"), "embedding": clap().name, "checkpoint": LAION_CLAP},
             "torch": version("torch"),
             "device": str(device),
         },
-        "fad_calibration": fad.calibration,
+        "corpora": {
+            style: {
+                "refs": str(fad.refs.resolve()),
+                "lufs": fad.lufs,
+                "screen": screens[style],
+                "panel": panels[style],
+                "fad_calibration": fad.calibration,
+            }
+            for style, fad in corpora.items()
+        },
     }
     rows = {}
     for name in names:
+        style = NAME.fullmatch(name)["style"]
+        fad = corpora[style]
         row = rows[name] = {}
         takes = {}
         for side, d in sides:
@@ -620,11 +645,11 @@ def scored_rows(args, names, sides):
             # the descriptors measure the take as rendered, the judges hear it floored
             row[side] = describe(x, sr)
             takes[side] = floored(x, name, mono_lufs(x, sr)), sr
-            row[side]["scores"] = {j: judge.score(*takes[side]) for j, judge in panel.items()}
+            row[side]["scores"] = {j: loaded[j].score(*takes[side]) for j in panels[style]}
         row["base"]["scores"][GUARD], row["cand"]["scores"][GUARD] = fad.score_pair(takes["base"], takes["cand"])
         row["bands_delta_db"] = [c - b for b, c in zip(row["base"]["bands_db"], row["cand"]["bands_db"])]
         b, c = row["base"]["scores"], row["cand"]["scores"]
-        row["deltas"] = {j: c[j] - b[j] for j in JUDGES}
+        row["deltas"] = {j: c[j] - b[j] for j in c}
         # nearer the corpus is better, so a gain is a fall in FAD
         row["gains"] = {j: -d if j == GUARD else d for j, d in row["deltas"].items()}
         print(f"scored {name}", flush=True)
@@ -634,12 +659,12 @@ def scored_rows(args, names, sides):
 def main():
     ap = argparse.ArgumentParser(description="Judge an A/B batch by measurement.")
     ap.add_argument("dir", type=Path, help="the batch: base/ and cand/ of same-named takes")
-    ap.add_argument("--refs", type=Path, required=True, help="the reference corpus: audio/ and manifest.json")
+    ap.add_argument("--refs", type=Path, required=True, help="each style's reference corpus at REFS/STYLE")
     ap.add_argument(
         "--corpus-cache",
         type=Path,
         default=Path(sys.prefix) / "corpus-cache",
-        help="the corpus's FAD statistics and the panel's screening, built here on a miss (default: the venv's)",
+        help="each corpus's FAD statistics and the judges' screening, built here on a miss (default: the venv's)",
     )
     ap.add_argument("--score-identical", action="store_true", help="score byte-identical pairs too")
     mode = ap.add_mutually_exclusive_group()
@@ -669,12 +694,13 @@ def main():
     commits = {"base": read_commit(base_dir), "cand": read_commit(cand_dir)}
     seat, rows = merged(shards, changed)
     pairs = [
-        {"take": n.removesuffix(".wav"), "mood": NAME.fullmatch(n)["mood"], "identical": n not in changed, **rows.get(n, {})}
+        {"take": n.removesuffix(".wav"), **NAME.fullmatch(n).groupdict(), "identical": n not in changed, **rows.get(n, {})}
         for n in paired
     ]
     record = {"dir": str(args.dir.resolve()), "commits": commits, "floor_re_take_db": FLOOR_RE_TAKE_DB, **seat}
-    held = list(seat.get("fad_calibration", {}).values())
-    scales = {name: judge["scale"] for name, judge in seat.get("screen", {}).items()}
+    corpora = seat.get("corpora", {})
+    held = {style: list(corpus["fad_calibration"].values()) for style, corpus in corpora.items()}
+    scales = {style: {name: corpus["screen"][name]["scale"] for name in corpus["panel"]} for style, corpus in corpora.items()}
 
     result = judged(pairs, held, scales)
     verdict = {}
@@ -683,7 +709,8 @@ def main():
         v = {"pairs": len(members), "identical": g["identical"], "gates": group != "all", "verdict": g["verdict"]}
         if members:
             for j, test in g["judges"].items():
-                v[j] = {**test, "mean_delta": float(np.mean([p["deltas"][j] for p in members]))}
+                deltas = [p["deltas"][j] for p in members if j in p["deltas"]]
+                v[j] = {**test, "mean_delta": float(np.mean(deltas)) if deltas else None}
             v.update(g["tests"])
             v["to_explain"] = to_explain(members)
         verdict[group] = v
@@ -699,17 +726,18 @@ def main():
     )
     # built once, so judge.json's table is the one printed
     table = []
-    table.append(f"\n{'take':<24}" + "".join(f" {'d' + LABELS[j]:>6}" for j in JUDGES) + f" {'max|dB|':>8} {'@Hz':>6}"
+    width = max([len("take"), *(len(p["take"].removeprefix("gen_")) for p in pairs)])
+    table.append(f"\n{'take':<{width}}" + "".join(f" {'d' + LABELS[j]:>6}" for j in JUDGES) + f" {'max|dB|':>8} {'@Hz':>6}"
           f" {'centroid b/c':>13} {'crest b/c':>11} {'LR b/c':>11} {'clk/min b/c':>11} {'hat b/c':>11}")
     for p in pairs:
         if p["identical"]:
-            table.append(f"{p['take'].removeprefix('gen_'):<24} identical")
+            table.append(f"{p['take'].removeprefix('gen_'):<{width}} identical")
             continue
         b, c, d = p["base"], p["cand"], p["deltas"]
         worst = int(np.argmax(np.abs(p["bands_delta_db"])))
         table.append(
-            f"{p['take'].removeprefix('gen_'):<24}"
-            + "".join(f" {d[j]:+6.3f}" for j in JUDGES)
+            f"{p['take'].removeprefix('gen_'):<{width}}"
+            + "".join(f" {d[j]:+6.3f}" if j in d else f" {'-':>6}" for j in JUDGES)
             + f" {p['bands_delta_db'][worst]:+8.1f} {round(BANDS_HZ[worst]):>6}"
             f" {b['centroid_hz']:6.0f}/{c['centroid_hz']:<6.0f}"
             f" {b['crest_db']:5.1f}/{c['crest_db']:<5.1f}"
@@ -717,17 +745,17 @@ def main():
             f" {b['clicks_per_min']:5.0f}/{c['clicks_per_min']:<5.0f}"
             f" {b[HAT_FLUX_KEY]:5.2f}/{c[HAT_FLUX_KEY]:<5.2f}"
         )
-    table.append(f"\n{'group':<6} {'pairs':>5} {'same':>4} " + "".join(f" {LABELS[j] + ' w/l':>7}" for j in JUDGES)
+    table.append(f"\n{'group':<8} {'pairs':>5} {'same':>4} " + "".join(f" {LABELS[j] + ' w/l':>7}" for j in JUDGES)
           + f" {'mean d' + LABELS[GUARD]:>9}  {'panel w/l/t':>11} {'p':>7}  {'guard w/l':>9} {'p':>7}  verdict")
     for group, v in verdict.items():
         label = v["verdict"] if v["gates"] else f"({v['verdict']}, not gating)"
         if not v["pairs"]:
-            table.append(f"{group:<6} {0:>5} {v['identical']:>4}  {label}")
+            table.append(f"{group:<8} {0:>5} {v['identical']:>4}  {label}")
             continue
         judges = " ".join(f"{v[j]['wins']:>3}/{v[j]['losses']:<3}" for j in JUDGES)
         panel, guard = v["panel"], v["guard"]
         table.append(
-            f"{group:<6} {v['pairs']:>5} {v['identical']:>4}  {judges} {v[GUARD]['mean_delta']:+9.4f}"
+            f"{group:<8} {v['pairs']:>5} {v['identical']:>4}  {judges} {v[GUARD]['mean_delta']:+9.4f}"
             f"  {panel['wins']:>5}/{panel['losses']}/{panel['ties']:<3} {panel['p']:7.4f}"
             f"  {guard['wins']:>5}/{guard['losses']:<3} {guard['p']:7.4f}  {label}"
         )
@@ -738,12 +766,15 @@ def main():
             + (f" ({GUARD} under the guard's margin)" if GUARD in against else "")
         )
     if changed:
-        table.append(f"alpha {result['alpha']:.4g} a test, so one needs {result['min_untied']} untied pairs to ever reject")
+        table.append(f"alpha {result['alpha']:.4g} a test, so one needs {result['min_untied']} untied pairs to ever reject\n")
+    for style, fads in held.items():
+        mine = [p for p in pairs if p["style"] == style and not p["identical"]]
         table.append(
-            f"\n{LABELS[GUARD]} calibration, {len(held)} held-out references: median {np.median(held):.4f}"
-            f" ({min(held):.4f}..{max(held):.4f}), so the guard's margin is {result['margin']:.4f};"
-            f" takes: base median {np.median([p['base']['scores'][GUARD] for p in pairs if not p['identical']]):.4f},"
-            f" cand median {np.median([p['cand']['scores'][GUARD] for p in pairs if not p['identical']]):.4f}"
+            f"{LABELS[GUARD]} calibration, {style}: {len(fads)} held-out references, median {np.median(fads):.4f}"
+            f" ({min(fads):.4f}..{max(fads):.4f}), so its guard's margin is {result['margin'][style]:.4f};"
+            f" takes: base median {np.median([p['base']['scores'][GUARD] for p in mine]):.4f},"
+            f" cand median {np.median([p['cand']['scores'][GUARD] for p in mine]):.4f};"
+            f" its panel {', '.join(corpora[style]['panel'])}"
         )
     for group, v in verdict.items():
         for t in v.get("to_explain", []):

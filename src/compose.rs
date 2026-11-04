@@ -78,10 +78,10 @@ pub(crate) enum LeadVoice {
     EpVel,
     /// Plucked-string lead ("nylon" family).
     Pluck,
-    /// Plucked-tine lead (day pool) — inharmonic cantilever overtones + a
+    /// Plucked-tine lead (hiphop pool) — inharmonic cantilever overtones + a
     /// resonator-body thump.
     Kalimba,
-    /// Struck-bar lead (night pool) — double-octave tuned partials with the
+    /// Struck-bar lead (sleep pool) — double-octave tuned partials with the
     /// fan tremolo baked in.
     Vibraphone,
 }
@@ -104,8 +104,8 @@ pub(super) const BEATS_PER_BAR: f32 = 4.0;
 /// Eighth notes in one bar: the comp's and the hats' slots.
 const EIGHTHS_PER_BAR: usize = 8;
 
-/// Drum event kinds. The night groove plays no open hat (the sleepy register);
-/// the day grooves carry the full kit.
+/// Drum event kinds. The sleep groove plays no open hat (the sleepy register);
+/// the hiphop grooves carry the full kit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum DrumKind {
     Kick,
@@ -157,7 +157,7 @@ pub struct Score {
 pub(super) const GEN_LOOP_BARS: usize = 8;
 
 /// Bars in a phrase: the lead's statement and answer each span one, and the
-/// day kit's ghost kick and open hat mark each one's end.
+/// hiphop kit's ghost kick and open hat mark each one's end.
 const PHRASE_BARS: usize = GEN_LOOP_BARS / 2;
 
 /// How far a hat may land from its slot, end to end: each lands within half of
@@ -187,6 +187,11 @@ impl Score {
     /// Display name of the lead instrument this score drew.
     pub fn lead_voice_name(&self) -> &'static str {
         self.lead_voice.name()
+    }
+
+    /// The name of the style this score was written in.
+    pub fn style_name(&self) -> &'static str {
+        self.style.name
     }
 
     /// This score with its drums gone: what a room whose drums don't sound
@@ -961,7 +966,7 @@ struct Hats {
 
 const DOWNBEAT: f32 = 0.0;
 
-pub(crate) const DAY_GROOVES: [GrooveTemplate; 4] = [
+pub(crate) const HIPHOP_GROOVES: [GrooveTemplate; 4] = [
     // boom-bap: backbeats on 2&4
     GrooveTemplate {
         kicks: [
@@ -978,7 +983,7 @@ pub(crate) const DAY_GROOVES: [GrooveTemplate; 4] = [
         drag_s: DRAG_KICK_S,
         snares: &[1.0, 3.0],
         snare_gain: SNARE_GAIN,
-        hats: DAY_HATS.skipping(0.15),
+        hats: HIPHOP_HATS.skipping(0.15),
         open_hat: true,
     },
     // boom-bap again, its hats dragged as far as about a quarter of
@@ -1017,7 +1022,7 @@ pub(crate) const DAY_GROOVES: [GrooveTemplate; 4] = [
         drag_s: DRAG_KICK_S,
         snares: &[2.0],
         snare_gain: SNARE_GAIN,
-        hats: DAY_HATS.skipping(0.30),
+        hats: HIPHOP_HATS.skipping(0.30),
         open_hat: true,
     },
     // sparse: quiet-focus, on the backbeat most of Lofi Girl's tracks keep
@@ -1036,13 +1041,13 @@ pub(crate) const DAY_GROOVES: [GrooveTemplate; 4] = [
         drag_s: DRAG_KICK_S,
         snares: &[1.0, 3.0],
         snare_gain: SNARE_GAIN,
-        hats: DAY_HATS.skipping(0.45),
+        hats: HIPHOP_HATS.skipping(0.45),
         open_hat: false,
     },
 ];
 
-/// The day kit's hats, but for how often they skip.
-const DAY_HATS: Hats = Hats {
+/// The hiphop kit's hats, but for how often they skip.
+const HIPHOP_HATS: Hats = Hats {
     off_eighths_only: false,
     skip_p: 0.0,
     swing: 0.56,
@@ -1052,10 +1057,10 @@ const DAY_HATS: Hats = Hats {
     },
 };
 
-/// [`DAY_HATS`] swung hard.
+/// [`HIPHOP_HATS`] swung hard.
 const SWUNG_HATS: Hats = Hats {
     swing: 0.74,
-    ..DAY_HATS
+    ..HIPHOP_HATS
 };
 
 impl Hats {
@@ -1064,9 +1069,9 @@ impl Hats {
     }
 }
 
-/// The night groove: kick, soft closed hats and a backbeat under the day's by
-/// LOFI-BIBLE.md §3's sleepy snare (the sleepy register).
-pub(crate) const NIGHT_GROOVE: GrooveTemplate = GrooveTemplate {
+/// The sleep groove: kick, soft closed hats and a backbeat under the hiphop
+/// grooves' by LOFI-BIBLE.md §3's sleepy snare (the sleepy register).
+pub(crate) const SLEEP_GROOVE: GrooveTemplate = GrooveTemplate {
     kicks: [
         Kick {
             beats: [DOWNBEAT; 2],
@@ -1081,7 +1086,7 @@ pub(crate) const NIGHT_GROOVE: GrooveTemplate = GrooveTemplate {
     // a separate lag on purpose, not a drifted copy of DRAG_KICK_S
     drag_s: 0.018,
     snares: &[1.0, 3.0],
-    snare_gain: NIGHT_SNARE_GAIN,
+    snare_gain: SLEEP_SNARE_GAIN,
     hats: Hats {
         off_eighths_only: true,
         skip_p: 0.45,
@@ -1107,7 +1112,7 @@ const GHOST_KICK: Kick = Kick {
 /// How far behind the grid a snare lands, in seconds.
 const SNARE_DRAG_S: f32 = 0.008;
 const SNARE_GAIN: f32 = 0.85;
-const NIGHT_SNARE_GAIN: f32 = 0.43;
+const SLEEP_SNARE_GAIN: f32 = 0.43;
 
 /// Each bar's velocity wobble, which all its hits share, and each hit's own.
 const WOBBLE: Spread = Spread {

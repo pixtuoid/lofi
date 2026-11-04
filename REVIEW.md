@@ -23,7 +23,7 @@ What the automatic review ([`claude-review.yml`](.github/workflows/claude-review
 ## Correctness
 
 - **CI-only gates**: name each `ci.yml` job the diff can turn red that a local `cargo test` does not run.
-- **Siblings**: a guard added to some of a sibling set (the `Day` and `Night` pools, the `Lane` arms, the `LeadVoice` seam, the frozen, whole-lane and streaming chains) or to one caller of a shared fn: check the full set. A new lane joins `generated_beds_are_finite_phase_locked_and_in_the_sound_world`, `every_lane_stays_finite_for_ten_minutes` and `every_lane_plays_at_its_whole_lane_level`.
+- **Siblings**: a guard added to some of a sibling set (the `HIPHOP` and `SLEEP` style records, the `Lane` arms, the `LeadVoice` seam, the frozen, whole-lane and streaming chains) or to one caller of a shared fn: check the full set. A new lane joins `generated_beds_are_finite_phase_locked_and_in_the_sound_world`, `every_lane_stays_finite_for_ten_minutes` and `every_lane_plays_at_its_whole_lane_level`.
 - **Population**: a list that selects a set (`Cargo.toml`'s `include`, the CI matrix, a test's seed sweep): name the set before and after; a silent shrink is a defect.
 - **Test isolation**: a new or changed test reads no ambient state.
 - **Security**: the trust boundary is CI. On a `.github/` change, report a secret in a command or log, untrusted code in a secret-bearing job, an argument spliced into a shell as code, or a gate the diff loosens, a fork, bot or cancelled run that no longer fails closed included. When the diff touches none, the summary says so.

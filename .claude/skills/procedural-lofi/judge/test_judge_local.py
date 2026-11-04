@@ -16,7 +16,7 @@ from test_validate_batch import write_wav
 from validate_batch import Takes, stage, validate
 
 # the takes `Selection` writes on both sides
-PAIRS = ["gen_day_empty_000.wav", "gen_night_busy_001.wav"]
+PAIRS = ["gen_hiphop_empty_hiphop_000.wav", "gen_sleep_busy_sleep_001.wav"]
 BASE, CAND = "a" * 40, "b" * 40
 TAKES = Takes(PAIRS, [], [], PAIRS[1:], PAIRS[:1])
 
@@ -28,8 +28,8 @@ class Selection(unittest.TestCase):
         for side, sha in (("base", BASE), ("cand", CAND)):
             (self.dir / side).mkdir()
             (self.dir / side / "COMMIT").write_text(sha + "\n")
-            write_wav(self.dir / side / "gen_day_empty_000.wav")
-            write_wav(self.dir / side / "gen_night_busy_001.wav", frames=8 if side == "base" else 9)
+            write_wav(self.dir / side / "gen_hiphop_empty_hiphop_000.wav")
+            write_wav(self.dir / side / "gen_sleep_busy_sleep_001.wav", frames=8 if side == "base" else 9)
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -64,14 +64,14 @@ class Selection(unittest.TestCase):
         self.assertRefused(BASE, CAND, "no take on both sides")
 
     def test_a_take_on_one_side_only_is_left_out_and_the_pairs_still_sent(self):
-        (self.dir / "cand" / "gen_day_empty_000.wav").unlink()
-        write_wav(self.dir / "cand" / "gen_dusk_moderate_000.wav")
-        takes = Takes(PAIRS[1:], ["gen_dusk_moderate_000.wav"], ["gen_day_empty_000.wav"], PAIRS[1:], [])
+        (self.dir / "cand" / "gen_hiphop_empty_hiphop_000.wav").unlink()
+        write_wav(self.dir / "cand" / "gen_dusk_moderate_hiphop_000.wav")
+        takes = Takes(PAIRS[1:], ["gen_dusk_moderate_hiphop_000.wav"], ["gen_hiphop_empty_hiphop_000.wav"], PAIRS[1:], [])
         self.assertEqual(select(self.dir, BASE, CAND, force_score=True), (takes, PAIRS[1:]))
 
     def test_a_batch_whose_takes_are_each_on_one_side_is_refused(self):
-        (self.dir / "cand" / "gen_day_empty_000.wav").unlink()
-        (self.dir / "base" / "gen_night_busy_001.wav").unlink()
+        (self.dir / "cand" / "gen_hiphop_empty_hiphop_000.wav").unlink()
+        (self.dir / "base" / "gen_sleep_busy_sleep_001.wav").unlink()
         self.assertRefused(BASE, CAND, "no take on both sides")
 
     def test_a_missing_commit_is_refused(self):
@@ -87,36 +87,64 @@ class Outcomes(unittest.TestCase):
 
 
 class Redaction(unittest.TestCase):
-    TRACKS = [{"file": "Some-Artist-Some-Title.mp3"}, {"file": "Some-Artist-Some-Title-Extended.mp3"}]
+    CORPORA = {
+        "hiphop": [{"file": "Some-Artist-Some-Title.mp3"}, {"file": "Some-Artist-Some-Title-Extended.mp3"}],
+        "sleep": [{"file": "Another-Artist-Slow.mp3"}],
+    }
 
-    def test_full_names_and_stems_become_manifest_indices(self):
+    def test_full_names_and_stems_become_styles_and_manifest_indices(self):
         text = (
-            "/refs/audio/Some-Artist-Some-Title-Extended.mp3 failed;"
-            " Some-Artist-Some-Title decoded; Some-Artist-Some-Title.mp3 too"
+            "/refs/hiphop/audio/Some-Artist-Some-Title-Extended.mp3 failed;"
+            " Some-Artist-Some-Title decoded; Some-Artist-Some-Title.mp3 too; Another-Artist-Slow too"
         )
-        self.assertEqual(redact(text, self.TRACKS), "/refs/audio/ref#1 failed; ref#0 decoded; ref#0 too")
+        self.assertEqual(
+            redact(text, self.CORPORA),
+            "/refs/hiphop/audio/hiphop#1 failed; hiphop#0 decoded; hiphop#0 too; sleep#0 too",
+        )
+
+    def test_a_label_is_never_masked_again(self):
+        # a corpus holding a reference whose stem is a label's own word
+        corpora = {"sleep": [{"file": "sleep.mp3"}]}
+        self.assertEqual(redact("sleep.mp3 failed; sleep decoded", corpora), "sleep#0 failed; sleep#0 decoded")
 
 
 class Publishing(unittest.TestCase):
-    TRACKS = Redaction.TRACKS
+    CORPORA = Redaction.CORPORA
 
     def test_the_record_publishes_its_own_table_masked_and_no_corpus_name(self):
         record = {
             "dir": "/batch",
-            "judges": {"fad": {"refs": "/refs", "lufs": -20.0}},
-            "fad_calibration": {"Some-Artist-Some-Title.mp3": 0.4, "Some-Artist-Some-Title-Extended.mp3": 0.2},
-            "table": "take dCE\nday_empty_000 +0.01\nnearest Some-Artist-Some-Title",
+            "judges": {"fad": {"embedding": "clap"}},
+            "corpora": {
+                "hiphop": {
+                    "refs": "/refs/hiphop",
+                    "lufs": -20.0,
+                    "fad_calibration": {"Some-Artist-Some-Title.mp3": 0.4, "Some-Artist-Some-Title-Extended.mp3": 0.2},
+                },
+                "sleep": {"refs": "/refs/sleep", "lufs": -30.0, "fad_calibration": {"Another-Artist-Slow.mp3": 0.3}},
+            },
+            "table": "take dCE\nhiphop_empty_hiphop_000 +0.01\nnearest Some-Artist-Some-Title, Another-Artist-Slow",
             "overall": "PASS",
         }
-        got = published(record, self.TRACKS)
+        got = published(record, self.CORPORA)
         self.assertEqual(got["outcome"], "PASS")
-        self.assertEqual(got["table"], "take dCE\nday_empty_000 +0.01\nnearest ref#0")
-        self.assertEqual(got["record"], {"judges": {"fad": {"lufs": -20.0}}, "fad_calibration": [0.2, 0.4], "overall": "PASS"})
+        self.assertEqual(got["table"], "take dCE\nhiphop_empty_hiphop_000 +0.01\nnearest hiphop#0, sleep#0")
+        self.assertEqual(
+            got["record"],
+            {
+                "judges": {"fad": {"embedding": "clap"}},
+                "corpora": {
+                    "hiphop": {"lufs": -20.0, "fad_calibration": [0.2, 0.4]},
+                    "sleep": {"lufs": -30.0, "fad_calibration": [0.3]},
+                },
+                "overall": "PASS",
+            },
+        )
 
 
 class Dealing(unittest.TestCase):
     def test_every_pair_goes_to_one_shard_of_the_most_a_batch_takes(self):
-        pairs = [f"gen_day_empty_{i:03}.wav" for i in range(95)]
+        pairs = [f"gen_hiphop_empty_hiphop_{i:03}.wav" for i in range(95)]
         shards = dealt(pairs)
         self.assertEqual(len(shards), SHARDS)
         self.assertEqual(sorted(name for shard in shards for name in shard), pairs)
@@ -130,15 +158,23 @@ class Dealing(unittest.TestCase):
 
 
 class Merging(unittest.TestCase):
-    SEAT = {"judges": {"fad": {"lufs": -20.0}}}
+    JUDGES = {"fad": {"embedding": "clap"}}
+    HIPHOP = {"lufs": -20.0}
 
-    def shard(self, *names, seat=SEAT):
-        return {"seat": seat, "rows": {name: {"take": name} for name in names}}
+    def shard(self, *names, judges=JUDGES, corpora=None):
+        corpora = corpora or {"hiphop": self.HIPHOP}
+        return {"seat": {"judges": judges, "corpora": corpora}, "rows": {name: {"take": name} for name in names}}
 
     def test_the_rows_join_under_the_seat_the_shards_share(self):
         seat, rows = merged([self.shard(PAIRS[1]), self.shard(PAIRS[0])], PAIRS)
-        self.assertEqual(seat, self.SEAT)
+        self.assertEqual(seat, {"judges": self.JUDGES, "corpora": {"hiphop": self.HIPHOP}})
         self.assertEqual(set(rows), set(PAIRS))
+
+    def test_each_corpus_a_shard_read_joins_the_seat(self):
+        sleep = {"lufs": -30.0}
+        shards = [self.shard(PAIRS[0]), self.shard(PAIRS[1], corpora={"hiphop": self.HIPHOP, "sleep": sleep})]
+        seat, _ = merged(shards, PAIRS)
+        self.assertEqual(seat["corpora"], {"hiphop": self.HIPHOP, "sleep": sleep})
 
     def test_a_shard_that_dropped_a_pair_is_refused(self):
         with self.assertRaises(SystemExit):
@@ -148,10 +184,15 @@ class Merging(unittest.TestCase):
         with self.assertRaises(SystemExit):
             merged([self.shard(*PAIRS), self.shard(PAIRS[0])], PAIRS)
 
-    def test_a_shard_seated_at_another_level_is_refused(self):
-        other = {"judges": {"fad": {"lufs": -21.0}}}
+    def test_a_shard_that_read_a_corpus_at_another_level_is_refused(self):
+        other = {"hiphop": {"lufs": -21.0}}
         with self.assertRaises(SystemExit):
-            merged([self.shard(PAIRS[0]), self.shard(PAIRS[1], seat=other)], PAIRS)
+            merged([self.shard(PAIRS[0]), self.shard(PAIRS[1], corpora=other)], PAIRS)
+
+    def test_a_shard_run_in_another_environment_is_refused(self):
+        other = {"fad": {"embedding": "other"}}
+        with self.assertRaises(SystemExit):
+            merged([self.shard(PAIRS[0]), self.shard(PAIRS[1], judges=other)], PAIRS)
 
     def test_a_batch_with_no_pair_to_score_has_no_seat_and_no_rows(self):
         self.assertEqual(merged([], []), ({}, {}))

@@ -15,7 +15,7 @@ use crate::Controls;
 use crate::compose::{Edge, Form, GEN_LOOP_BARS, HAT_JITTER_S, Layer, Score, arrange, compose};
 use crate::compose::{Lane, kicks};
 use crate::dsp::{NoiseStream, SAMPLE_RATE, splitmix_draw};
-use crate::style::{DAY, NIGHT};
+use crate::style::{HIPHOP, SLEEP};
 use crate::synth::{
     CRACKLE_POPS_PER_SEC, Part, SIDECHAIN_ATTACK_S, SIDECHAIN_DB, SIDECHAIN_RELEASE_S, bar_onset,
     crackle_pop, part, samples_at,
@@ -47,9 +47,9 @@ fn song_seed(seed: u64, k: u64) -> u64 {
 /// The score song `k` of `seed`'s run plays under `controls`.
 pub fn song_score(seed: u64, k: u64, controls: Controls) -> Score {
     let style = if controls.daylight < Controls::DUSK {
-        &NIGHT
+        &SLEEP
     } else {
-        &DAY
+        &HIPHOP
     };
     compose(style, song_seed(seed, k))
 }
@@ -982,8 +982,8 @@ mod tests {
     fn a_song_is_composed_for_the_night_below_dusk_and_the_day_from_it() {
         let at =
             |daylight: f32| song_score(1, 0, Controls::default().with_daylight(daylight)).style;
-        assert_eq!(at(Controls::DUSK), &DAY);
-        assert_eq!(at(Controls::DUSK.next_down()), &NIGHT);
+        assert_eq!(at(Controls::DUSK), &HIPHOP);
+        assert_eq!(at(Controls::DUSK.next_down()), &SLEEP);
     }
 
     #[test]

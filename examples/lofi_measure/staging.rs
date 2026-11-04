@@ -7,7 +7,7 @@ use pixtuoid_lofi::Controls;
 use pixtuoid_lofi::audition::{self, Lane, STAGING_SEEDS, gated_lufs};
 use pixtuoid_lofi::dsp::SAMPLE_RATE;
 
-use crate::batch::MOODS;
+use crate::batch::STYLES;
 use crate::corpus::spread;
 
 pub(crate) fn median(values: Vec<f64>) -> f64 {
@@ -25,10 +25,10 @@ pub(crate) fn print() {
     println!(
         "// staging, then medians over STAGING_SEEDS of each lane's whole-lane normalizations"
     );
-    for (mood, daylight) in MOODS {
-        // the style record a song at this daylight plays
-        let style = mood.to_uppercase();
-        println!("// {style}.staging");
+    for (name, daylight) in STYLES {
+        // the style's record, its static
+        let record = name.to_uppercase();
+        println!("// {record}.staging");
         let controls = Controls::default().with_daylight(daylight);
         let mut lufs_row = Vec::new();
         let first = audition::song_score(STAGING_SEEDS.start, 0, controls);
@@ -52,9 +52,9 @@ pub(crate) fn print() {
                 lane.name()
             );
             lufs_row.push(format!("{:.2}", median(lufs)));
-            eprintln!("staged {mood} {}", lane.name());
+            eprintln!("staged {name} {}", lane.name());
         }
-        rows.push(format!("(&{style}, [{}]),", lufs_row.join(", ")));
+        rows.push(format!("(&{record}, [{}]),", lufs_row.join(", ")));
     }
     println!("// whole-lane rows: medians over STAGING_SEEDS of each lane's gated loudness");
     for row in rows {
