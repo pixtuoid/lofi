@@ -527,14 +527,14 @@ fn sung(s: &Score) -> Vec<Sung> {
 }
 
 /// The rules that outrank the walk: the answer's quote of the statement's
-/// first two notes, the close on the loop's last bar, and the peak opening
+/// first notes, the close on the period's last bar, and the peak opening
 /// the bar after the quote.
 fn outranks_the_walk(line: &[Sung], j: usize) -> bool {
     let n = &line[j];
-    let head = line.iter().filter(|m| m.bar == 0).count().min(2);
-    let close = j == line.len() - 1 && n.bar == GEN_LOOP_BARS - 1;
-    let quote = n.bar == 4 && n.i < head && !close;
-    let peak = n.bar == 5 && n.i == 0;
+    let head = line.iter().filter(|m| m.bar == 0).count().min(QUOTE_NOTES);
+    let close = j == line.len() - 1 && n.bar == PERIOD_BARS - 1;
+    let quote = n.bar == STATEMENT_BARS && n.i < head && !close;
+    let peak = n.bar == PEAK_BAR && n.i == 0;
     quote || close || peak
 }
 
@@ -638,21 +638,22 @@ fn the_peak_and_the_close_land_on_chord_tones_and_the_close_comes_home() {
         for seed in 0..SWEEP {
             let (s, h) = composed(style, seed);
             let line = sung(&s);
-            if let Some(peak) = line.iter().find(|n| n.bar == 5 && n.i == 0) {
+            if let Some(peak) = line.iter().find(|n| n.bar == PEAK_BAR && n.i == 0) {
                 peaks += 1;
                 assert!(
-                    pcs(&s.bar_chords[5]).contains(&(peak.note % 12)),
+                    pcs(&s.bar_chords[PEAK_BAR]).contains(&(peak.note % OCTAVE)),
                     "{style:?} seed {seed}: the peak {} is off its chord",
                     peak.note
                 );
                 assert!(
-                    !sings_over_the_root(&h, lead, 5) || peak.note % OCTAVE != h.bars[5].root_pc,
+                    !sings_over_the_root(&h, lead, PEAK_BAR)
+                        || peak.note % OCTAVE != h.bars[PEAK_BAR].root_pc,
                     "{style:?} seed {seed}: the peak {} is on its root",
                     peak.note
                 );
             }
             let (first, last) = (&line[0], &line[line.len() - 1]);
-            if last.bar != GEN_LOOP_BARS - 1 {
+            if last.bar != PERIOD_BARS - 1 {
                 continue;
             }
             closes += 1;
