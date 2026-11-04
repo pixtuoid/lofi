@@ -256,8 +256,12 @@ def score(batch, paired, changed, key):
         print(redact(run.stdout + run.stderr, known))
         return {"outcome": "infra failure", "message": "the judge stopped before a verdict; its log, names masked, is Modal's", **took(started, shards)}
     result = published(json.loads(written.read_text()), known)
-    kept_file(key).write_text(json.dumps(result) + "\n")
-    verdicts.commit()
+    # the copy only spares a later run, so failing to keep it fails no verdict
+    try:
+        kept_file(key).write_text(json.dumps(result) + "\n")
+        verdicts.commit()
+    except (OSError, modal.Error) as e:
+        print(f"the verdict wasn't kept, so the next push scores again: {redact(str(e), known)}")
     return {**result, **took(started, shards)}
 
 
@@ -305,6 +309,8 @@ def judge(batch: str, base: str, cand: str, out: str = "", force_score: bool = F
                 result = score.with_options(volumes={**mounted(vol), VERDICTS: verdicts}).remote(vol, takes.paired, differ, key)
             ran = f"wall {result['wall_s']:.0f} s, judge CPU {result['cpu_s']:.0f} s, peak RSS {result['peak_rss_mib']:.0f} MiB"
         else:
+            # the bytes are the ones it judged, at these commits now
+            result["record"]["commits"] = {"base": base, "cand": cand}
             ran = "kept: a run judged these bytes under this judge and these corpora, so nothing was sent or scored"
         print(result.get("table", result.get("message")))
         print(f"\nverdict: {result['outcome']}")
