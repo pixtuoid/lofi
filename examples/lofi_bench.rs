@@ -352,11 +352,12 @@ mod tests {
 
     #[test]
     fn each_chunk_reads_at_its_least_over_the_runs() {
+        // each run holds one chunk's least, so dropping any run moves one
         let runs = [
-            vec![(0, 3.0), (10, 1.0)],
-            vec![(0, 2.0), (10, 4.0)],
-            vec![(0, 5.0), (10, 0.5)],
+            vec![(0, 1.0), (10, 5.0), (20, 6.0)],
+            vec![(0, 4.0), (10, 2.0), (20, 7.0)],
+            vec![(0, 5.0), (10, 6.0), (20, 3.0)],
         ];
-        assert_eq!(least(&runs), [(0, 2.0), (10, 0.5)]);
+        assert_eq!(least(&runs), [(0, 1.0), (10, 2.0), (20, 3.0)]);
     }
 }
