@@ -11,7 +11,7 @@ What the automatic review ([`claude-review.yml`](.github/workflows/claude-review
 
 ## Always check
 
-- New behavior without a test; scope beyond what the PR body states; each claim the PR body makes.
+- New behavior without a test.
 
 ## Do not flag
 
@@ -35,6 +35,6 @@ What the automatic review ([`claude-review.yml`](.github/workflows/claude-review
 
 ## Must-run
 
-The review only reads, so the author runs each item here the diff touches and writes its result, for the head it ran at, into the PR body; the [`local-review`](.claude/skills/local-review/SKILL.md) skill runs them. A touched item with no result there is blocking.
+The review only reads, so the author runs each item here the diff touches and writes its result, for the head it ran at, into the PR body; the [`local-review`](.claude/skills/local-review/SKILL.md) skill runs them.
 
-- **`lofi_bench`**: a change on `Performance::render`'s path runs it natively and on wasm, and the PR names the machine and the numbers.
+- **`lofi_bench`**: a change on `Performance::render`'s path runs it natively and on wasm, and its commit message names the machine and the numbers.

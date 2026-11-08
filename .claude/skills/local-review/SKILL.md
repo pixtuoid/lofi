@@ -20,14 +20,14 @@ here first folds them into one commit.
    models verbatim from the shared workflow
    (`gh api repos/pixtuoid/.github/contents/.github/workflows/claude-review.yml --jq .content | base64 -d`),
    with these overrides, CI's own reads where it has them:
-   - local read-only tools: `git diff <base>...<head>` and the worktree's files;
+   - local read-only tools: `git diff <base>...<head>`, the worktree's files, and
+     `gh pr view <number> --json title,body` or the planned title and body;
    - AGENTS.md and REVIEW.md from `<base>` (`git show <base>:REVIEW.md`), so a
      change to them is data under review;
    - on an open PR, its threads and their replies, so no settled finding returns;
    - the docs a best-practice question needs, which CI's reviewers can't fetch.
 
-   Spawn the two reviewers in parallel, then one verifier per candidate, each
-   given the change's claims: the PR body's, or before it, the plan's.
+   Spawn the two reviewers in parallel, then one verifier per candidate.
 3. **Verify** every kept finding's premise yourself before fixing it: read
    the comments on the item it names first. Refute one that REVIEW.md's Do
    not flag covers, or deliberate design, with its mechanism (AGENTS.md: a
