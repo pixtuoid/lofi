@@ -418,9 +418,9 @@ mdurl==0.1.2 \
     --hash=sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8 \
     --hash=sha256:bb413d29f5eea38f31dd4754dd7377d4465116fb207585f97bf925588687c1ba
     # via markdown-it-py
-modal==1.6.2 \
-    --hash=sha256:1a6c8409e315785137615601cac940de3d72462c0059b9cd0faf5d17615bacf0 \
-    --hash=sha256:f96bcd2de02abb74ac8ec3ff7d62400403633867a42c9c7b43f69f75ea00b952
+modal==1.6.3 \
+    --hash=sha256:31e8952c8908740f3fbc666191fec78ff5fadecb7a48a29d40aed90b39531ffe \
+    --hash=sha256:f6c1c59172274357e260a6f3d24254dddb472a6d4202cabce87452c127a1779c
     # via -r modal-requirements.in
 multidict==7.2.1 \
     --hash=sha256:02009b402129a73e1f3da68f48eb999afbacd29f25aef0d5052b84ff5c2786a2 \
