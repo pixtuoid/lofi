@@ -50,7 +50,7 @@ here first folds them into one commit.
 
 The tree, where what no diff shows lives: drift between docs and code,
 invariants eroded across PRs, debt that accreted, coverage gaps. Fan out one
-finder per module in AGENTS.md's map, plus one per AGENTS.md invariant and one
-for the CI and judge pipeline. Give each finding a separate skeptic who tries
-to refute it, and keep only those it can't. Rank what survives, and land each
-fix as its own PR.
+finder per module in AGENTS.md's map, plus one per AGENTS.md invariant, one
+for the CI and judge pipeline and one for upkeep, the Proportion lens's
+"delete it" over every mechanism. Each finding's own skeptic tries to refute
+it; rank the survivors, and land each fix as its own PR.
