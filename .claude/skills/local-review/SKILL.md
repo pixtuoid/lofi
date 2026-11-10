@@ -52,5 +52,7 @@ The tree, where what no diff shows lives: drift between docs and code,
 invariants eroded across PRs, debt that accreted, coverage gaps. Fan out one
 finder per module in AGENTS.md's map, plus one per AGENTS.md invariant, one
 for the CI and judge pipeline and one for upkeep, the Proportion lens's
-"delete it" over every mechanism. Each finding's own skeptic tries to refute
-it; rank the survivors, and land each fix as its own PR.
+"delete it" over every mechanism. Each `Pre-existing:` line the CI review
+summarized on a closed PR, merged or not, is a finding too, and one fixed
+since fails its skeptic like any other. Each finding's own skeptic tries to
+refute it; rank the survivors, and land each fix as its own PR.
