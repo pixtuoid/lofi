@@ -53,6 +53,6 @@ invariants eroded across PRs, debt that accreted, coverage gaps. Fan out one
 finder per module in AGENTS.md's map, plus one per AGENTS.md invariant, one
 for the CI and judge pipeline and one for upkeep, the Proportion lens's
 "delete it" over every mechanism. Each `Pre-existing:` line the CI review
-summarized on a PR merged since the last audit is a finding too. Each
-finding's own skeptic tries to refute it; rank the survivors, and land each
-fix as its own PR.
+summarized on a merged PR is a finding too, and one fixed since fails its
+skeptic like any other. Each finding's own skeptic tries to refute it; rank
+the survivors, and land each fix as its own PR.
