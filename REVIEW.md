@@ -1,13 +1,13 @@
 # Review rules
 
-What the automatic review ([`claude-review.yml`](.github/workflows/claude-review.yml)) checks in this repo, on top of [`AGENTS.md`](AGENTS.md) and the [review contract](https://github.com/pixtuoid/.github/blob/main/.github/workflows/claude-review.yml), which owns severity, format, evidence and the lenses every repo's review shares. Each rule names the failure it catches.
+What the automatic review ([`review.yml`](.github/workflows/review.yml)) checks in this repo, on top of [`AGENTS.md`](AGENTS.md) and the [review contract](https://github.com/pixtuoid/.github/blob/main/.github/workflows/claude-review.yml), which owns severity, format, evidence and the lenses every repo's review shares. Each rule names the failure it catches.
 
 **Published contracts** here: the public API, the songs a seed composes, and a shipped sound.
 
 ## Traps: the obvious reading is wrong here
 
 - **The rng draw order is the sound.** A draw added anywhere but the tail of a `compose::Stage`'s stream, or a re-pinned `every_seed_composes_the_score_it_did`, `every_seed_arranges_the_form_it_did`, `a_seeded_groove_lays_every_hit_where_it_did` or `day_take_stems_match_the_ratified_fingerprints`, is a sound change, never a test fix: CI goes green on a recomposed office.
-- **Semver rides the title the squash merge takes** (the PR's, or a lone commit's), which is the changelog line. A change [`AGENTS.md`](AGENTS.md#workflow) says takes `!`, without `!` there, ships a break as a patch.
+- **Semver rides the PR's title**, which the queue's squash makes main's commit title (the org's `.mergify.yml`, `commit_message_format`), and so the changelog line. A change [`AGENTS.md`](AGENTS.md#workflow) says takes `!`, without `!` there, ships a break as a patch.
 
 ## Always check
 
@@ -35,6 +35,6 @@ What the automatic review ([`claude-review.yml`](.github/workflows/claude-review
 
 ## Must-run
 
-The review only reads, so the author runs each item here the diff touches and writes its result, for the head it ran at, into the PR body; the [`local-review`](.claude/skills/local-review/SKILL.md) skill runs them.
+The review only reads, so the author runs each item here the diff touches and writes its result, for the head it ran at, into the PR body; the `/pixtuoid:local-review` skill runs them.
 
-- **`lofi_bench`**: a change on `Performance::render`'s path runs it natively and on wasm, and its commit message names the machine and the numbers.
+- **`lofi_bench`**: a change on `Performance::render`'s path runs it natively and on wasm, and its result names the machine and the numbers.

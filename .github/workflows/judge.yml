@@ -26,6 +26,10 @@ concurrency:
 
 jobs:
   render:
+    # Not on the merge queue's draft PR (docs.mergify.com/configuration/file-format,
+    # queue_branch_prefix), which no reader opens: each score is a billed
+    # Modal run.
+    if: ${{ !startsWith(github.head_ref, 'mergify/merge-queue/') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -160,8 +164,9 @@ jobs:
     # if conditions for all currently running jobs", and `always()` keeps a
     # job running
     # (https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-cancellation),
-    # which would post "infra failure" over the newer run's score
-    if: ${{ !cancelled() }}
+    # which would post "infra failure" over the newer run's score; nor on the
+    # draft `render` skips
+    if: ${{ !cancelled() && needs.render.result != 'skipped' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     # the comment endpoints are listed under Pull requests as well as Issues

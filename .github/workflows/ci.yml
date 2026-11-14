@@ -27,9 +27,9 @@ jobs:
           persist-credentials: false
       - uses: pixtuoid/.github/.github/actions/org-rules@main
       - uses: pixtuoid/.github/.github/actions/setup-rust@main
-      - uses: $/.github/actions/setup-tools
+      - uses: pixtuoid/.github/.github/actions/setup-tools@main
         with:
-          tools: just,cargo-binstall,cargo:cargo-public-api
+          tools: just cargo-binstall cargo:cargo-public-api
       - run: just preflight
       - run: cargo package --locked
       # cargo 1.99.1's verify build passed a package whose example doesn't
@@ -78,7 +78,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: pixtuoid/.github/.github/actions/setup-rust@main
-      - uses: $/.github/actions/setup-tools
+      - uses: pixtuoid/.github/.github/actions/setup-tools@main
         with:
           tools: just
       - run: just test
@@ -93,9 +93,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: $/.github/actions/setup-tools
+      - uses: pixtuoid/.github/.github/actions/setup-tools@main
         with:
-          tools: just,github:taiki-e/cargo-hack
+          tools: just github:taiki-e/cargo-hack
       - run: just msrv
 
   wasm:
@@ -110,7 +110,7 @@ jobs:
       - uses: pixtuoid/.github/.github/actions/setup-rust@main
         with:
           targets: wasm32-unknown-unknown
-      - uses: $/.github/actions/setup-tools
+      - uses: pixtuoid/.github/.github/actions/setup-tools@main
         with:
           tools: just
       - run: just wasm
@@ -124,12 +124,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: $/.github/actions/setup-tools
+      - uses: pixtuoid/.github/.github/actions/workflow-lint@main
+      - uses: pixtuoid/.github/.github/actions/setup-tools@main
         with:
-          tools: just,zizmor,actionlint,shellcheck,yq
-      - run: just workflows
-        env:
-          GH_TOKEN: ${{ github.token }}
+          tools: just yq
+      - run: just ci-gate-needs
 
   # The judge's environment, as judge.yml never tries it: that workflow runs the
   # base branch's judge, so a lock bump would first run on the next render PR.
@@ -217,7 +216,7 @@ jobs:
       - uses: pixtuoid/.github/.github/actions/setup-rust@main
         with:
           components: llvm-tools-preview
-      - uses: $/.github/actions/setup-tools
+      - uses: pixtuoid/.github/.github/actions/setup-tools@main
         with:
           tools: aqua:taiki-e/cargo-llvm-cov
       - run: cargo llvm-cov --all-targets --codecov --output-path codecov.json
