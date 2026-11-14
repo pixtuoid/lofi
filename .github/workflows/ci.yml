@@ -225,7 +225,8 @@ jobs:
           file: codecov.json
           flag: unit
 
-  # The one CI check the ruleset requires, so a job change needs no ruleset edit.
+  # The one ci.yml check the ruleset and the org's queue require, so a job
+  # change needs no edit to either.
   # `always()`, not `!cancelled()`: "A job that is skipped will report its status as
   # 'Success'" (docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-jobs-with-conditions).
   ci-gate:
