@@ -35,6 +35,6 @@ What the automatic review ([`review.yml`](.github/workflows/review.yml)) checks 
 
 ## Must-run
 
-The review only reads, so the author runs each item here the diff touches and writes its result, for the head it ran at, into the PR body; the `/pixtuoid:local-review` skill runs them.
+The review only reads, so the author runs each item here the diff touches and writes its result, for the head it ran at, into the PR body; the `/pixtuoid-dev:local-review` skill runs them.
 
 - **`lofi_bench`**: a change on `Performance::render`'s path runs it natively and on wasm, and its result names the machine and the numbers.

@@ -1,9 +1,9 @@
 {
   "enabledPlugins": {
-    "pixtuoid@pixtuoid": true
+    "pixtuoid-dev@pixtuoid-dev": true
   },
   "extraKnownMarketplaces": {
-    "pixtuoid": {
+    "pixtuoid-dev": {
       "source": {
         "source": "github",
         "repo": "pixtuoid/.github"
