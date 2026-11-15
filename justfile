@@ -57,7 +57,7 @@ api-check: _api-nightly
     trap 'rm -f "$listed"' EXIT
     {{ API_LIST }} > "$listed"
     diff -u api/pixtuoid-lofi.txt "$listed" || {
-        # a workflow command, as `workflows` prints its own
+        # a workflow command, as `ci-gate-needs` prints its own
         echo "::error::the public API moved off api/pixtuoid-lofi.txt: run 'just api' and commit it"
         exit 1
     }
@@ -87,15 +87,11 @@ wasm:
     cargo clippy --lib --example lofi_bench --target wasm32-unknown-unknown -- -D warnings
     RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items --lib --example lofi_bench --target wasm32-unknown-unknown
 
-# The repo root, not just workflows/, so dependabot.yml is audited too; then
-# whether ci-gate needs every job, since a job blocks a merge only through its
-# needs (`coverage` is advisory)
-[doc('Audit the workflows, and check ci-gate needs every job')]
-workflows:
+# A job blocks a merge only through ci-gate's needs (`coverage` is advisory)
+[doc('Check ci-gate needs every gating job')]
+ci-gate-needs:
     #!/usr/bin/env bash
     set -euo pipefail
-    zizmor --config .github/zizmor.yml .
-    actionlint
     jobs=$(yq '.jobs | keys | .[] | select(. != "ci-gate" and . != "coverage")' .github/workflows/ci.yml | sort)
     needs=$(yq '.jobs["ci-gate"].needs[]' .github/workflows/ci.yml | sort)
     if [ "$jobs" != "$needs" ]; then

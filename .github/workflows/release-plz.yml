@@ -146,7 +146,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: $/.github/actions/setup-tools
+      - uses: pixtuoid/.github/.github/actions/setup-tools@main
         with:
           tools: yq
       - name: The crate moves to an untagged version only with a release

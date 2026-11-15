@@ -1,0 +1,3 @@
+# The org's queue, pixtuoid/.github's .mergify.yml, which lofi takes whole
+# (docs.mergify.com/configuration/sharing).
+extends: .github
